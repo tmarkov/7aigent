@@ -14,7 +14,7 @@ Design the orchestrator, built-in environments (bash, python, editor), and the e
 
 # Outcome
 
-The complete design has been documented in [docs/orchestrator.md](../orchestrator.md). After review and iteration, the design includes:
+The complete design has been documented in [docs/orchestrator.md](../orchestrator.md) and reviewed. The design includes:
 
 - 12 diverse use-case scenarios that drove the design decisions
 - Detailed designs for bash, python, and editor environments
@@ -34,4 +34,4 @@ Key design principles:
 - **Minimal screen clutter**: Unused environments show only description
 - **Multi-line commands**: First line is command, rest is content (for editor)
 - **Working directories**: Python has own cwd, shown on screen to avoid confusion
-- **Variable display**: Dict iteration order (no modification time tracking)
+- **Variable display**: Type names only (no values), sorted by recent use via simple regex matching

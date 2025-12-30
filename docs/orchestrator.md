@@ -128,11 +128,16 @@ python code (can be multi-line)
 ```
 Working directory: /home/user/project
 
-Variables:
-  df: DataFrame(1000 rows × 5 cols)
-  mean: 42.7
+Variables (by recent use):
+  df: DataFrame
   model: RandomForestClassifier
-  quality_score: 0.85
+  quality_score: float
+  mean: float
+  X_train: ndarray
+  y_train: ndarray
+  data: dict
+  fig: Figure
+  ...
 ```
 
 **Use cases supported**:
@@ -148,44 +153,77 @@ Variables:
 - Global namespace (variables, functions, classes)
 - Imported modules
 - Current working directory (Python's `os.getcwd()`, agent can change with `os.chdir()`)
+- Variable ordering list (for tracking recent use)
 
 **Design decisions**:
 1. **All output captured**: Python REPL naturally shows expression results; we capture all output without special handling
-2. **Smart variable display**: Truncate large objects (DataFrames, arrays) intelligently
-3. **Exception handling**: Full traceback in response
-4. **Package installation**: Use bash `pip install`, not Python subprocess
-5. **Working directory shown**: Display `os.getcwd()` on screen to avoid confusion with bash cwd
-6. **No background execution**: Long tasks block until complete
-7. **Minimal screen until first use**: Before first command, show only "Python REPL (ready)" to avoid clutter
+2. **Variable display shows types only**: Show variable names with type (not values) to avoid screen clutter from large objects
+3. **Recent use ordering**: Track variable usage via simple regex matching in commands, show most recently used first
+4. **Exception handling**: Full traceback in response
+5. **Package installation**: Use bash `pip install`, not Python subprocess
+6. **Working directory shown**: Display `os.getcwd()` on screen to avoid confusion with bash cwd
+7. **No background execution**: Long tasks block until complete
+8. **Minimal screen until first use**: Before first command, show only "Python REPL (ready)" to avoid clutter
 
 **Variable display logic**:
 ```python
-def smart_repr(obj) -> str:
-    """Generate compact representation for screen display."""
-    if isinstance(obj, pd.DataFrame):
-        return f"DataFrame({len(obj)} rows × {len(obj.columns)} cols)"
-    elif isinstance(obj, np.ndarray):
-        return f"ndarray(shape={obj.shape}, dtype={obj.dtype})"
-    elif isinstance(obj, (list, tuple, dict)) and len(obj) > 5:
-        return f"{type(obj).__name__}({len(obj)} items)"
-    elif isinstance(obj, type):
+def get_type_name(obj) -> str:
+    """Get simple type name for display."""
+    obj_type = type(obj)
+
+    # Use __name__ for classes and types
+    if isinstance(obj, type):
         return obj.__name__
+
+    # Special handling for common types
+    type_name = obj_type.__name__
+
+    # For numpy arrays, show "ndarray"
+    if type_name == 'ndarray':
+        return 'ndarray'
+    # For pandas objects, use short names
+    elif type_name == 'DataFrame':
+        return 'DataFrame'
+    elif type_name == 'Series':
+        return 'Series'
+    # For everything else, use type name directly
     else:
-        r = repr(obj)
-        return r if len(r) <= 80 else r[:77] + "..."
+        return type_name
+```
+
+**Usage tracking**:
+- Maintain ordered list of variable names
+- After each command, scan command text for variable names using simple regex: `\b{var_name}\b`
+- Move matched variables to front of list (preserving relative order among matches)
+- Screen displays variables in list order (most recently used first)
+- No need for 100% accuracy - simple regex matching is sufficient
+
+**Usage tracking algorithm**:
+```python
+# After each command:
+# 1. Find all variables mentioned in command
+matches = []
+for var_name in current_namespace:
+    if re.search(rf'\b{re.escape(var_name)}\b', command_text):
+        matches.append(var_name)
+
+# 2. Move matches to front of ordered list
+ordered_vars = matches + [v for v in ordered_vars if v not in matches]
+
+# 3. Display first 100 from ordered_vars on screen
 ```
 
 **Screen variable filtering**:
 - Exclude private variables (starting with `_`)
 - Exclude modules and builtins
-- Limit to 10 variables
-- Show in dict iteration order (roughly corresponds to creation order)
+- Limit to 100 most recently used variables
+- Show in order of recent use (most recently used first)
 
 **Edge cases**:
 - Infinite loops: Will block the system indefinitely. Agent must be careful. Future: allow agent to kill environment (losing state) or continue waiting.
-- Large objects: Truncate representation, not actual data
 - Memory leaks: Agent's responsibility to manage namespace
 - SyntaxError: Return error in response, continue
+- Variable name collisions in regex: Simple regex may match variable names within strings or comments; acceptable trade-off for simplicity
 
 ### Editor Environment
 
@@ -279,12 +317,14 @@ Views:
 ```
 For each view:
 1. Re-read entire file from disk
-2. Find all matches of (start_pattern, end_pattern) pairs
-3. Select match based on current_match_index
-4. Extract content (max 1000 lines)
-5. Cache content and line numbers for edit verification
-6. Display with line numbers
-7. If patterns not found, remove view and show [BROKEN]
+2. Find all occurrences of start_pattern
+3. For each start match, search up to 1000 lines for end_pattern
+4. If end pattern found, extract content from start to end
+5. If end pattern not found within 1000 lines, extract 1000 lines and mark as truncated
+6. Select match based on current_match_index
+7. Cache content and line numbers for edit verification
+8. Display with line numbers
+9. If no start pattern found, remove view and show [BROKEN]
 ```
 
 **Edit implementation**:
@@ -302,9 +342,9 @@ Process:
 ```
 
 **Pattern search constraints**:
-- End pattern must be found within 1000 lines of start pattern
-- If not found within limit, match fails
-- Greedy matching: always use first occurrence of end pattern
+- Search up to 1000 lines after start pattern for end pattern
+- If end pattern not found within 1000 lines, truncate view at 1000 lines
+- Greedy matching: always use first occurrence of end pattern (within 1000 line limit)
 
 **Example workflow**:
 ```
@@ -351,10 +391,8 @@ If file externally modified (e.g., main() deleted):
 
 **Edge cases**:
 - File deleted: View shows `[ERROR: file not found]`, then removed
-- File too large: Refuse to read files > 10,000 lines total
 - Patterns not found: View shows `[BROKEN: patterns not found]`, then removed
-- Match too large: Show first 1000 lines with `[TRUNCATED: showing first 1000 of N lines]`
-- End pattern > 1000 lines away: Match fails, view not created
+- End pattern not found within 1000 lines: Truncate view at 1000 lines, show `[TRUNCATED: end pattern not found within 1000 lines]`
 - Too many views: Auto-close oldest when adding 6th view
 - Empty file: Patterns won't match, view not created
 - Binary file: Detect and refuse with error message
