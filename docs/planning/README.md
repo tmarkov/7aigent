@@ -22,7 +22,7 @@ This section contains a list of all tasks, formatted as a checklist. Tasks are t
 The orchestrator can work as a standalone tool without an agent. Focus on these tasks:
 
 - [x] [Implement orchestrator core types](file://./implement-orchestrator-types.md)
-- [ ] [Implement bash environment](file://./implement-bash-environment.md)
+- [x] [Implement bash environment](file://./implement-bash-environment.md)
 - [ ] [Implement python environment](file://./implement-python-environment.md)
 - [ ] [Implement editor environment](file://./implement-editor-environment.md)
 - [ ] [Implement orchestrator core](file://./implement-orchestrator-core.md)

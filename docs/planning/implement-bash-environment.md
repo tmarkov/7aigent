@@ -4,38 +4,38 @@ Implement the bash environment, which provides a persistent bash shell for execu
 
 # Plan
 
-- [ ] Implement BashEnvironment class
-  - [ ] Set up pexpect spawn with bash
-  - [ ] Configure unique prompt marker for reliable detection
-  - [ ] Implement handle_command() method
-  - [ ] Implement get_screen() method
-  - [ ] Implement shutdown() method
-  - [ ] Track working directory, exit code, background jobs
+- [x] Implement BashEnvironment class
+  - [x] Set up pexpect spawn with bash
+  - [x] Configure unique prompt marker for reliable detection
+  - [x] Implement handle_command() method
+  - [x] Implement get_screen() method
+  - [x] Implement shutdown() method
+  - [x] Track working directory, exit code, background jobs
 
-- [ ] Handle edge cases
-  - [ ] Large output truncation (10MB limit)
-  - [ ] Prompt detection reliability
-  - [ ] Command timeout handling (per refined design)
+- [x] Handle edge cases
+  - [x] Large output truncation (10MB limit)
+  - [x] Prompt detection reliability
+  - [x] Command timeout handling (per refined design)
 
-- [ ] Write tests
-  - [ ] Test basic command execution
-  - [ ] Test working directory tracking
-  - [ ] Test exit code tracking
-  - [ ] Test background job display
-  - [ ] Test large output truncation
-  - [ ] Test shutdown cleanup
+- [x] Write tests
+  - [x] Test basic command execution
+  - [x] Test working directory tracking
+  - [x] Test exit code tracking
+  - [x] Test background job display
+  - [x] Test large output truncation
+  - [x] Test shutdown cleanup
 
-- [ ] Manual testing
-  - [ ] Test interactive workflow with various commands
-  - [ ] Test cd command updates working directory
-  - [ ] Test background jobs (&)
-  - [ ] Test error handling
+- [x] Manual testing
+  - [x] Test interactive workflow with various commands
+  - [x] Test cd command updates working directory
+  - [x] Test background jobs (&)
+  - [x] Test error handling
 
-- [ ] Documentation
-  - [ ] Add usage examples
-  - [ ] Document limitations
+- [x] Documentation
+  - [x] Add usage examples
+  - [x] Document limitations
 
-- [ ] Run formatters and linters
+- [x] Run formatters and linters
 
 # Dependencies
 
