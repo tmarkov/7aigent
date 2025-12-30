@@ -634,7 +634,7 @@ When an ad-hoc environment fails validation:
 ```python
 # project_dir/env/timer.py
 
-from orchestrator.types import CommandText, CommandResponse, ScreenSection
+from orchestrator.core_types import CommandText, CommandResponse, ScreenSection
 import time
 
 class TimerEnvironment:
@@ -684,7 +684,7 @@ For creating environments that wrap interactive programs (like GDB, database CLI
 ```python
 # orchestrator/interactive.py
 
-from orchestrator.types import CommandText, CommandResponse, ScreenSection
+from orchestrator.core_types import CommandText, CommandResponse, ScreenSection
 import pexpect
 
 class InteractiveEnvironment:
@@ -1072,7 +1072,9 @@ def send_error_response(error_msg: str) -> None:
 orchestrator/
   __init__.py
   main.py              # Entry point, main loop
-  types.py             # Core type definitions (CommandText, etc.)
+  core_types.py        # Core type definitions (CommandText, etc.)
+                       # Note: Named core_types.py not types.py to avoid
+                       # shadowing Python's stdlib types module
   protocol.py          # Environment protocol definition
   loader.py            # Environment loading and validation
   executor.py          # Command execution logic

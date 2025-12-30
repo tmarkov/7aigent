@@ -4,32 +4,32 @@ Implement the core type system for the orchestrator in Python. This provides the
 
 # Plan
 
-- [ ] Create orchestrator/types.py module
-  - [ ] Implement EnvironmentName dataclass with validation
-  - [ ] Implement CommandText dataclass
-  - [ ] Implement CommandResponse dataclass
-  - [ ] Implement ScreenSection dataclass with validation
-  - [ ] Add comprehensive docstrings
+- [x] Create orchestrator/core_types.py module (renamed from types.py to avoid stdlib conflict)
+  - [x] Implement EnvironmentName dataclass with validation
+  - [x] Implement CommandText dataclass
+  - [x] Implement CommandResponse dataclass
+  - [x] Implement ScreenSection dataclass with validation
+  - [x] Add comprehensive docstrings
 
-- [ ] Create orchestrator/protocol.py module
-  - [ ] Define Environment Protocol
-  - [ ] Document protocol requirements
-  - [ ] Add usage examples in docstrings
+- [x] Create orchestrator/protocol.py module
+  - [x] Define Environment Protocol
+  - [x] Document protocol requirements
+  - [x] Add usage examples in docstrings
 
-- [ ] Write property-based tests
-  - [ ] Test EnvironmentName validation (valid/invalid identifiers)
-  - [ ] Test CommandResponse creation
-  - [ ] Test ScreenSection validation
-  - [ ] Test immutability of frozen dataclasses
+- [x] Write property-based tests
+  - [x] Test EnvironmentName validation (valid/invalid identifiers)
+  - [x] Test CommandResponse creation
+  - [x] Test ScreenSection validation
+  - [x] Test immutability of frozen dataclasses
 
-- [ ] Write example-based tests
-  - [ ] Test edge cases for type validation
-  - [ ] Test error messages are descriptive
+- [x] Write example-based tests
+  - [x] Test edge cases for type validation
+  - [x] Test error messages are descriptive
 
-- [ ] Run formatters and linters
-  - [ ] black formatting
-  - [ ] ruff linting
-  - [ ] Ensure all tests pass
+- [x] Run formatters and linters
+  - [x] black formatting
+  - [x] ruff linting
+  - [x] Ensure all tests pass
 
 # Dependencies
 
@@ -38,3 +38,5 @@ None - this is the foundation task
 # Outcome
 
 A complete, well-tested type system that serves as the foundation for implementing environments and the orchestrator.
+
+**Note**: The module was named `core_types.py` instead of `types.py` to avoid shadowing Python's standard library `types` module, which was causing import failures.
