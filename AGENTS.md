@@ -210,11 +210,19 @@ Only implement after design is solid.
 **Implementation checklist**:
 - Follow [docs/coding-style.md](docs/coding-style.md) strictly
 - Use TodoWrite to track implementation steps
+- **CRITICAL: Verify build sees new code first** (see Implementation Task below)
+  - Create test file that imports new module
+  - `git add` test file
+  - Verify build FAILS with ImportError
+  - If build succeeds, new test not in build - STOP and investigate
 - Write tests as you go (property-based for public APIs)
+- `git add` files immediately after creation
+- Build frequently to catch issues early
 - Update documentation with any implementation learnings
 - Verify work with `nix build .#agent` or `nix build .#orchestrator`
   - Build runs all formatters, linters, and tests automatically
   - Don't run tools directly - Nix ensures everything is checked
+  - Verify new files appear in build output (grep for filenames)
 
 ---
 
@@ -233,15 +241,106 @@ Only implement after design is solid.
 
 ### Implementation Task
 
+**CRITICAL: Nix builds use git-tracked files only. Untracked files are invisible to the build, causing false positive "build succeeds" on old code.**
+
 1. Read the design doc
 2. Use TodoWrite to plan steps
-3. Follow coding-style.md
-4. Test as you go
-5. Update docs if implementation reveals issues
-6. Verify with Nix build: `nix build .#agent` or `nix build .#orchestrator`
-   - This automatically runs all formatters, linters, and tests
-   - Build will fail if any check fails
-   - Don't run formatters/linters directly - let Nix handle it
+3. **Verify build will see new code (choose one approach):**
+
+   **Option A - Import Test (recommended for new modules):**
+   ```bash
+   # Create test file that imports new module
+   cat > tests/test_new_module.py << 'EOF'
+   from package.new_module import NewClass  # Will fail - doesn't exist yet
+
+   def test_placeholder():
+       assert True
+   EOF
+
+   # Add to git and verify build FAILS
+   git add tests/test_new_module.py
+   nix build .#package 2>&1 | tee /dev/tty | grep -q "ModuleNotFoundError.*new_module"
+
+   # If build succeeds, STOP - test file not in build!
+   # If build fails with ImportError - GOOD, proceed to step 4
+   ```
+
+   **Option B - Test Count Verification:**
+   ```bash
+   # Note current test count
+   BEFORE=$(nix build .#package 2>&1 | grep -oP '\d+(?= passed)' | tail -1)
+
+   # Create test file with simple test
+   # (write test file here)
+
+   # Add to git and verify count increases
+   git add tests/test_new_module.py
+   AFTER=$(nix build .#package 2>&1 | grep -oP '\d+(?= passed|failed)' | head -1)
+
+   # If AFTER <= BEFORE, STOP - test not in build!
+   ```
+
+   **Option C - Grep Test Output:**
+   ```bash
+   # Create test file
+   # (write test file here)
+
+   # Add to git and verify it appears in output
+   git add tests/test_new_module.py
+   nix build .#package 2>&1 | grep -q "test_new_module.py"
+
+   # If not found, STOP - test not in build!
+   ```
+
+4. **Create minimal module to fix import:**
+   ```bash
+   # Create skeleton module
+   cat > package/new_module.py << 'EOF'
+   """New module."""
+
+   class NewClass:
+       pass
+   EOF
+
+   # Add to git immediately
+   git add package/new_module.py
+
+   # Build should now pass (or fail on different issue)
+   nix build .#package
+   ```
+
+5. **Implement incrementally:**
+   - Write code
+   - `git add` changes after each significant addition
+   - Build frequently to catch issues early
+   - Tests guide implementation
+
+6. Follow coding-style.md strictly
+
+7. Write tests as you go (property-based for public APIs)
+
+8. Update docs if implementation reveals issues
+
+9. **Final verification:**
+   ```bash
+   # Clean build
+   nix build .#package
+
+   # Verify new files in build output
+   nix build .#package 2>&1 | grep "adding.*new_module"
+
+   # All checks must pass:
+   # - black, isort, ruff (formatters/linters)
+   # - pytest (all tests including new ones)
+   ```
+
+**Why this process:**
+- Catches ALL "new code not in build" issues (git, config, import paths)
+- Fails fast - know immediately if setup is wrong
+- Low overhead - one extra build cycle
+- Prevents wasted work on code that won't be tested
+
+**Key principle:** Build must fail first, then succeed. If build succeeds immediately with new test imports, something is wrong.
 
 ### Debug/Fix Task
 
