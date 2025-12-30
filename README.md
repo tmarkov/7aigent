@@ -25,8 +25,12 @@ Hooks run formatters and linters for Rust and Python code.
 ### Building
 
 ```bash
-# Build the agent
+# Build the agent (Rust)
 nix build .#agent
+
+# Build the orchestrator (Python) with all checks
+# This runs: black, isort, ruff, and pytest
+nix build .#orchestrator
 
 # Run all checks (formatting, linting, tests)
 nix flake check
