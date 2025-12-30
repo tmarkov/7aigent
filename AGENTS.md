@@ -14,6 +14,33 @@ When working on this project, follow these guidelines:
 
 See [docs/coding-style.md](docs/coding-style.md) for detailed conventions that support these principles.
 
+## Build System
+
+**This project uses Nix for reproducible builds and automated verification.**
+
+All code verification (formatting, linting, testing) is integrated into the Nix build:
+
+```bash
+# Build the agent (Rust) with all checks
+nix build .#agent
+# Runs: rustfmt check, clippy, cargo test
+
+# Build the orchestrator (Python) with all checks
+nix build .#orchestrator
+# Runs: black check, isort check, ruff check, pytest
+
+# Development shell with all tools
+nix develop
+```
+
+**Important**: Don't run formatters and linters directly during implementation. Instead:
+- Make your changes
+- Run `nix build .#<package>` to verify everything
+- The build will fail if any check fails
+- This ensures you never forget a step
+
+This approach guarantees that if the build succeeds, all code meets quality standards.
+
 ---
 
 ## User-Story Driven Design Workflow
@@ -185,7 +212,9 @@ Only implement after design is solid.
 - Use TodoWrite to track implementation steps
 - Write tests as you go (property-based for public APIs)
 - Update documentation with any implementation learnings
-- Run formatters and linters before considering work done
+- Verify work with `nix build .#agent` or `nix build .#orchestrator`
+  - Build runs all formatters, linters, and tests automatically
+  - Don't run tools directly - Nix ensures everything is checked
 
 ---
 
@@ -209,7 +238,10 @@ Only implement after design is solid.
 3. Follow coding-style.md
 4. Test as you go
 5. Update docs if implementation reveals issues
-6. Run tools (rustfmt, clippy, black, ruff)
+6. Verify with Nix build: `nix build .#agent` or `nix build .#orchestrator`
+   - This automatically runs all formatters, linters, and tests
+   - Build will fail if any check fails
+   - Don't run formatters/linters directly - let Nix handle it
 
 ### Debug/Fix Task
 
@@ -327,7 +359,10 @@ You're doing well if:
 
 You're doing well if:
 - Code compiles/type-checks on first try (or after minimal fixes)
-- Tools (rustfmt, clippy, black, ruff) pass without manual intervention
+- `nix build .#agent` or `nix build .#orchestrator` succeeds
+  - This verifies formatters (rustfmt, black, isort) pass
+  - This verifies linters (clippy, ruff) pass
+  - This verifies all tests pass
 - Tests are comprehensive and use property-based testing where applicable
 - Documentation is clear and up-to-date
 - You followed coding-style.md strictly
