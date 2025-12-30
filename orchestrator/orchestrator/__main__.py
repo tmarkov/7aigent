@@ -1,9 +1,6 @@
 """Entry point for orchestrator."""
 
-
-def main() -> None:
-    print("7aigent orchestrator")
-
+from orchestrator.main import main
 
 if __name__ == "__main__":
     main()

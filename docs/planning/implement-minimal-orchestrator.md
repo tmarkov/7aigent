@@ -6,49 +6,49 @@ This is a subset of the full orchestrator-core task, focusing only on what's nee
 
 # Plan
 
-- [ ] Implement communication.py module
-  - [ ] Implement read_message() for NDJSON parsing
-  - [ ] Implement send_response() for NDJSON serialization
-  - [ ] Implement send_error_response()
-  - [ ] Handle EOF and parse errors
+- [x] Implement communication.py module
+  - [x] Implement read_message() for NDJSON parsing
+  - [x] Implement send_response() for NDJSON serialization
+  - [x] Implement send_error_response()
+  - [x] Handle EOF and parse errors
 
-- [ ] Implement executor.py module (minimal version)
-  - [ ] Implement execute_command()
-  - [ ] Route commands to bash environment only
-  - [ ] Handle unknown environment errors
-  - [ ] Catch and report environment exceptions
+- [x] Implement executor.py module (minimal version)
+  - [x] Implement execute_command()
+  - [x] Route commands to bash environment only
+  - [x] Handle unknown environment errors
+  - [x] Catch and report environment exceptions
 
-- [ ] Implement screen.py module (minimal version)
-  - [ ] Implement collect_screen_updates()
-  - [ ] Call get_screen() on bash environment
-  - [ ] Handle get_screen() exceptions
-  - [ ] Build Screen object (no aggregation needed yet)
-  - [ ] Apply max_lines truncation
+- [x] Implement screen.py module (minimal version)
+  - [x] Implement collect_screen_updates()
+  - [x] Call get_screen() on bash environment
+  - [x] Handle get_screen() exceptions
+  - [x] Build Screen object (no aggregation needed yet)
+  - [x] Apply max_lines truncation
 
-- [ ] Implement main.py module (minimal version)
-  - [ ] Implement main() entry point
-  - [ ] Main interaction loop
-  - [ ] Hardcode bash environment (no loading yet)
-  - [ ] Read commands from stdin
-  - [ ] Execute and collect screen
-  - [ ] Send responses to stdout
-  - [ ] Handle EOF for shutdown
-  - [ ] Implement shutdown for bash environment
+- [x] Implement main.py module (minimal version)
+  - [x] Implement main() entry point
+  - [x] Main interaction loop
+  - [x] Hardcode bash environment (no loading yet)
+  - [x] Read commands from stdin
+  - [x] Execute and collect screen
+  - [x] Send responses to stdout
+  - [x] Handle EOF for shutdown
+  - [x] Implement shutdown for bash environment
 
-- [ ] Write tests
-  - [ ] Test message parsing and serialization
-  - [ ] Test command routing to bash
-  - [ ] Test screen collection from bash
-  - [ ] Test error handling at each layer
-  - [ ] Test shutdown sequence
+- [x] Write tests
+  - [x] Test message parsing and serialization
+  - [x] Test command routing to bash
+  - [x] Test screen collection from bash
+  - [x] Test error handling at each layer
+  - [x] Test shutdown sequence
 
-- [ ] Manual integration testing
-  - [ ] Test stdin/stdout communication manually
-  - [ ] Send bash commands via NDJSON
-  - [ ] Verify screen updates
-  - [ ] Test error cases end-to-end
+- [x] Manual integration testing
+  - [x] Test stdin/stdout communication manually
+  - [x] Send bash commands via NDJSON
+  - [x] Verify screen updates
+  - [x] Test error cases end-to-end
 
-- [ ] Run formatters and linters
+- [x] Run formatters and linters
 
 # Scope Limitations
 
