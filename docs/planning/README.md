@@ -23,9 +23,10 @@ The orchestrator can work as a standalone tool without an agent. Focus on these 
 
 - [x] [Implement orchestrator core types](file://./implement-orchestrator-types.md)
 - [x] [Implement bash environment](file://./implement-bash-environment.md)
+- [ ] [Implement minimal orchestrator](file://./implement-minimal-orchestrator.md) - Get bash working end-to-end first
 - [ ] [Implement python environment](file://./implement-python-environment.md)
 - [ ] [Implement editor environment](file://./implement-editor-environment.md)
-- [ ] [Implement orchestrator core](file://./implement-orchestrator-core.md)
+- [ ] [Implement orchestrator core](file://./implement-orchestrator-core.md) - Full version with all environments
 
 ### Agent Integration (Deferred)
 

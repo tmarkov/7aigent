@@ -1,14 +1,12 @@
 # Description
 
-Implement the orchestrator core that manages environments, routes commands, and handles communication with the agent.
+Implement the full orchestrator core with environment loading, multiple environment support, and screen aggregation. This builds on the minimal orchestrator (which only supports bash) to add the complete environment management system.
 
 # Plan
 
-- [ ] Implement communication.py module
-  - [ ] Implement read_message() for NDJSON parsing
-  - [ ] Implement send_response() for NDJSON serialization
-  - [ ] Implement send_error_response()
-  - [ ] Handle EOF and parse errors
+- [ ] Extend communication.py module (if needed)
+  - Note: Basic NDJSON communication already done in minimal orchestrator
+  - [ ] Add any additional message types if needed
 
 - [ ] Implement loader.py module
   - [ ] Implement load_all_environments()
@@ -18,28 +16,23 @@ Implement the orchestrator core that manages environments, routes commands, and 
   - [ ] Implement validate_environment_class()
   - [ ] Handle validation errors with diagnostics
 
-- [ ] Implement executor.py module
-  - [ ] Implement execute_command()
-  - [ ] Route commands to appropriate environment
-  - [ ] Handle unknown environment errors
-  - [ ] Catch and report environment exceptions
+- [ ] Extend executor.py module
+  - Note: Minimal version routes to bash only
+  - [ ] Update to route to any loaded environment
+  - [ ] Support multiple environments simultaneously
 
-- [ ] Implement screen.py module
-  - [ ] Implement collect_screen_updates()
-  - [ ] Call get_screen() on all environments
-  - [ ] Handle get_screen() exceptions
-  - [ ] Aggregate into Screen object
-  - [ ] Apply max_lines truncation
+- [ ] Extend screen.py module
+  - Note: Minimal version collects from bash only
+  - [ ] Update to call get_screen() on ALL environments
+  - [ ] Aggregate screens from multiple environments
+  - [ ] Apply max_lines truncation across all screens
 
-- [ ] Implement main.py module
-  - [ ] Implement main() entry point
-  - [ ] Main interaction loop
-  - [ ] Load environments on startup
-  - [ ] Read commands from stdin
-  - [ ] Execute and collect screen
-  - [ ] Send responses to stdout
-  - [ ] Handle EOF for shutdown
-  - [ ] Implement shutdown_all_environments()
+- [ ] Extend main.py module
+  - Note: Minimal version hardcodes bash environment
+  - [ ] Replace hardcoded bash with loader
+  - [ ] Load all built-in environments on startup
+  - [ ] Load ad-hoc environments from env/ directory
+  - [ ] Update shutdown to handle all environments
 
 - [ ] Write tests
   - [ ] Test message parsing and serialization
@@ -62,6 +55,7 @@ Implement the orchestrator core that manages environments, routes commands, and 
 
 # Dependencies
 
+- Requires: Minimal orchestrator (implement-minimal-orchestrator.md)
 - Requires: All environments implemented (bash, python, editor)
 - Requires: Orchestrator types
 
