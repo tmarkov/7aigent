@@ -14,8 +14,16 @@
     };
   };
 
-  outputs = { self, nixpkgs, flake-utils, naersk, pre-commit-hooks }:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      flake-utils,
+      naersk,
+      pre-commit-hooks,
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
       let
         pkgs = import nixpkgs {
           inherit system;
@@ -25,19 +33,21 @@
         naersk-lib = pkgs.callPackage naersk { };
 
         # Python environment with required packages
-        pythonEnv = pkgs.python313.withPackages (ps: with ps; [
-          # Testing
-          pytest
-          hypothesis
+        pythonEnv = pkgs.python313.withPackages (
+          ps: with ps; [
+            # Testing
+            pytest
+            hypothesis
 
-          # Subprocess management
-          pexpect
+            # Subprocess management
+            pexpect
 
-          # Type checking (optional, for development)
-          mypy
+            # Type checking (optional, for development)
+            mypy
 
-          # Development dependencies will be added as needed
-        ]);
+            # Development dependencies will be added as needed
+          ]
+        );
 
         # Pre-commit hooks configuration
         pre-commit-check = pre-commit-hooks.lib.${system}.run {
@@ -114,67 +124,70 @@
             echo ""
             echo "Development environment loaded!"
             echo "Run 'pre-commit install' to set up git hooks"
-          '' + pre-commit-check.shellHook;
+          ''
+          + pre-commit-check.shellHook;
         };
+        packages = {
 
-        # Build the agent (Rust)
-        packages.agent = naersk-lib.buildPackage {
-          src = ./agent;
-          pname = "7aigent-agent";
-          version = "0.1.0";
-        };
-
-        # Build the orchestrator (Python)
-        packages.orchestrator = pkgs.python313Packages.buildPythonApplication {
-          pname = "7aigent-orchestrator";
-          version = "0.1.0";
-          src = ./orchestrator;
-
-          # Use pyproject.toml for build
-          pyproject = true;
-
-          # Build system dependencies
-          build-system = with pkgs.python313Packages; [
-            setuptools
-          ];
-
-          # Propagated build inputs (runtime dependencies)
-          propagatedBuildInputs = with pkgs.python313Packages; [
-            pexpect
-          ];
-
-          # Check inputs (test and lint dependencies)
-          nativeCheckInputs = with pkgs.python313Packages; [
-            pytest
-            hypothesis
-          ];
-
-          # Run checks (tests and linters)
-          checkPhase = ''
-            echo "Running black formatter check..."
-            ${pkgs.black}/bin/black --check orchestrator/ tests/
-
-            echo "Running isort check..."
-            ${pkgs.isort}/bin/isort --check orchestrator/ tests/
-
-            echo "Running ruff linter..."
-            ${pkgs.ruff}/bin/ruff check orchestrator/ tests/
-
-            echo "Running pytest tests..."
-            pytest tests/ -v
-          '';
-
-          # Ensure checks are run
-          doCheck = true;
-
-          meta = with pkgs.lib; {
-            description = "7aigent orchestrator - manages environments inside container";
-            license = licenses.mit;
+          # Build the agent (Rust)
+          agent = naersk-lib.buildPackage {
+            src = ./agent;
+            pname = "7aigent-agent";
+            version = "0.1.0";
           };
-        };
 
-        # Default package
-        packages.default = self.packages.${system}.agent;
+          # Build the orchestrator (Python)
+          orchestrator = pkgs.python313Packages.buildPythonApplication {
+            pname = "7aigent-orchestrator";
+            version = "0.1.0";
+            src = ./orchestrator;
+
+            # Use pyproject.toml for build
+            pyproject = true;
+
+            # Build system dependencies
+            build-system = with pkgs.python313Packages; [
+              setuptools
+            ];
+
+            # Propagated build inputs (runtime dependencies)
+            propagatedBuildInputs = with pkgs.python313Packages; [
+              pexpect
+            ];
+
+            # Check inputs (test and lint dependencies)
+            nativeCheckInputs = with pkgs.python313Packages; [
+              pytest
+              hypothesis
+            ];
+
+            # Run checks (tests and linters)
+            checkPhase = ''
+              echo "Running black formatter check..."
+              ${pkgs.black}/bin/black --check orchestrator/ tests/
+
+              echo "Running isort check..."
+              ${pkgs.isort}/bin/isort --check orchestrator/ tests/
+
+              echo "Running ruff linter..."
+              ${pkgs.ruff}/bin/ruff check orchestrator/ tests/
+
+              echo "Running pytest tests..."
+              pytest tests/ -v
+            '';
+
+            # Ensure checks are run
+            doCheck = true;
+
+            meta = with pkgs.lib; {
+              description = "7aigent orchestrator - manages environments inside container";
+              license = licenses.mit;
+            };
+          };
+
+          # Default package
+          default = self.packages.${system}.agent;
+        };
 
         # Pre-commit checks
         checks = {
