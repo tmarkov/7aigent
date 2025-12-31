@@ -4,46 +4,46 @@ Implement the Python REPL environment, which provides a persistent Python interp
 
 # Plan
 
-- [ ] Implement PythonEnvironment class
-  - [ ] Set up pexpect spawn with Python REPL
-  - [ ] Configure reliable prompt detection
-  - [ ] Implement handle_command() method
-  - [ ] Implement get_screen() method
-  - [ ] Implement shutdown() method
-  - [ ] Track namespace and working directory
+- [x] Implement PythonEnvironment class
+  - [x] Set up pexpect spawn with Python REPL
+  - [x] Configure reliable prompt detection
+  - [x] Implement handle_command() method
+  - [x] Implement get_screen() method
+  - [x] Implement shutdown() method
+  - [x] Track namespace and working directory
 
-- [ ] Implement variable tracking
-  - [ ] Implement simplified assignment detection (var = ...)
-  - [ ] Track variable usage ordering
-  - [ ] Implement get_type_name() helper
-  - [ ] Filter private variables and modules
-  - [ ] Limit display to 100 variables
+- [x] Implement variable tracking
+  - [x] Implement regex-based variable usage detection
+  - [x] Track variable usage ordering
+  - [x] Implement get_type_name() helper
+  - [x] Filter private variables and modules
+  - [x] Limit display to 100 variables
 
-- [ ] Handle multi-line code
-  - [ ] Implement multi-line command parsing per refined protocol
-  - [ ] Test with function definitions
-  - [ ] Test with class definitions
+- [x] Handle multi-line code
+  - [x] Implement multi-line command handling (blank line termination)
+  - [x] Test with function definitions
+  - [x] Test with class definitions
 
-- [ ] Handle edge cases
-  - [ ] SyntaxError handling
-  - [ ] Exception traceback display
-  - [ ] Handle infinite loops (per timeout design)
-  - [ ] Document memory management responsibility
+- [x] Handle edge cases
+  - [x] SyntaxError handling
+  - [x] Exception traceback display
+  - [x] Handle infinite loops (per timeout design - no timeout, matches bash)
+  - [x] Document memory management responsibility
 
-- [ ] Write tests
-  - [ ] Test basic expression evaluation
-  - [ ] Test variable persistence
-  - [ ] Test variable tracking and display
-  - [ ] Test multi-line code execution
-  - [ ] Test exception handling
-  - [ ] Test namespace introspection
+- [x] Write tests
+  - [x] Test basic expression evaluation
+  - [x] Test variable persistence
+  - [x] Test variable tracking and display
+  - [x] Test multi-line code execution
+  - [x] Test exception handling
+  - [x] Test namespace introspection
 
 - [ ] Manual testing
   - [ ] Test data analysis workflow (pandas)
   - [ ] Test plot generation (matplotlib)
   - [ ] Test variable tracking with complex objects
 
-- [ ] Run formatters and linters
+- [x] Run formatters and linters
 
 # Dependencies
 
