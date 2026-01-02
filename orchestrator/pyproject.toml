@@ -22,6 +22,7 @@ classifiers = [
 
 dependencies = [
     "pexpect>=4.8.0",
+    "textual>=0.47.0",
 ]
 
 [project.optional-dependencies]
@@ -36,6 +37,7 @@ dev = [
 
 [project.scripts]
 orchestrator = "orchestrator.__main__:main"
+orchestrator-tui = "orchestrator.tui:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

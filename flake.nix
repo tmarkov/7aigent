@@ -153,6 +153,7 @@
             # Propagated build inputs (runtime dependencies)
             propagatedBuildInputs = with pkgs.python313Packages; [
               pexpect
+              textual
             ];
 
             # Check inputs (test and lint dependencies)
