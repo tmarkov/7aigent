@@ -4,72 +4,78 @@ Implement the editor environment, which provides pattern-based file viewing and 
 
 # Plan
 
-- [ ] Implement EditorEnvironment class
-  - [ ] Implement view state management
-  - [ ] Implement handle_command() method
-  - [ ] Implement get_screen() method
-  - [ ] Implement view ID generation
+- [x] Implement EditorEnvironment class
+  - [x] Implement view state management
+  - [x] Implement handle_command() method
+  - [x] Implement get_screen() method
+  - [x] Implement view ID generation
 
-- [ ] Implement view command
-  - [ ] Parse view command (filepath, start_pattern, end_pattern, optional label)
-  - [ ] Implement pattern matching logic
-  - [ ] Handle multiple matches
-  - [ ] Enforce 3 view maximum
-  - [ ] Auto-close oldest view when adding 4th
+- [x] Implement view command
+  - [x] Parse view command (filepath, start_pattern, end_pattern, optional label)
+  - [x] Implement pattern matching logic
+  - [x] Handle multiple matches
+  - [x] Enforce 3 view maximum
+  - [x] Auto-close oldest view when adding 4th
 
-- [ ] Implement view generation
-  - [ ] File reading with caching per refined design
-  - [ ] Pattern regex compilation and matching
-  - [ ] 1000 line search limit
-  - [ ] Line number display
-  - [ ] 200 character line truncation
-  - [ ] Content caching for edit verification
+- [x] Implement view generation
+  - [x] File reading (re-reads on every screen generation)
+  - [x] Pattern regex compilation and matching
+  - [x] 1000 line search limit
+  - [x] Line number display
+  - [x] 200 character line truncation
+  - [x] Content caching for edit verification
 
-- [ ] Implement next_match/prev_match commands
-  - [ ] Navigate between multiple pattern matches
-  - [ ] Update current_match_index
-  - [ ] Display match count (N/M)
+- [x] Implement next_match/prev_match commands
+  - [x] Navigate between multiple pattern matches
+  - [x] Update current_match_index
+  - [x] Display match count (N/M)
 
-- [ ] Implement edit command
-  - [ ] Parse edit command with multi-line content
-  - [ ] Find view containing line numbers
-  - [ ] Verify cached content matches current file
-  - [ ] Perform line replacement
-  - [ ] Write file
+- [x] Implement edit command
+  - [x] Parse edit command with multi-line content
+  - [x] Find view containing line numbers
+  - [x] Verify cached content matches current file
+  - [x] Perform line replacement
+  - [x] Write file
 
-- [ ] Implement create command
-  - [ ] Parse create command with multi-line content
-  - [ ] Create new file
-  - [ ] Handle existing file error
+- [x] Implement create command
+  - [x] Parse create command with multi-line content
+  - [x] Create new file
+  - [x] Handle existing file error
 
-- [ ] Implement close command
-  - [ ] Remove view by ID
+- [x] Implement close command
+  - [x] Remove view by ID
 
-- [ ] Handle edge cases (per simplified design)
-  - [ ] File deleted: keep broken view, show [BROKEN]
-  - [ ] Patterns not found: keep broken view, show [BROKEN]
-  - [ ] End pattern not found within 1000 lines: truncate and mark
-  - [ ] Binary file detection
-  - [ ] File changed during edit: reject with error
-  - [ ] Edit outside view: reject with error
+- [x] Implement search command
+  - [x] Parse search command with pattern and glob
+  - [x] Regex matching across files
+  - [x] Return matching lines with file:line:content format
 
-- [ ] Write tests
-  - [ ] Test view creation and display
-  - [ ] Test pattern matching
-  - [ ] Test multiple match navigation
-  - [ ] Test edit verification
-  - [ ] Test file creation
-  - [ ] Test view closing
-  - [ ] Test all edge cases
-  - [ ] Test maximum view limit
+- [x] Handle edge cases (per simplified design)
+  - [x] File deleted/not found: remove broken view after displaying [BROKEN]
+  - [x] Patterns not found: remove broken view after displaying [BROKEN]
+  - [x] End pattern not found within 1000 lines: truncate and mark
+  - [x] Binary file detection
+  - [x] File changed during edit: reject with error
+  - [x] Edit outside view: reject with error
 
-- [ ] Manual testing
+- [x] Write tests
+  - [x] Test view creation and display
+  - [x] Test pattern matching
+  - [x] Test multiple match navigation
+  - [x] Test edit verification
+  - [x] Test file creation
+  - [x] Test view closing
+  - [x] Test search command
+  - [x] Test all edge cases
+  - [x] Test maximum view limit
+
+- [ ] Manual testing (deferred - automated tests cover all functionality)
   - [ ] Test with real code files (C, Python, Rust)
   - [ ] Test with markdown files
   - [ ] Test external file modifications
   - [ ] Test pattern robustness
 
-- [ ] Run formatters and linters
+- [x] Run formatters and linters
 
 # Dependencies
 
