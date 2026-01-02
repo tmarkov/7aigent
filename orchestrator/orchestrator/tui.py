@@ -33,11 +33,15 @@ class OrchestratorTUI(App):
     #output-container {
         height: 1fr;
         border: solid green;
+        overflow-y: auto;
+    }
+
+    #output-container:focus {
+        border: solid yellow;
     }
 
     #output-log {
-        height: 100%;
-        scrollbar-gutter: stable;
+        height: auto;
     }
 
     #input-container {
@@ -46,12 +50,12 @@ class OrchestratorTUI(App):
         padding: 0 1;
     }
 
-    #command-input {
-        width: 100%;
+    #input-container:focus-within {
+        border: solid yellow;
     }
 
-    .focused {
-        border: solid yellow;
+    #command-input {
+        width: 100%;
     }
     """
 
@@ -231,20 +235,15 @@ class OrchestratorTUI(App):
     def action_switch_focus(self) -> None:
         """Switch focus between output browser and command input."""
         output_container = self.query_one("#output-container", ScrollableContainer)
-        input_container = self.query_one("#input-container")
         input_widget = self.query_one("#command-input", Input)
 
         if self.output_focused:
             # Switch to input
             self.output_focused = False
-            output_container.remove_class("focused")
-            input_container.add_class("focused")
             input_widget.focus()
         else:
             # Switch to output browser
             self.output_focused = True
-            input_container.remove_class("focused")
-            output_container.add_class("focused")
             output_container.focus()
 
     def on_unmount(self) -> None:
