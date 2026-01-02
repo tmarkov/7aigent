@@ -18,8 +18,8 @@ from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Vertical
-from textual.widgets import Footer, Header, Input, RichLog
+from textual.containers import Container, ScrollableContainer
+from textual.widgets import Footer, Header, Input, Static
 
 
 class OrchestratorTUI(App):
@@ -66,20 +66,21 @@ class OrchestratorTUI(App):
         self.current_env = "bash"
         self.orchestrator_proc = None
         self.output_focused = False
+        self.output_lines = []
+
+    def write_output(self, text: str) -> None:
+        """Append text to output log."""
+        self.output_lines.append(text)
+        output_log = self.query_one("#output-log", Static)
+        output_log.update("\n".join(self.output_lines))
 
     def compose(self) -> ComposeResult:
         """Create UI widgets."""
         yield Header()
 
         # Output browser (large, top)
-        with Vertical(id="output-container"):
-            yield RichLog(
-                id="output-log",
-                highlight=True,
-                markup=True,
-                wrap=True,
-                auto_scroll=True,
-            )
+        with ScrollableContainer(id="output-container"):
+            yield Static("", id="output-log")
 
         # Command input (small, bottom)
         with Container(id="input-container"):
@@ -120,16 +121,15 @@ class OrchestratorTUI(App):
         self.query_one("#command-input", Input).focus()
 
         # Show welcome message
-        output_log = self.query_one("#output-log", RichLog)
-        output_log.write("[bold green]Orchestrator TUI started![/bold green]")
-        output_log.write(f"[yellow]Current environment: {self.current_env}[/yellow]")
-        output_log.write("[dim]Commands:[/dim]")
-        output_log.write(
+        self.write_output("[bold green]Orchestrator TUI started![/bold green]")
+        self.write_output(f"[yellow]Current environment: {self.current_env}[/yellow]")
+        self.write_output("[dim]Commands:[/dim]")
+        self.write_output(
             "[dim]  /bash, /python, /editor, /timer - switch environment[/dim]"
         )
-        output_log.write("[dim]  Ctrl-W - switch focus[/dim]")
-        output_log.write("[dim]  Ctrl-C - quit[/dim]")
-        output_log.write("")
+        self.write_output("[dim]  Ctrl-W - switch focus[/dim]")
+        self.write_output("[dim]  Ctrl-C - quit[/dim]")
+        self.write_output("")
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle command submission."""
@@ -137,7 +137,6 @@ class OrchestratorTUI(App):
         if not command:
             return
 
-        output_log = self.query_one("#output-log", RichLog)
         input_widget = self.query_one("#command-input", Input)
 
         # Clear input
@@ -151,14 +150,14 @@ class OrchestratorTUI(App):
             input_widget.placeholder = (
                 f"[{self.current_env}]> Enter command (or /env to switch)"
             )
-            output_log.write(
+            self.write_output(
                 f"[yellow]→ Switched to environment: {self.current_env}[/yellow]"
             )
-            output_log.write("")
+            self.write_output("")
             return
 
         # Show command being executed
-        output_log.write(f"[cyan][{self.current_env}]>[/cyan] {command}")
+        self.write_output(f"[cyan][{self.current_env}]>[/cyan] {command}")
 
         # Send command to orchestrator
         try:
@@ -170,7 +169,7 @@ class OrchestratorTUI(App):
             # Read response
             response_line = self.orchestrator_proc.stdout.readline()
             if not response_line:
-                output_log.write(
+                self.write_output(
                     "[bold red]Error: No response from orchestrator[/bold red]"
                 )
                 return
@@ -179,10 +178,10 @@ class OrchestratorTUI(App):
 
             # Handle error response
             if response.get("type") == "error":
-                output_log.write(
+                self.write_output(
                     f"[bold red]Error: {response.get('message')}[/bold red]"
                 )
-                output_log.write("")
+                self.write_output("")
                 return
 
             # Show command response
@@ -191,49 +190,49 @@ class OrchestratorTUI(App):
             output = cmd_response.get("output", "")
 
             if success:
-                output_log.write("[green]✓ Success[/green]")
+                self.write_output("[green]✓ Success[/green]")
             else:
-                output_log.write("[red]✗ Failed[/red]")
+                self.write_output("[red]✗ Failed[/red]")
 
             if output:
                 # Show output with proper formatting
                 for line in output.split("\n"):
-                    output_log.write(f"  {line}")
+                    self.write_output(f"  {line}")
 
             # Show screen sections
             screen = response.get("screen", {})
             if screen:
-                output_log.write("")
-                output_log.write("[bold]─── Screen ───[/bold]")
+                self.write_output("")
+                self.write_output("[bold]─── Screen ───[/bold]")
                 for env_name, section in screen.items():
                     content = section.get("content", "")
                     if content and content.strip():
-                        output_log.write(f"[bold yellow]{env_name}:[/bold yellow]")
+                        self.write_output(f"[bold yellow]{env_name}:[/bold yellow]")
                         for line in content.split("\n"):
-                            output_log.write(f"  {line}")
-                        output_log.write("")
+                            self.write_output(f"  {line}")
+                        self.write_output("")
 
         except BrokenPipeError:
-            output_log.write("[bold red]Error: Orchestrator process died[/bold red]")
+            self.write_output("[bold red]Error: Orchestrator process died[/bold red]")
             # Try to read stderr to see what happened
             if self.orchestrator_proc.stderr:
                 stderr_output = self.orchestrator_proc.stderr.read()
                 if stderr_output:
-                    output_log.write("[red]Orchestrator stderr:[/red]")
+                    self.write_output("[red]Orchestrator stderr:[/red]")
                     for line in stderr_output.split("\n"):
                         if line.strip():
-                            output_log.write(f"  {line}")
+                            self.write_output(f"  {line}")
         except Exception as e:
-            output_log.write(f"[bold red]Error: {e}[/bold red]")
-            output_log.write(f"[dim]{traceback.format_exc()}[/dim]")
+            self.write_output(f"[bold red]Error: {e}[/bold red]")
+            self.write_output(f"[dim]{traceback.format_exc()}[/dim]")
 
-        output_log.write("")
+        self.write_output("")
 
     def action_switch_focus(self) -> None:
         """Switch focus between output browser and command input."""
         output_container = self.query_one("#output-container")
         input_container = self.query_one("#input-container")
-        output_log = self.query_one("#output-log", RichLog)
+        output_log = self.query_one("#output-log", Static)
         input_widget = self.query_one("#command-input", Input)
 
         if self.output_focused:
