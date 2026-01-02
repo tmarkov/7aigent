@@ -79,7 +79,7 @@ class OrchestratorTUI(App):
         yield Header()
 
         # Output browser (large, top)
-        with ScrollableContainer(id="output-container"):
+        with ScrollableContainer(id="output-container", can_focus=True):
             yield Static("", id="output-log")
 
         # Command input (small, bottom)
@@ -230,9 +230,8 @@ class OrchestratorTUI(App):
 
     def action_switch_focus(self) -> None:
         """Switch focus between output browser and command input."""
-        output_container = self.query_one("#output-container")
+        output_container = self.query_one("#output-container", ScrollableContainer)
         input_container = self.query_one("#input-container")
-        output_log = self.query_one("#output-log", Static)
         input_widget = self.query_one("#command-input", Input)
 
         if self.output_focused:
@@ -246,7 +245,7 @@ class OrchestratorTUI(App):
             self.output_focused = True
             input_container.remove_class("focused")
             output_container.add_class("focused")
-            output_log.focus()
+            output_container.focus()
 
     def on_unmount(self) -> None:
         """Handle app unmount - shutdown orchestrator."""
