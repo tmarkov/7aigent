@@ -1,12 +1,13 @@
 """Main orchestrator entry point.
 
-This is the minimal orchestrator that supports only the bash environment.
-It provides early validation of the architecture before implementing the
-full orchestrator with environment loading and multiple environments.
+This is the full orchestrator that supports all built-in environments
+(bash, python, editor) and ad-hoc environments loaded from the project
+env/ directory.
 """
 
+import os
 import sys
-import types
+from pathlib import Path
 from typing import NoReturn
 
 from orchestrator.communication import (
@@ -15,9 +16,8 @@ from orchestrator.communication import (
     send_error_response,
     send_response,
 )
-from orchestrator.core_types import EnvironmentName
-from orchestrator.environments.bash import BashEnvironment
 from orchestrator.executor import UnknownEnvironmentError, execute_command
+from orchestrator.loader import load_all_environments
 from orchestrator.screen import collect_screen_updates
 
 
@@ -25,8 +25,8 @@ def main() -> NoReturn:
     """
     Main orchestrator interaction loop.
 
-    This minimal version hardcodes the bash environment and does not
-    support environment loading or multiple environments.
+    This version loads all built-in environments (bash, python, editor)
+    and ad-hoc environments from the project env/ directory.
 
     Protocol:
         1. Read NDJSON command from stdin
@@ -37,9 +37,12 @@ def main() -> NoReturn:
 
     On EOF, cleanly shuts down all environments and exits.
     """
-    # Initialize hardcoded bash environment
-    bash_env = BashEnvironment()
-    environments = types.MappingProxyType({EnvironmentName("bash"): bash_env})
+    # Get project directory from environment variable
+    # Default to current directory if not set
+    project_dir = Path(os.getenv("PROJECT_DIR", os.getcwd()))
+
+    # Load all environments (built-in and ad-hoc)
+    environments = load_all_environments(project_dir)
 
     try:
         # Main interaction loop

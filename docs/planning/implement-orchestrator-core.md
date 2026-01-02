@@ -4,54 +4,62 @@ Implement the full orchestrator core with environment loading, multiple environm
 
 # Plan
 
-- [ ] Extend communication.py module (if needed)
+- [x] Extend communication.py module (if needed)
   - Note: Basic NDJSON communication already done in minimal orchestrator
-  - [ ] Add any additional message types if needed
+  - [x] Add any additional message types if needed
+  - Result: No changes needed - existing implementation is sufficient
 
-- [ ] Implement loader.py module
-  - [ ] Implement load_all_environments()
-  - [ ] Load built-in environments (bash, python, editor)
-  - [ ] Load ad-hoc environments from env/ directory
-  - [ ] Implement find_environment_class()
-  - [ ] Implement validate_environment_class()
-  - [ ] Handle validation errors with diagnostics
+- [x] Implement loader.py module
+  - [x] Implement load_all_environments()
+  - [x] Load built-in environments (bash, python, editor)
+  - [x] Load ad-hoc environments from env/ directory
+  - [x] Implement find_environment_class()
+  - [x] Implement validate_environment_class()
+  - [x] Handle validation errors with diagnostics
 
-- [ ] Extend executor.py module
+- [x] Extend executor.py module
   - Note: Minimal version routes to bash only
-  - [ ] Update to route to any loaded environment
-  - [ ] Support multiple environments simultaneously
+  - [x] Update to route to any loaded environment
+  - [x] Support multiple environments simultaneously
+  - Result: No changes needed - already supports multiple environments via mapping
 
-- [ ] Extend screen.py module
+- [x] Extend screen.py module
   - Note: Minimal version collects from bash only
-  - [ ] Update to call get_screen() on ALL environments
-  - [ ] Aggregate screens from multiple environments
-  - [ ] Apply max_lines truncation across all screens
+  - [x] Update to call get_screen() on ALL environments
+  - [x] Aggregate screens from multiple environments
+  - [x] Apply max_lines truncation across all screens
+  - Result: No changes needed - already supports multiple environments via mapping
 
-- [ ] Extend main.py module
+- [x] Extend main.py module
   - Note: Minimal version hardcodes bash environment
-  - [ ] Replace hardcoded bash with loader
-  - [ ] Load all built-in environments on startup
-  - [ ] Load ad-hoc environments from env/ directory
-  - [ ] Update shutdown to handle all environments
+  - [x] Replace hardcoded bash with loader
+  - [x] Load all built-in environments on startup
+  - [x] Load ad-hoc environments from env/ directory
+  - [x] Update shutdown to handle all environments
+  - Result: Shutdown already iterates over all environments in mapping
 
-- [ ] Write tests
-  - [ ] Test message parsing and serialization
-  - [ ] Test environment loading and validation
-  - [ ] Test command routing
-  - [ ] Test screen aggregation
-  - [ ] Test error handling at each layer
-  - [ ] Test shutdown sequence
+- [x] Write tests
+  - [x] Test message parsing and serialization
+  - [x] Test environment loading and validation
+  - [x] Test command routing
+  - [x] Test screen aggregation
+  - [x] Test error handling at each layer
+  - [x] Test shutdown sequence
+  - Result: 155 tests pass, including 8 new loader tests
 
-- [ ] Create test ad-hoc environment
-  - [ ] Implement simple timer environment for testing
-  - [ ] Test ad-hoc environment loading
+- [x] Create test ad-hoc environment
+  - [x] Implement simple timer environment for testing
+  - [x] Test ad-hoc environment loading
+  - Result: Timer environment in env/timer.py successfully loaded
 
-- [ ] Integration testing
-  - [ ] Test full orchestrator with all environments
-  - [ ] Test stdin/stdout communication
-  - [ ] Test error cases end-to-end
+- [x] Integration testing
+  - [x] Test full orchestrator with all environments
+  - [x] Test stdin/stdout communication
+  - [x] Test error cases end-to-end
+  - Result: test_manual.py confirms all environments work correctly
 
-- [ ] Run formatters and linters
+- [x] Run formatters and linters
+  - Result: All checks pass (black, isort, ruff, pytest)
 
 # Dependencies
 
