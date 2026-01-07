@@ -38,4 +38,4 @@ nix flake check
 
 ## Contributing
 
-The current tasks are documented in the ./docs/planning/ directory.
+Current tasks are tracked in [docs/tasks/](./docs/tasks/).

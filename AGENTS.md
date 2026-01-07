@@ -43,7 +43,100 @@ This approach guarantees that if the build succeeds, all code meets quality stan
 
 ---
 
-## User-Story Driven Design Workflow
+## Project Organization
+
+Understanding where different types of work belong:
+
+### Documentation (docs/)
+
+`docs/` contains reference documentation, design decisions, and architecture:
+- **Purpose**: Explains HOW things work and WHY decisions were made
+- **Audience**: Anyone trying to understand the system
+- **Lifecycle**: Long-term reference material
+- **Examples**: `docs/orchestrator.md`, `docs/coding-style.md`, `docs/technology.md`
+
+### Tasks (docs/tasks/)
+
+`docs/tasks/` contains task definitions and work tracking:
+- **Purpose**: Describes WHAT needs to be done
+- **Audience**: Whoever is doing the work (human or LLM)
+- **Lifecycle**: Active during work, kept as historical record when completed
+- **Examples**: `docs/tasks/implement-bash-environment.md`, `docs/tasks/improve-tool-discoverability.md`
+- **Format**: Each task has description, scenarios, plan checklist, and design notes
+
+**Key distinction**: Documentation explains existing systems. Tasks describe work to be done.
+
+---
+
+## Task Lifecycle
+
+Work proceeds in three distinct phases:
+
+### 1. Task Definition
+
+**Goal**: Clearly define the problem without jumping to solutions.
+
+**Outputs**:
+- New file in `docs/tasks/` (e.g., `docs/tasks/fix-memory-leak.md`)
+- Entry in `docs/tasks/README.md` checklist
+- Problem description and context
+- 3-5 concrete scenarios (WHAT needs to work, not HOW)
+- Initial thoughts on constraints (optional)
+
+**Stop here** - don't design yet. Creating a task file is about articulating the problem clearly, not solving it.
+
+**Example task file structure**:
+```markdown
+# Task: Fix Memory Leak in Python Environment
+
+## Problem
+Python environment consumes unbounded memory over long sessions...
+
+## Context
+- Component: orchestrator/environments/python.py
+- Related: Issue #42, Performance requirements in docs/orchestrator.md
+
+## Scenarios
+1. Agent runs 1000 small Python commands - memory usage should stay bounded
+2. Agent creates large DataFrame, then deletes it - memory should be freed
+3. Agent imports heavy library - memory increase is one-time, not cumulative
+
+## Initial Thoughts
+- Likely in variable tracking or REPL output buffering
+- Need to profile to confirm root cause
+```
+
+### 2. Design
+
+**Goal**: Work through the 8-step scenario-driven design workflow to create a solution.
+
+**When**: After task is defined and you're ready to start solving it.
+
+**Outputs**:
+- Design decisions and rationale
+- Concrete examples of the solution
+- Trade-offs and alternatives considered
+- Updated task file with design section, OR separate design doc in `docs/`
+
+**Process**: Follow the full "Scenario-Driven Design Workflow" below.
+
+### 3. Implementation
+
+**Goal**: Write the code, tests, and update documentation.
+
+**When**: After design is complete and reviewed.
+
+**Outputs**:
+- Working code that passes all checks (`nix build` succeeds)
+- Comprehensive tests
+- Updated documentation if design changed during implementation
+- Checked-off items in task file's plan checklist
+
+**Process**: Follow the "Implementation Task" checklist in Quick Reference below.
+
+---
+
+## Scenario-Driven Design Workflow
 
 When designing or implementing changes, follow this workflow to ensure designs are practical, simple, and actually solve real problems.
 
@@ -57,9 +150,9 @@ When designing or implementing changes, follow this workflow to ensure designs a
 
 **Action**: Read relevant documentation in `./docs/` before proceeding.
 
-### 2. Define User Stories
+### 2. Define Scenarios
 
-**Think from the user's perspective** before designing anything.
+**Describe concrete situations that must work**, without prescribing solutions.
 
 - **Who is the "user"?** Could be:
   - End user of the system
@@ -72,15 +165,20 @@ When designing or implementing changes, follow this workflow to ensure designs a
   - Include scenarios that might break the design
   - Make scenarios different in important ways
 
-**Example**: For editor environment, scenarios include:
-- Agent views function in C file, edits it, sees updated content
-- Agent edits multi-chapter story, needs to see multiple files simultaneously
-- External tool modifies file while agent has it open
-- Agent wants to view function but doesn't know which line it's on
+**Good scenarios describe WHAT needs to happen:**
+- "Agent views function in C file, edits it, sees updated content"
+- "Agent edits multi-chapter story, needs to see multiple files simultaneously"
+- "External tool modifies file while agent has it open"
+- "Agent wants to view function but doesn't know which line it's on"
 
-**Critical**: Write these scenarios BEFORE designing. They reveal requirements that abstract thinking misses.
+**Bad scenarios describe HOW (the solution):**
+- ❌ "Agent sends view command with line numbers"
+- ❌ "System caches file contents and detects changes via mtime"
+- ❌ "Environment returns JSON with file content"
 
-### 3. Design for User Stories
+**Critical**: Write these scenarios BEFORE designing. They reveal requirements that abstract thinking misses. Scenarios should describe situations as if the system is a black box - what goes in (user request), what must come out (successful outcome), not the internals.
+
+### 3. Design for Scenarios
 
 **Walk through each scenario** to understand what's needed.
 
@@ -157,7 +255,7 @@ For each scenario, trace the interaction:
 - Fail fast better than complex recovery
 - One obvious way better than multiple options
 
-### 6. Review Against User Stories
+### 6. Review Against Scenarios
 
 **Go back to your scenarios**: Does the design actually work?
 
@@ -228,16 +326,33 @@ Only implement after design is solid.
 
 ## Quick Reference for Common Tasks
 
+### Task Definition
+
+**When**: You need to define new work to be done.
+
+1. Create file in `docs/tasks/` with descriptive name
+2. Write problem description (2-3 sentences: what's wrong or missing)
+3. Add context (affected components, constraints, related docs)
+4. **Write 3-5 concrete scenarios** (WHAT must work, not HOW)
+5. Optionally add initial thoughts (observations, not solutions)
+6. Add entry to `docs/tasks/README.md` checklist
+7. **Stop** - don't design yet
+
 ### Design Task
 
-1. Read existing docs
-2. **Write 3-5 concrete usage scenarios first**
-3. Design for those scenarios
-4. **Mentally implement critical functions**
-5. Simplify and prune
-6. Review against scenarios
-7. Iterate until design is grade A or B
-8. Document with rationale
+**When**: You're ready to solve a defined task.
+
+1. Read task file and related docs
+2. Follow the 8-step Scenario-Driven Design Workflow:
+   - Identify components
+   - Review scenarios (already in task file)
+   - Design for those scenarios
+   - **Mentally implement critical functions**
+   - Simplify and prune
+   - Review against scenarios
+   - Iterate until design is grade A or B
+   - Document with rationale
+3. Add design section to task file or create separate design doc
 
 ### Implementation Task
 
@@ -358,19 +473,35 @@ Only implement after design is solid.
 3. Explain why, not just what
 4. Link to related docs
 5. Keep different concerns in separate files
-6. Update planning checklists if tasks completed
+6. Update task checklists if tasks completed
 
 ---
 
 ## Common Pitfalls and How to Avoid Them
 
-### Pitfall: Designing Without User Stories
+### Pitfall: Designing Without Scenarios
 
 **Symptom**: Design that looks good on paper but has obvious issues when you try to use it.
 
 **Example**: Designing "line-based file views" without asking "how does agent know which lines to view?"
 
 **How to avoid**: Always start with concrete scenarios before abstract design.
+
+### Pitfall: Solution-Focused Scenarios
+
+**Symptom**: Scenarios describe API calls, message flows, or implementation details instead of user needs.
+
+**Example - Bad**:
+- "Agent sends list_environments request to orchestrator"
+- "Orchestrator returns JSON array of environment names"
+- "Agent parses response and caches the list"
+
+**Example - Good**:
+- "Agent needs to fix type errors in a TypeScript project it's never seen"
+- "Human added custom 'docker' environment, agent needs to use it to build containers"
+- "Agent is asked to debug a segfault in unfamiliar C code"
+
+**How to avoid**: Describe scenarios as if the system is a black box. Focus on what the user (human, agent, or component) is trying to accomplish, not how the system will accomplish it.
 
 ### Pitfall: Not Tracing Implementation
 
@@ -417,7 +548,7 @@ Only implement after design is solid.
 
 ### If Design Seems Too Complex
 
-1. Go back to user stories - what do they actually need?
+1. Go back to scenarios - what do they actually need?
 2. Question every feature - can it be removed or simplified?
 3. Look for simpler approaches that solve 80% of cases
 4. Consider deferring features to future version
@@ -475,4 +606,4 @@ You're doing well if:
 - You iterate based on feedback
 - You're honest about design quality (not defensive)
 - You learn from reviews and improve next time
-- You follow the user-story driven workflow
+- You follow the scenario-driven workflow
