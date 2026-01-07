@@ -21,9 +21,10 @@ __pycache__/
 dist/
 build/
 
-# IDEs
+# IDEs and AI assistants
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 *~
