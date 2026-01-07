@@ -51,9 +51,9 @@ For coding conventions and style guidelines, see [coding-style.md](coding-style.
 
 **Language**: Python modules
 
-**Contract**: To be designed (future task)
+**Contract**: See [orchestrator.md](orchestrator.md) for the complete Environment protocol specification
 
-**Validation**: Runtime introspection by orchestrator
+**Validation**: Runtime introspection by orchestrator validates type signatures and method presence
 
 ### Containerization
 
@@ -73,25 +73,31 @@ For coding conventions and style guidelines, see [coding-style.md](coding-style.
 ## Development Workflow
 
 **Version Control**:
-- Git for version control (to be initialized)
-- Conventional commits for commit messages
+- Git with conventional commit messages
 - Feature branches for new work
+
+**Build System**:
+- Nix flakes for reproducible builds
+- All checks (formatting, linting, testing) integrated into Nix build
+- Use `nix build .#orchestrator` or `nix build .#agent` to build with all checks
 
 **Testing**:
 - Python: pytest with hypothesis for property-based testing
 - Rust: Built-in test framework with proptest for property-based testing
-- To be further defined in development environment setup
 
-**CI/CD**:
-- To be defined in development environment setup
+## Implemented Design Decisions
+
+See [orchestrator.md](orchestrator.md) for complete specifications of:
+- Environment contract (Protocol with handle_command, get_screen, shutdown)
+- Agent-Orchestrator communication (NDJSON over stdin/stdout)
+- Message formats and schemas
+- All three built-in environments (bash, python, editor)
 
 ## Future Decisions
 
-The following decisions are deferred to specific design tasks:
+The following are deferred for future consideration:
 
-- Environment contract specification
-- Agent-Orchestrator communication protocol details
-- Editor environment LSP integration approach
-- Specific message formats and schemas
-- Testing strategy and framework choices
+- Editor environment LSP integration (goto_definition, find_references, rename)
+- CI/CD pipeline setup
 - Deployment and distribution approach
+- Multi-LLM provider support details

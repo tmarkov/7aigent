@@ -8,51 +8,19 @@ The orchestrator is the main process inside the container that manages environme
 - **Protocol**: Defines the contract all environments must implement
 - **Communication**: NDJSON over stdin/stdout for agent-orchestrator communication
 
-## Running
-
-```bash
-# Run the orchestrator
-python -m orchestrator
-
-# Or if installed as a package
-orchestrator
-```
-
-## Testing
-
-```bash
-# Run all tests
-pytest tests/ -v
-
-# Run with coverage
-pytest tests/ --cov=orchestrator
-```
+See [docs/orchestrator.md](../docs/orchestrator.md) for complete architecture and design documentation.
 
 ## Development
 
-```bash
-# Format code
-black orchestrator/ tests/
-isort orchestrator/ tests/
-
-# Lint code
-ruff check orchestrator/ tests/
-
-# Type check (optional)
-mypy orchestrator/
-```
-
-## Building with Nix
+This project uses Nix for reproducible builds with integrated checks:
 
 ```bash
-# Build the orchestrator package with all checks
+# Build with all checks (formatting, linting, tests)
 nix build .#orchestrator
 
-# This will:
-# - Run black formatter check
-# - Run isort import check
-# - Run ruff linter
-# - Run all pytest tests
-```
+# Development shell with all tools
+nix develop
 
-See the [orchestrator design documentation](../docs/orchestrator.md) for detailed information about the architecture and design decisions.
+# Run orchestrator directly (for manual testing)
+python -m orchestrator
+```
