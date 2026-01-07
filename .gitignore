@@ -31,3 +31,7 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Development/testing artifacts
+sandbox
+test_orchestrator.sh
