@@ -62,7 +62,7 @@ Understanding where different types of work belong:
 - **Audience**: Whoever is doing the work (human or LLM)
 - **Lifecycle**: Active during work, kept as historical record when completed
 - **Examples**: `docs/tasks/implement-bash-environment.md`, `docs/tasks/improve-tool-discoverability.md`
-- **Format**: Each task has description, scenarios, plan checklist, and design notes
+- **Format**: Each task has description, scenarios, plan checklist, dependencies, and outcome
 
 **Key distinction**: Documentation explains existing systems. Tasks describe work to be done.
 
@@ -116,7 +116,7 @@ Python environment consumes unbounded memory over long sessions...
 - Design decisions and rationale
 - Concrete examples of the solution
 - Trade-offs and alternatives considered
-- Updated task file with design section, OR separate design doc in `docs/`
+- Design document in `docs/` (e.g., `docs/capability-discovery.md`)
 
 **Process**: Follow the full "Scenario-Driven Design Workflow" below.
 
@@ -165,16 +165,42 @@ When designing or implementing changes, follow this workflow to ensure designs a
   - Include scenarios that might break the design
   - Make scenarios different in important ways
 
-**Good scenarios describe WHAT needs to happen:**
+**Properties of good scenarios:**
+
+1. **Goal-oriented, not process-oriented**: Describe what the user wants to accomplish, not what they need to learn or discover along the way
+   - Good: "Agent needs to fix type errors in TypeScript project"
+   - Bad: "Agent needs to discover TypeScript environment capabilities"
+
+2. **External/black-box perspective**: Describe the situation from outside the system - what goes in (the task/request) and what should come out (successful completion)
+   - Good: "Agent is asked to debug a segfault in unfamiliar C code"
+   - Bad: "Agent sends debug command to GDB environment and parses output"
+
+3. **Concrete and specific**: Real situations with enough detail to understand context and success criteria
+   - Good: "Agent needs to refactor authentication code spread across 5 files"
+   - Bad: "Agent needs to work with multiple files"
+
+4. **No built-in solution assumptions**: Don't presume HOW the system solves it, only WHAT needs to work
+   - Good: "Agent receives error from unknown command, needs to fix it"
+   - Bad: "Agent uses help command to see command syntax"
+
+5. **Testable/Verifiable**: Clear enough that you can determine if it succeeded or failed
+
+6. **Independent**: Each scenario stands alone, not dependent on others or on a specific sequence
+
+7. **Include failure/edge cases**: Not just happy paths - scenarios where things go wrong reveal requirements
+
+**Example good scenarios:**
 - "Agent views function in C file, edits it, sees updated content"
 - "Agent edits multi-chapter story, needs to see multiple files simultaneously"
 - "External tool modifies file while agent has it open"
 - "Agent wants to view function but doesn't know which line it's on"
 
-**Bad scenarios describe HOW (the solution):**
-- ❌ "Agent sends view command with line numbers"
-- ❌ "System caches file contents and detects changes via mtime"
-- ❌ "Environment returns JSON with file content"
+**Example bad scenarios (and why):**
+- ❌ "Agent sends view command with line numbers" - describes HOW (solution), not WHAT (goal)
+- ❌ "System caches file contents and detects changes via mtime" - describes internal mechanism
+- ❌ "Environment returns JSON with file content" - describes implementation detail
+- ❌ "Agent discovers available commands" - process-oriented, not goal-oriented
+- ❌ "Agent learns command syntax" - learning is never a goal in itself
 
 **Critical**: Write these scenarios BEFORE designing. They reveal requirements that abstract thinking misses. Scenarios should describe situations as if the system is a black box - what goes in (user request), what must come out (successful outcome), not the internals.
 
@@ -352,7 +378,7 @@ Only implement after design is solid.
    - Review against scenarios
    - Iterate until design is grade A or B
    - Document with rationale
-3. Add design section to task file or create separate design doc
+3. Create design document in `docs/` (separate from task file)
 
 ### Implementation Task
 

@@ -14,14 +14,13 @@ A task is a discrete piece of work to be done - designing a component, implement
 
 ## Task File Structure
 
-Each task file typically contains:
+Each task file contains:
 
-- **Problem/Description**: What needs to be done and why (2-3 sentences)
-- **Context**: Affected components, constraints, related documentation
-- **Scenarios**: 3-5 concrete situations that must work (describes WHAT, not HOW)
+- **Description**: What needs to be done and why (2-3 sentences)
+- **Scenarios** (optional but recommended): 3-5 concrete situations that must work (describes WHAT, not HOW)
 - **Plan**: Checklist of steps, updated as work progresses
-- **Design** (optional): Design decisions, rationale, examples (added during design phase)
-- **Other sections as needed**: Implementation notes, trade-offs, deferred features
+- **Dependencies**: What must be complete before starting this task
+- **Outcome**: What success looks like
 
 ## Task Lifecycle
 
@@ -57,6 +56,7 @@ The orchestrator can work as a standalone tool without an agent. Focus on these 
 - [x] [Implement python environment](file://./implement-python-environment.md)
 - [x] [Implement editor environment](file://./implement-editor-environment.md)
 - [x] [Implement orchestrator core](file://./implement-orchestrator-core.md) - Full version with all environments
+- [ ] [Improve tool discoverability](file://./improve-tool-discoverability.md) - Allow agents to discover environment capabilities
 
 ### Agent Integration (Deferred)
 
