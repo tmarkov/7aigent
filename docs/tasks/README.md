@@ -56,7 +56,8 @@ The orchestrator can work as a standalone tool without an agent. Focus on these 
 - [x] [Implement python environment](file://./implement-python-environment.md)
 - [x] [Implement editor environment](file://./implement-editor-environment.md)
 - [x] [Implement orchestrator core](file://./implement-orchestrator-core.md) - Full version with all environments
-- [ ] [Improve tool discoverability](file://./improve-tool-discoverability.md) - Allow agents to discover environment capabilities
+- [ ] [Design help system](file://./design-help-system.md) - Design self-documenting capability discovery
+- [ ] [Implement help system](file://./implement-help-system.md) - Implement the designed help system
 
 ### Agent Integration (Deferred)
 
