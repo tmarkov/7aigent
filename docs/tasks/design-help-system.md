@@ -157,13 +157,13 @@ A complete design document (`docs/help-system-design.md`) that:
 
 # Plan
 
-- [ ] Review existing screen format and protocol
-- [ ] Brainstorm approaches (screen section, inline hints, error messages, etc.)
-- [ ] Evaluate each approach against constraints
-- [ ] Design chosen approach in detail
-- [ ] Walk through all four scenarios with designed approach
-- [ ] Document trade-offs and alternatives
-- [ ] Write complete design document in `docs/help-system-design.md`
+- [x] Review existing screen format and protocol
+- [x] Brainstorm approaches (screen section, inline hints, error messages, etc.)
+- [x] Evaluate each approach against constraints
+- [x] Design chosen approach in detail
+- [x] Walk through all four scenarios with designed approach
+- [x] Document trade-offs and alternatives
+- [x] Write complete design document in `docs/help-system-design.md`
 
 # Dependencies
 
