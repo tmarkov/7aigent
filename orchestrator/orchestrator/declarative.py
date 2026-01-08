@@ -198,7 +198,7 @@ class DeclarativeEnvironment:
                     f"  {sig}\n    {desc_indented}\n    Example:\n{example_formatted}"
                 )
 
-        content = state + "\n\nCommands:\n" + "\n\n".join(commands_help)
+        content = f"{state}\n\nCommands:\n{'\n\n'.join(commands_help)}"
         return ScreenSection(content=content, max_lines=100)
 
     def get_state_display(self) -> str:

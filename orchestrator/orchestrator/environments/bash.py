@@ -41,6 +41,11 @@ class BashEnvironment:
     PROMPT_MARKER = "<<<PROMPT>>>"
     # Maximum output size (10MB)
     MAX_OUTPUT_SIZE = 10 * 1024 * 1024
+    # Command timeout (None = wait indefinitely)
+    # Infinite loops will block indefinitely - agent must be careful
+    TIMEOUT = None
+    # Buffer size for pexpect read operations (64KB)
+    PEXPECT_MAXREAD = 65536
 
     def __init__(self) -> None:
         """Initialize bash environment (process starts on first command)."""
@@ -62,7 +67,7 @@ class BashEnvironment:
             # Disable echo to avoid seeing commands in output
             echo=False,
             # Large buffer for output
-            maxread=65536,
+            maxread=self.PEXPECT_MAXREAD,
         )
 
         # Set unique prompt marker
@@ -150,8 +155,9 @@ class BashEnvironment:
             command = cmd.value
             self._process.send(command + "\n")
 
-            # Wait for prompt marker (this blocks indefinitely if command doesn't complete)
-            self._process.expect_exact(self.PROMPT_MARKER)
+            # Wait for prompt marker
+            # With timeout=None, blocks indefinitely if command doesn't complete
+            self._process.expect_exact(self.PROMPT_MARKER, timeout=self.TIMEOUT)
 
             # Get output (everything before the prompt marker)
             output = self._process.before.strip()

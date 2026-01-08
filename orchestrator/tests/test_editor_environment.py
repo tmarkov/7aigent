@@ -152,24 +152,30 @@ def test_close_command(editor, sample_file):
 
 def test_max_views_limit(editor, sample_file):
     """Test that maximum view limit is enforced."""
-    # Create MAX_VIEWS (3) views
+    # Create MAX_VIEWS (5) views
     editor.handle_command(CommandText("view sample.py /^def hello/ /^def world/"))
     editor.handle_command(CommandText("view sample.py /^def world/ /^class/"))
     editor.handle_command(CommandText("view sample.py /^class Foo/ /^class Baz/"))
+    editor.handle_command(CommandText("view sample.py /^class Baz/ /^$/"))
+    editor.handle_command(CommandText("view sample.py /^def world/ /^def hello/"))
 
     screen = editor.get_screen()
     assert "[1]" in screen.content
     assert "[2]" in screen.content
     assert "[3]" in screen.content
+    assert "[4]" in screen.content
+    assert "[5]" in screen.content
 
-    # Add a 4th view - should auto-close oldest (view 1)
-    editor.handle_command(CommandText("view sample.py /^class Baz/ /^$/"))
+    # Add a 6th view - should auto-close oldest (view 1)
+    editor.handle_command(CommandText("view sample.py /^class/ /^$/"))
 
     screen = editor.get_screen()
     assert "[1]" not in screen.content  # View 1 should be closed
     assert "[2]" in screen.content
     assert "[3]" in screen.content
     assert "[4]" in screen.content
+    assert "[5]" in screen.content
+    assert "[6]" in screen.content
 
 
 def test_create_command(editor, temp_project_dir):

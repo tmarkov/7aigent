@@ -1,5 +1,6 @@
 """Python REPL environment implementation."""
 
+import ast
 import os
 import re
 import sys
@@ -41,6 +42,11 @@ class PythonEnvironment:
     PROMPT_MARKER = "<<<PROMPT>>>"
     # Maximum variables to display
     MAX_VARIABLES_DISPLAY = 100
+    # Command timeout (None = wait indefinitely)
+    # Infinite loops will block indefinitely - agent must be careful
+    TIMEOUT = None
+    # Buffer size for pexpect read operations (64KB)
+    PEXPECT_MAXREAD = 65536
 
     def __init__(self) -> None:
         """Initialize Python environment (process starts on first command)."""
@@ -60,7 +66,7 @@ class PythonEnvironment:
             encoding="utf-8",
             codec_errors="replace",
             echo=False,
-            maxread=65536,
+            maxread=self.PEXPECT_MAXREAD,
             env={"TERM": "dumb", "PYTHONIOENCODING": "utf-8"},
         )
 
@@ -128,12 +134,12 @@ class PythonEnvironment:
 
         # Parse output: {'var1': "<class 'int'>", 'var2': "<class 'str'>"}
         try:
-            # Use eval to parse the dict representation
-            # This is safe because we control the Python process output
-            var_dict = eval(output)
+            # Use ast.literal_eval to safely parse the dict representation
+            # More robust than eval() - only parses Python literals
+            var_dict = ast.literal_eval(output)
             # Convert type strings to simple names
             return {k: self._get_type_name(v) for k, v in var_dict.items()}
-        except Exception:
+        except (ValueError, SyntaxError):
             # If parsing fails, return empty dict
             return {}
 

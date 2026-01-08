@@ -74,10 +74,19 @@ class PatternMatch:
 
 
 class EditorEnvironment(DeclarativeEnvironment):
-    """Editor environment for viewing and editing files with pattern-based views"""
+    """
+    Editor environment for viewing and editing files with pattern-based views.
+
+    Command Handler Naming Convention:
+        All command handlers are prefixed with `_handle_` to clearly distinguish
+        them from helper methods. This is an internal convention - handlers are
+        registered via @command decorator and invoked by DeclarativeEnvironment.
+
+        Examples: _handle_view(), _handle_edit(), _handle_search()
+    """
 
     # Maximum number of concurrent views
-    MAX_VIEWS = 3
+    MAX_VIEWS = 5
     # Maximum lines to search for end pattern
     MAX_SEARCH_LINES = 1000
     # Maximum line length before truncation
@@ -95,6 +104,37 @@ class EditorEnvironment(DeclarativeEnvironment):
         self._views: list[View] = []
         self._next_view_id = 1
         self._cached_content: dict[int, ViewContent] = {}
+
+    def _validate_filepath(self, filepath: Path) -> tuple[bool, str]:
+        """
+        Validate that filepath is within project directory.
+
+        This provides clearer API contract - editor is for project files.
+        Not a security boundary (agent can access any file via bash/python).
+
+        Args:
+            filepath: Path to validate (relative or absolute)
+
+        Returns:
+            Tuple of (is_valid, error_message). error_message is empty if valid.
+        """
+        try:
+            # Resolve both paths to handle symlinks and relative paths
+            full_path = (self._project_dir / filepath).resolve()
+            project_dir_resolved = self._project_dir.resolve()
+
+            # Check if full_path is within project_dir
+            if not full_path.is_relative_to(project_dir_resolved):
+                return (
+                    False,
+                    f"Path outside project directory: {filepath}\n"
+                    f"Editor operates on project files. Use bash to access other files.",
+                )
+
+            return (True, "")
+
+        except (ValueError, OSError) as e:
+            return (False, f"Invalid path: {filepath} ({e})")
 
     def _is_binary_file(self, filepath: Path) -> bool:
         """
@@ -400,6 +440,11 @@ class EditorEnvironment(DeclarativeEnvironment):
         end_pattern = parsed["end_pattern"]
         label = parsed["label"]
 
+        # Validate path is within project directory
+        is_valid, error_msg = self._validate_filepath(filepath)
+        if not is_valid:
+            return CommandResponse(output=error_msg, success=False)
+
         # Check if file exists
         full_path = self._project_dir / filepath
         if not full_path.exists():
@@ -537,6 +582,11 @@ class EditorEnvironment(DeclarativeEnvironment):
         end_line = parsed["end_line"]
         new_content = parsed["new_content"]
 
+        # Validate path is within project directory
+        is_valid, error_msg = self._validate_filepath(filepath)
+        if not is_valid:
+            return CommandResponse(output=error_msg, success=False)
+
         # Find which view contains these line numbers
         view_content = None
         for cached in self._cached_content.values():
@@ -610,6 +660,11 @@ class EditorEnvironment(DeclarativeEnvironment):
 
         filepath = Path(parsed["filepath"])
         content = parsed["content"]
+
+        # Validate path is within project directory
+        is_valid, error_msg = self._validate_filepath(filepath)
+        if not is_valid:
+            return CommandResponse(output=error_msg, success=False)
 
         # Check if file already exists
         full_path = self._project_dir / filepath
@@ -698,7 +753,7 @@ class EditorEnvironment(DeclarativeEnvironment):
         if not matches:
             return CommandResponse(output="No matches found", success=True)
 
-        output = "Matches:\n" + "\n".join(matches)
+        output = f"Matches:\n{'\n'.join(matches)}"
         return CommandResponse(output=output, success=True)
 
     def _execute_command(self, method: callable, cmd_text: str) -> str:
@@ -781,17 +836,21 @@ class EditorEnvironment(DeclarativeEnvironment):
 
         # Generate view content and format for screen
         screen_lines = ["Views:"]
+        valid_views = []
 
         for view in self._views:
             result = self._generate_view_content(view)
 
             if result is None:
-                # Patterns not found or file error - mark as broken and remove
+                # Patterns not found or file error - mark as broken
                 screen_lines.append(
                     f"  [{view.view_id}] {view.filepath} [BROKEN: patterns not found]"
                 )
-                # We'll remove broken views after iteration
+                # Don't add to valid_views - this view will be removed
                 continue
+
+            # View is valid - keep it
+            valid_views.append(view)
 
             match, total_matches = result
 
@@ -812,9 +871,7 @@ class EditorEnvironment(DeclarativeEnvironment):
             # Add blank line between views
             screen_lines.append("")
 
-        # Remove broken views (those that returned None)
-        self._views = [
-            v for v in self._views if self._generate_view_content(v) is not None
-        ]
+        # Update views list to only valid views (remove broken ones)
+        self._views = valid_views
 
         return "\n".join(screen_lines)
