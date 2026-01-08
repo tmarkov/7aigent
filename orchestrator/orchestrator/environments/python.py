@@ -250,30 +250,47 @@ class PythonEnvironment:
         Get current Python environment state.
 
         Returns:
-            Screen section showing working directory and variables with types
+            Screen section showing working directory, variables with types, and help
+
+        Format:
+            Working directory: /home/user/project
+
+            Variables (recent):
+              df: DataFrame
+              model: RandomForestClassifier
+
+            Any Python code. Variables and imports persist across commands.
         """
-        if not self._used:
-            return ScreenSection(content="Python REPL (ready)", max_lines=50)
-
-        # Get current namespace
-        namespace = self._get_namespace_variables()
-
         # Build screen content
-        lines = [f"Working directory: {self._cwd}", "", "Variables (by recent use):"]
+        lines = []
 
-        # Display variables in order, limit to MAX_VARIABLES_DISPLAY
-        displayed_count = 0
-        for var_name in self._ordered_vars:
-            if var_name in namespace:
-                type_name = namespace[var_name]
-                lines.append(f"  {var_name}: {type_name}")
-                displayed_count += 1
-                if displayed_count >= self.MAX_VARIABLES_DISPLAY:
-                    break
+        if self._used:
+            # Get current namespace
+            namespace = self._get_namespace_variables()
 
-        # If no variables, show message
-        if displayed_count == 0:
-            lines.append("  (no variables)")
+            lines.append(f"Working directory: {self._cwd}")
+            lines.append("")
+            lines.append("Variables (recent):")
+
+            # Display variables in order, limit to MAX_VARIABLES_DISPLAY
+            displayed_count = 0
+            for var_name in self._ordered_vars:
+                if var_name in namespace:
+                    type_name = namespace[var_name]
+                    lines.append(f"  {var_name}: {type_name}")
+                    displayed_count += 1
+                    if displayed_count >= self.MAX_VARIABLES_DISPLAY:
+                        break
+
+            # If no variables, show message
+            if displayed_count == 0:
+                lines.append("  (no variables)")
+
+            # Add blank line before help
+            lines.append("")
+
+        # Always show help text (freeform environment)
+        lines.append("Any Python code. Variables and imports persist across commands.")
 
         content = "\n".join(lines)
         return ScreenSection(content=content, max_lines=50)

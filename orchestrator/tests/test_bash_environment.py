@@ -11,12 +11,15 @@ class TestBashEnvironment:
     """Test BashEnvironment implementation."""
 
     def test_initial_state_before_first_use(self) -> None:
-        """Test that environment shows minimal screen before first use."""
+        """Test that environment shows help before first use."""
         env = BashEnvironment()
         try:
             screen = env.get_screen()
-            assert screen.content == "Bash shell (ready)"
+            # Should show help text even before first use
+            assert "Any bash command. Use & for background jobs." in screen.content
             assert screen.max_lines == 50
+            # Should NOT show state info before first use
+            assert "Working directory:" not in screen.content
         finally:
             env.shutdown()
 
@@ -164,6 +167,33 @@ class TestBashEnvironment:
             assert "Working directory:" in screen.content
             assert "Last exit code:" in screen.content
             assert "Background jobs:" in screen.content
+        finally:
+            env.shutdown()
+
+    def test_help_text_always_shown(self) -> None:
+        """Test that help text is always shown (freeform environment design)."""
+        env = BashEnvironment()
+        try:
+            # Before first use - should show help
+            screen_before = env.get_screen()
+            assert (
+                "Any bash command. Use & for background jobs." in screen_before.content
+            )
+
+            # After first use - should still show help
+            env.handle_command(CommandText("echo test"))
+            screen_after = env.get_screen()
+            assert (
+                "Any bash command. Use & for background jobs." in screen_after.content
+            )
+
+            # After many uses - should still show help
+            env.handle_command(CommandText("pwd"))
+            env.handle_command(CommandText("ls"))
+            screen_later = env.get_screen()
+            assert (
+                "Any bash command. Use & for background jobs." in screen_later.content
+            )
         finally:
             env.shutdown()
 

@@ -407,3 +407,161 @@ def test_multiple_views_display(editor, sample_file):
 def test_shutdown(editor):
     """Test shutdown method (should not raise)."""
     editor.shutdown()  # Should complete without error
+
+
+# Help System Tests (Progressive Disclosure)
+
+
+def test_initial_screen_shows_long_help_for_all_commands(editor):
+    """Test that initial screen shows LONG help for all commands (not yet used)."""
+    screen = editor.get_screen()
+    content = screen.content
+
+    # Should show Commands section
+    assert "Commands:" in content
+
+    # Should show LONG help for view (includes example)
+    assert "view <file> /<start>/ /<end>/ [label]" in content
+    assert "View a section of a file using regex patterns" in content
+    assert "Example:" in content
+    assert "```editor" in content
+
+    # Should show LONG help for edit (includes example)
+    assert "edit <file> <start>-<end>" in content
+    assert "Replace lines with new content" in content
+
+    # Should show LONG help for search (includes example)
+    assert 'search "<pattern>" <glob>' in content
+    assert "Find all occurrences" in content
+
+    # Should show LONG help for create (includes example)
+    assert "create <file>" in content
+    assert "Create a new file" in content
+
+
+def test_progressive_disclosure_after_using_view(editor, sample_file):
+    """Test that view command shows SHORT help after being used."""
+    # Use view command
+    editor.handle_command(
+        CommandText(f"view {sample_file.name} /^def hello/ /^def world/")
+    )
+
+    screen = editor.get_screen()
+    content = screen.content
+
+    # view should now show SHORT help (one line, no example)
+    assert "view <file> /<start>/ /<end>/ [label] - View" in content
+
+    # But since we haven't used edit yet, it should still show LONG help
+    assert "edit <file> <start>-<end>" in content
+    assert "Replace lines with new content" in content
+    assert "Example:" in content
+
+
+def test_progressive_disclosure_multiple_commands(editor, sample_file):
+    """Test progressive disclosure with multiple commands used."""
+    # Use view
+    editor.handle_command(
+        CommandText(f"view {sample_file.name} /^def hello/ /^def world/")
+    )
+
+    # Use search
+    editor.handle_command(CommandText('search "print" *.py'))
+
+    screen = editor.get_screen()
+    content = screen.content
+
+    # view and search should show SHORT help
+    assert "view <file> /<start>/ /<end>/ [label] - View" in content
+    assert 'search "<pattern>" <glob> - Find' in content
+
+    # edit and create should still show LONG help (not used yet)
+    assert "edit <file> <start>-<end>" in content
+    assert "Replace lines with new content" in content
+    assert "Example:" in content
+
+    assert "create <file>" in content
+    assert "Create a new file" in content
+
+
+def test_progressive_disclosure_all_commands_used(
+    editor, temp_project_dir, sample_file
+):
+    """Test that all commands show SHORT help after being used."""
+    # Use all commands
+    editor.handle_command(
+        CommandText(f"view {sample_file.name} /^def hello/ /^def world/")
+    )
+    editor.handle_command(CommandText('search "print" *.py'))
+
+    # Create a file to test create
+    editor.handle_command(CommandText("create new.py\n# New file"))
+
+    # Edit the sample file
+    editor.handle_command(CommandText(f"edit {sample_file.name} 1-2\n# Edited"))
+
+    # Use close, next_match, prev_match
+    editor.handle_command(CommandText("close 1"))
+    # Create another view to test next_match/prev_match
+    editor.handle_command(
+        CommandText(f"view {sample_file.name} /^class/ /^$/ test_label")
+    )
+    editor.handle_command(CommandText("next_match 2"))
+    editor.handle_command(CommandText("prev_match 2"))
+
+    screen = editor.get_screen()
+    content = screen.content
+
+    # All commands should now show SHORT help (no examples)
+    assert "view <file> /<start>/ /<end>/ [label] - View" in content
+    assert 'search "<pattern>" <glob> - Find' in content
+    assert "create <file> - Create" in content
+    assert "edit <file> <start>-<end> - Replace" in content
+    assert "close <id> - Close" in content
+    assert "next_match <id> - Show next" in content
+    assert "prev_match <id> - Show previous" in content
+
+    # Should NOT include any examples
+    assert "Example:" not in content
+    assert "```editor" not in content
+
+
+def test_screen_includes_state_and_commands(editor, sample_file):
+    """Test that screen includes both state (views) and commands."""
+    # Create a view
+    editor.handle_command(
+        CommandText(f"view {sample_file.name} /^def hello/ /^def world/")
+    )
+
+    screen = editor.get_screen()
+    content = screen.content
+
+    # Should include Views section
+    assert "Views:" in content
+    assert f"[1] {sample_file.name}" in content
+
+    # Should include Commands section
+    assert "Commands:" in content
+    assert "view" in content
+    assert "edit" in content
+
+
+def test_help_text_updates_per_command_not_per_environment(editor, sample_file):
+    """Test that help is tracked per-command, not all-or-nothing."""
+    # Use only the view command
+    editor.handle_command(
+        CommandText(f"view {sample_file.name} /^def hello/ /^def world/")
+    )
+
+    screen = editor.get_screen()
+    content = screen.content
+
+    # view should be SHORT
+    lines_with_view = [line for line in content.split("\n") if "view <file>" in line]
+    assert len(lines_with_view) == 1  # Only one line for view command
+    assert "view <file> /<start>/ /<end>/ [label] - View" in content
+
+    # edit should still be LONG (multiple lines with example)
+    assert "edit <file> <start>-<end>" in content
+    assert "Replace lines with new content" in content
+    assert "Example:" in content

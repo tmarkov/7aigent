@@ -8,12 +8,18 @@ class TestPythonEnvironment:
     """Test PythonEnvironment implementation."""
 
     def test_initial_state_before_first_use(self) -> None:
-        """Test that environment shows minimal screen before first use."""
+        """Test that environment shows help before first use."""
         env = PythonEnvironment()
         try:
             screen = env.get_screen()
-            assert screen.content == "Python REPL (ready)"
+            # Should show help text even before first use
+            assert (
+                "Any Python code. Variables and imports persist across commands."
+                in screen.content
+            )
             assert screen.max_lines == 50
+            # Should NOT show state info before first use
+            assert "Working directory:" not in screen.content
         finally:
             env.shutdown()
 
@@ -75,7 +81,7 @@ class TestPythonEnvironment:
             assert "x: int" in screen.content
             assert "y: str" in screen.content
             assert "z: list" in screen.content
-            assert "Variables (by recent use):" in screen.content
+            assert "Variables (recent):" in screen.content
         finally:
             env.shutdown()
 
@@ -277,7 +283,37 @@ class TestPythonEnvironment:
             # Screen should show full state
             screen = env.get_screen()
             assert "Working directory:" in screen.content
-            assert "Variables (by recent use):" in screen.content
+            assert "Variables (recent):" in screen.content
+        finally:
+            env.shutdown()
+
+    def test_help_text_always_shown(self) -> None:
+        """Test that help text is always shown (freeform environment design)."""
+        env = PythonEnvironment()
+        try:
+            # Before first use - should show help
+            screen_before = env.get_screen()
+            assert (
+                "Any Python code. Variables and imports persist across commands."
+                in screen_before.content
+            )
+
+            # After first use - should still show help
+            env.handle_command(CommandText("x = 1"))
+            screen_after = env.get_screen()
+            assert (
+                "Any Python code. Variables and imports persist across commands."
+                in screen_after.content
+            )
+
+            # After many uses - should still show help
+            env.handle_command(CommandText("y = 2"))
+            env.handle_command(CommandText("z = x + y"))
+            screen_later = env.get_screen()
+            assert (
+                "Any Python code. Variables and imports persist across commands."
+                in screen_later.content
+            )
         finally:
             env.shutdown()
 

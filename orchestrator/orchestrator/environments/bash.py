@@ -190,32 +190,35 @@ class BashEnvironment:
         Get current bash environment state.
 
         Returns:
-            Screen section showing working directory, exit code, and background jobs
+            Screen section showing working directory, exit code, background jobs, and help
 
-        Format before first use:
-            Bash shell (ready)
-
-        Format after use:
+        Format:
             Working directory: /home/user/project
             Last exit code: 0
             Background jobs: [1] 1234 ./server
+
+            Any bash command. Use & for background jobs.
         """
-        if not self._used:
-            return ScreenSection(content="Bash shell (ready)", max_lines=50)
-
         # Build screen content
-        lines = [
-            f"Working directory: {self._cwd}",
-            f"Last exit code: {self._exit_code}",
-        ]
+        lines = []
 
-        # Add background jobs if any
-        if self._background_jobs:
-            lines.append("Background jobs:")
-            for job in self._background_jobs:
-                lines.append(f"  {job}")
-        else:
-            lines.append("Background jobs: none")
+        if self._used:
+            lines.append(f"Working directory: {self._cwd}")
+            lines.append(f"Last exit code: {self._exit_code}")
+
+            # Add background jobs if any
+            if self._background_jobs:
+                lines.append("Background jobs:")
+                for job in self._background_jobs:
+                    lines.append(f"  {job}")
+            else:
+                lines.append("Background jobs: none")
+
+            # Add blank line before help
+            lines.append("")
+
+        # Always show help text (freeform environment)
+        lines.append("Any bash command. Use & for background jobs.")
 
         content = "\n".join(lines)
         return ScreenSection(content=content, max_lines=50)
