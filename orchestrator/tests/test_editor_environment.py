@@ -53,7 +53,10 @@ def test_initialization(editor):
     """Test editor environment initialization."""
     assert editor is not None
     screen = editor.get_screen()
-    assert "Editor (no views)" in screen.content
+    # New format shows "Views: (no views)" plus command help
+    assert "Views:" in screen.content
+    assert "(no views)" in screen.content
+    assert "Commands:" in screen.content
 
 
 def test_view_command_simple(editor, sample_file):
@@ -143,7 +146,8 @@ def test_close_command(editor, sample_file):
 
     # Check screen shows no views
     screen = editor.get_screen()
-    assert "Editor (no views)" in screen.content
+    assert "Views:" in screen.content
+    assert "(no views)" in screen.content
 
 
 def test_max_views_limit(editor, sample_file):
@@ -312,7 +316,8 @@ def test_view_patterns_not_found(editor, sample_file):
 
     # Second screen generation removes the broken view
     screen = editor.get_screen()
-    assert "Editor (no views)" in screen.content
+    assert "Views:" in screen.content
+    assert "(no views)" in screen.content
 
 
 def test_view_end_pattern_not_found_within_limit(editor, temp_project_dir):

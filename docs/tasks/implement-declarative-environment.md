@@ -84,25 +84,25 @@ def bar():
 
 ## Plan
 
-- [ ] Implement `@command` decorator in `orchestrator/declarative.py`
-- [ ] Implement `DeclarativeEnvironment` base class with:
-  - [ ] Command discovery from decorated methods
-  - [ ] Per-command usage tracking
-  - [ ] Progressive help screen generation
-  - [ ] Command routing to appropriate method
-  - [ ] Multi-line command parsing support
-- [ ] Write comprehensive tests for DeclarativeEnvironment
-- [ ] Refactor Editor environment to extend DeclarativeEnvironment:
-  - [ ] Add `@command` decorators to all methods
-  - [ ] Remove manual command parsing logic
-  - [ ] Implement `get_state_display()` for views
-  - [ ] Remove manual screen generation
-- [ ] Update Editor tests to verify:
-  - [ ] All commands still work correctly
-  - [ ] Progressive help is generated
-  - [ ] Multi-line commands work
-- [ ] Verify all existing editor tests pass
-- [ ] Run full build verification: `nix build .#orchestrator`
+- [x] Implement `@command` decorator in `orchestrator/declarative.py`
+- [x] Implement `DeclarativeEnvironment` base class with:
+  - [x] Command discovery from decorated methods
+  - [x] Per-command usage tracking
+  - [x] Progressive help screen generation
+  - [x] Command routing to appropriate method
+  - [x] Multi-line command parsing support
+- [x] Write comprehensive tests for DeclarativeEnvironment
+- [x] Refactor Editor environment to extend DeclarativeEnvironment:
+  - [x] Add `@command` decorators to all methods
+  - [x] Remove manual command parsing logic
+  - [x] Implement `get_state_display()` for views
+  - [x] Remove manual screen generation
+- [x] Update Editor tests to verify:
+  - [x] All commands still work correctly
+  - [x] Progressive help is generated
+  - [x] Multi-line commands work
+- [x] Verify all existing editor tests pass
+- [x] Run full build verification: `nix build .#orchestrator`
 
 ## Dependencies
 

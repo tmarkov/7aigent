@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from orchestrator.core_types import CommandResponse, CommandText, ScreenSection
+from orchestrator.core_types import CommandResponse
+from orchestrator.declarative import DeclarativeEnvironment, command
 
 
 @dataclass
@@ -72,33 +73,8 @@ class PatternMatch:
     truncated: bool = False
 
 
-class EditorEnvironment:
-    """
-    Editor environment for viewing and editing files with pattern-based views.
-
-    Provides pattern-based file viewing and line-based editing operations.
-    Maintains persistent views of code sections that update automatically
-    when files change.
-
-    Design:
-        - Views use regex patterns for boundaries, not fixed line numbers
-        - Always re-reads files on every screen generation (no caching)
-        - Views persist across commands until explicitly closed
-        - Maximum 3 views, auto-close oldest when adding 4th
-        - Edit verification ensures file hasn't changed since view generation
-        - Pattern search with 1000 line limit to prevent pathological cases
-
-    State maintained:
-        - List of views (id, filepath, patterns, match index, label)
-        - Cached content from last screen generation (for edit verification)
-        - Next view ID counter
-
-    Limitations:
-        - Binary files not supported
-        - Maximum 1000 lines per view
-        - Maximum 3 concurrent views
-        - Edit only allowed on lines visible in a view
-    """
+class EditorEnvironment(DeclarativeEnvironment):
+    """Editor environment for viewing and editing files with pattern-based views"""
 
     # Maximum number of concurrent views
     MAX_VIEWS = 3
@@ -114,8 +90,8 @@ class EditorEnvironment:
         Args:
             project_dir: Root directory for file operations
         """
+        super().__init__()
         self._project_dir = project_dir
-        self._used = False
         self._views: list[View] = []
         self._next_view_id = 1
         self._cached_content: dict[int, ViewContent] = {}
@@ -405,6 +381,11 @@ class EditorEnvironment:
 
         return {"pattern": pattern, "glob": glob_pattern}
 
+    @command(
+        signature="view <file> /<start>/ /<end>/ [label]",
+        description="View a section of a file using regex patterns to define boundaries.\nPatterns are Python regex. Multiple matches can be navigated with next_match/prev_match.",
+        example="view src/main.py /^def main/ /^if __name__/",
+    )
     def _handle_view(self, cmd: str) -> CommandResponse:
         """Handle view command."""
         parsed = self._parse_view_command(cmd)
@@ -447,7 +428,6 @@ class EditorEnvironment:
         )
         self._views.append(view)
         self._next_view_id += 1
-        self._used = True
 
         # Try to generate content to verify patterns match
         result = self._generate_view_content(view)
@@ -463,6 +443,11 @@ class EditorEnvironment:
             success=True,
         )
 
+    @command(
+        signature="next_match <id>",
+        description="Show next pattern match for a view",
+        example="next_match 1",
+    )
     def _handle_next_match(self, view_id: int) -> CommandResponse:
         """Handle next_match command."""
         # Find view
@@ -487,6 +472,11 @@ class EditorEnvironment:
             success=True,
         )
 
+    @command(
+        signature="prev_match <id>",
+        description="Show previous pattern match for a view",
+        example="prev_match 1",
+    )
     def _handle_prev_match(self, view_id: int) -> CommandResponse:
         """Handle prev_match command."""
         # Find view
@@ -511,6 +501,11 @@ class EditorEnvironment:
             success=True,
         )
 
+    @command(
+        signature="close <id>",
+        description="Close a view",
+        example="close 1",
+    )
     def _handle_close(self, view_id: int) -> CommandResponse:
         """Handle close command."""
         # Find and remove view
@@ -523,6 +518,11 @@ class EditorEnvironment:
 
         return CommandResponse(output=f"Closed view [{view_id}]", success=True)
 
+    @command(
+        signature="edit <file> <start>-<end>",
+        description="Replace lines with new content. Lines must be visible in a view.\nContent is provided on subsequent lines after the command.",
+        example="edit src/main.py 45-50\ndef process(verbose=False):\n    if not verbose:\n        return",
+    )
     def _handle_edit(self, cmd_lines: list[str]) -> CommandResponse:
         """Handle edit command."""
         parsed = self._parse_edit_command(cmd_lines)
@@ -594,6 +594,11 @@ class EditorEnvironment:
             output=f"Edited {filepath} lines {start_line}-{end_line}", success=True
         )
 
+    @command(
+        signature="create <file>",
+        description="Create a new file with initial content.\nContent is provided on subsequent lines after the command.",
+        example="create new_file.py\n# New module",
+    )
     def _handle_create(self, cmd_lines: list[str]) -> CommandResponse:
         """Handle create command."""
         parsed = self._parse_create_command(cmd_lines)
@@ -631,6 +636,11 @@ class EditorEnvironment:
 
         return CommandResponse(output=f"Created {filepath}", success=True)
 
+    @command(
+        signature='search "<pattern>" <glob>',
+        description="Find all occurrences of pattern in files matching glob.\nReturns filepath:line_number for each match.",
+        example='search "TODO" *.py',
+    )
     def _handle_search(self, cmd: str) -> CommandResponse:
         """Handle search command."""
         parsed = self._parse_search_command(cmd)
@@ -691,95 +701,80 @@ class EditorEnvironment:
         output = "Matches:\n" + "\n".join(matches)
         return CommandResponse(output=output, success=True)
 
-    def handle_command(self, cmd: CommandText) -> CommandResponse:
+    def _execute_command(self, method: callable, cmd_text: str) -> str:
         """
-        Execute an editor command.
+        Override to handle custom command parsing for Editor.
+
+        Editor needs special handling for edit and create commands which take
+        multi-line content. Other commands use simple parsing.
 
         Args:
-            cmd: The command to execute
+            method: The command handler method to execute
+            cmd_text: The full command text
 
         Returns:
-            Response with command output and success status
+            Command result string
 
-        Supported commands:
-            view <filepath> /<start_pattern>/ /<end_pattern>/ [<label>]
-            edit <filepath> <start_line>-<end_line>
-            <new content on subsequent lines>
-            create <filepath>
-            <initial content on subsequent lines>
-            close <view_id>
-            next_match <view_id>
-            prev_match <view_id>
-            search "<pattern>" <glob>
+        Raises:
+            Exception: Any exception from the command handler
         """
         # Split into lines for multi-line commands
-        cmd_lines = cmd.value.split("\n")
+        cmd_lines = cmd_text.split("\n")
         first_line = cmd_lines[0].strip()
 
-        # Parse command type
+        # Handle each command type appropriately
         if first_line.startswith("view "):
-            return self._handle_view(first_line)
+            response = method(first_line)
         elif first_line.startswith("edit "):
-            return self._handle_edit(cmd_lines)
+            response = method(cmd_lines)
         elif first_line.startswith("create "):
-            return self._handle_create(cmd_lines)
+            response = method(cmd_lines)
+        elif first_line.startswith("search "):
+            response = method(first_line)
         elif first_line.startswith("close "):
             # Parse: close <view_id>
             match = re.match(r"close\s+(\d+)$", first_line)
             if not match:
-                return CommandResponse(
-                    output="Invalid close command. Format: close <view_id>",
-                    success=False,
-                )
+                raise ValueError("Invalid close command. Format: close <view_id>")
             view_id = int(match.group(1))
-            return self._handle_close(view_id)
+            response = method(view_id)
         elif first_line.startswith("next_match "):
             # Parse: next_match <view_id>
             match = re.match(r"next_match\s+(\d+)$", first_line)
             if not match:
-                return CommandResponse(
-                    output="Invalid next_match command. Format: next_match <view_id>",
-                    success=False,
+                raise ValueError(
+                    "Invalid next_match command. Format: next_match <view_id>"
                 )
             view_id = int(match.group(1))
-            return self._handle_next_match(view_id)
+            response = method(view_id)
         elif first_line.startswith("prev_match "):
             # Parse: prev_match <view_id>
             match = re.match(r"prev_match\s+(\d+)$", first_line)
             if not match:
-                return CommandResponse(
-                    output="Invalid prev_match command. Format: prev_match <view_id>",
-                    success=False,
+                raise ValueError(
+                    "Invalid prev_match command. Format: prev_match <view_id>"
                 )
             view_id = int(match.group(1))
-            return self._handle_prev_match(view_id)
-        elif first_line.startswith("search "):
-            return self._handle_search(first_line)
+            response = method(view_id)
         else:
-            return CommandResponse(
-                output=f"Unknown command: {first_line}",
-                success=False,
-            )
+            raise ValueError(f"Unknown command: {first_line}")
 
-    def get_screen(self) -> ScreenSection:
+        # Convert CommandResponse to string (for DeclarativeEnvironment)
+        if isinstance(response, CommandResponse):
+            if not response.success:
+                raise ValueError(response.output)
+            return response.output
+        return str(response)
+
+    def get_state_display(self) -> str:
         """
-        Get current editor environment state.
+        Get current editor state (views) for display.
 
         Returns:
-            Screen section showing all active views with their content
-
-        Format before first use:
-            Editor (no views)
-
-        Format with views:
-            Views:
-              [1] src/main.py /^def main/ to /^if __name__/ (match 1/1)
-                 45  def main():
-                 46      parser = argparse.ArgumentParser()
-                 ...
+            String showing all active views with their content
         """
-        if not self._used or not self._views:
-            return ScreenSection(content="Editor (no views)", max_lines=50)
+        if not self._views:
+            return "Views:\n  (no views)"
 
         # Clear cached content from previous generation
         self._cached_content.clear()
@@ -822,9 +817,4 @@ class EditorEnvironment:
             v for v in self._views if self._generate_view_content(v) is not None
         ]
 
-        content = "\n".join(screen_lines)
-        return ScreenSection(content=content, max_lines=50)
-
-    def shutdown(self) -> None:
-        """Clean up editor environment (no resources to release)."""
-        pass
+        return "\n".join(screen_lines)
