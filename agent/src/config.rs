@@ -138,25 +138,54 @@ pub struct LlmConfig {
     pub pricing: HashMap<String, TokenPricing>,
 }
 
+impl LlmConfig {
+    /// Validate and convert to ValidatedLlmConfig for API usage.
+    ///
+    /// This method checks that all required fields are present and creates
+    /// a ValidatedLlmConfig that can be used with LLM clients.
+    pub fn validate(&self) -> Result<crate::llm::openai::ValidatedLlmConfig> {
+        // Ensure endpoint is set
+        if self.endpoint.is_empty() {
+            anyhow::bail!("llm.endpoint is required");
+        }
+
+        // Ensure model is set
+        if self.model.is_empty() {
+            anyhow::bail!("llm.model is required");
+        }
+
+        // Get API key from environment variable
+        let api_key_env = self.api_key_env.as_deref().unwrap_or("OPENAI_API_KEY");
+        let api_key = std::env::var(api_key_env)
+            .with_context(|| format!("Environment variable {} not set", api_key_env))?;
+
+        // Get pricing for the model
+        let pricing = self
+            .pricing
+            .get(&self.model)
+            .copied()
+            .unwrap_or_else(|| crate::llm::cost::get_pricing(&self.model));
+
+        // Create validated config
+        let mut validated = crate::llm::openai::ValidatedLlmConfig::new(
+            self.endpoint.clone(),
+            api_key,
+            self.model.clone(),
+            pricing,
+        );
+
+        // Set optional timeout (default is 60 seconds)
+        if let Some(timeout) = self.max_tokens {
+            validated = validated.with_timeout(timeout as u64);
+        }
+
+        Ok(validated)
+    }
+}
+
 impl Default for LlmConfig {
     fn default() -> Self {
-        let mut pricing = HashMap::new();
-
-        // Default pricing for common models
-        pricing.insert(
-            "gpt-4".to_string(),
-            TokenPricing {
-                input_per_1k: Decimal::new(30, 3),  // 0.03
-                output_per_1k: Decimal::new(60, 3), // 0.06
-            },
-        );
-        pricing.insert(
-            "gpt-3.5-turbo".to_string(),
-            TokenPricing {
-                input_per_1k: Decimal::new(1, 3),  // 0.001
-                output_per_1k: Decimal::new(2, 3), // 0.002
-            },
-        );
+        let pricing = crate::llm::cost::default_pricing();
 
         Self {
             endpoint: String::new(),
@@ -170,15 +199,8 @@ impl Default for LlmConfig {
     }
 }
 
-/// Token pricing for a model
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct TokenPricing {
-    /// Cost per 1000 input tokens (in dollars)
-    pub input_per_1k: Decimal,
-
-    /// Cost per 1000 output tokens (in dollars)
-    pub output_per_1k: Decimal,
-}
+/// Token pricing for a model (re-export from llm::cost)
+pub use crate::llm::cost::TokenPricing;
 
 /// Sandbox configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

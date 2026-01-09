@@ -9,6 +9,9 @@ pub mod cost;
 pub mod openai;
 pub mod retry;
 
+// Re-export ValidatedLlmConfig for convenience
+pub use openai::ValidatedLlmConfig;
+
 /// Errors that can occur during LLM operations.
 #[derive(Debug, Error)]
 pub enum LlmError {

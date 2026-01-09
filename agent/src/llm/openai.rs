@@ -10,9 +10,13 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-/// OpenAI-compatible client configuration.
+/// Validated LLM configuration (ready for API usage).
+///
+/// This is the validated, internal representation of LlmConfig. All required
+/// fields are present and have been validated. Use `LlmConfig::validate()` to
+/// create this from user-facing configuration.
 #[derive(Debug, Clone)]
-pub struct OpenAiConfig {
+pub struct ValidatedLlmConfig {
     /// API endpoint URL.
     pub endpoint: String,
     /// API key for authentication.
@@ -25,8 +29,8 @@ pub struct OpenAiConfig {
     pub timeout_seconds: u64,
 }
 
-impl OpenAiConfig {
-    /// Create a new OpenAiConfig.
+impl ValidatedLlmConfig {
+    /// Create a new ValidatedLlmConfig.
     pub fn new(endpoint: String, api_key: String, model: String, pricing: TokenPricing) -> Self {
         Self {
             endpoint,
@@ -49,12 +53,12 @@ pub struct OpenAiCompatibleClient {
     /// HTTP client.
     client: Client,
     /// Configuration.
-    config: OpenAiConfig,
+    config: ValidatedLlmConfig,
 }
 
 impl OpenAiCompatibleClient {
     /// Create a new OpenAI-compatible client.
-    pub fn new(config: OpenAiConfig) -> Result<Self, LlmError> {
+    pub fn new(config: ValidatedLlmConfig) -> Result<Self, LlmError> {
         let mut headers = header::HeaderMap::new();
         headers.insert(
             header::AUTHORIZATION,
@@ -216,8 +220,8 @@ mod tests {
     use super::*;
     use rust_decimal_macros::dec;
 
-    fn test_config() -> OpenAiConfig {
-        OpenAiConfig::new(
+    fn test_config() -> ValidatedLlmConfig {
+        ValidatedLlmConfig::new(
             "https://api.openai.com/v1".to_string(),
             "test-key".to_string(),
             "gpt-4".to_string(),

@@ -344,10 +344,7 @@ mod tests {
         let mut pricing = HashMap::new();
         pricing.insert(
             "test-model".to_string(),
-            TokenPricing {
-                input_per_1k: Decimal::new(1, 3),  // $0.001
-                output_per_1k: Decimal::new(2, 3), // $0.002
-            },
+            TokenPricing::new(Decimal::new(1, 3), Decimal::new(2, 3)),
         );
 
         Config {

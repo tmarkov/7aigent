@@ -2,10 +2,11 @@
 
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Pricing information for a model.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenPricing {
     /// Cost per 1K input tokens in USD.
     pub input_cost_per_1k: Decimal,
