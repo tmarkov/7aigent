@@ -6,13 +6,14 @@ This document describes the complete design for the 7aigent agent - the Rust bin
 
 1. [Overview](#overview)
 2. [Architecture](#architecture)
-3. [Core Components](#core-components)
-4. [Sandboxing and Security](#sandboxing-and-security)
-5. [Context and State Management](#context-and-state-management)
-6. [Cost Control](#cost-control)
-7. [Configuration System](#configuration-system)
-8. [Interaction Flow](#interaction-flow)
-9. [Design Rationale](#design-rationale)
+3. [Type System](#type-system)
+4. [Core Components](#core-components)
+5. [Sandboxing and Security](#sandboxing-and-security)
+6. [Context and State Management](#context-and-state-management)
+7. [Cost Control](#cost-control)
+8. [Configuration System](#configuration-system)
+9. [Interaction Flow](#interaction-flow)
+10. [Design Rationale](#design-rationale)
 
 ---
 
@@ -40,7 +41,8 @@ The agent is a Rust binary that runs on the host machine (outside the container)
 │                                                              │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
 │  │   CLI        │  │  Session     │  │  Config      │     │
-│  │   Interface  │  │  Manager     │  │  Loader      │     │
+│  │   Interface  │  │  (with save/ │  │  Loader      │     │
+│  │              │  │   load API)  │  │              │     │
 │  └──────────────┘  └──────────────┘  └──────────────┘     │
 │         │                  │                  │             │
 │         └──────────────────┼──────────────────┘             │
@@ -79,11 +81,254 @@ The agent is a Rust binary that runs on the host machine (outside the container)
 |-----------|---------|
 | **CLI Interface** | Parse args, handle user input, display progress |
 | **Config Loader** | Load and merge project + global configs |
-| **Session Manager** | Create/load/save session state to disk |
+| **Session** | Owns session state and persistence (create/load/save methods) |
 | **Agent Core** | Main interaction loop orchestration |
 | **LLM Client** | Call OpenAI-compatible APIs, retry logic, cost tracking |
 | **Container Manager** | Build/spawn/manage Podman container with orchestrator |
-| **History & Context** | Store messages, screens, provide context inspection |
+| **History & Context** | Loaded from session, maintained in-memory during execution |
+
+---
+
+## Type System
+
+**Design Principle**: This project uses **strong typing to make invalid states unrepresentable**. Following the "if it compiles, it works" philosophy, we define semantic types instead of using primitive strings, integers, and tuples.
+
+This is especially important for LLM-generated code, where compile-time checks catch bugs that might otherwise require human review.
+
+### Core Semantic Types
+
+#### SessionId - Strong Newtype
+
+**Don't use**: `Uuid` directly (can mix up different ID types)
+
+**Do use**: Proper newtype wrapper
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SessionId(Uuid);
+
+impl SessionId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+
+    pub fn as_uuid(&self) -> &Uuid {
+        &self.0
+    }
+}
+```
+
+**Why**: Prevents passing container IDs where session IDs are expected. Won't compile if you mix them up.
+
+#### LlmConfigSnapshot - Session Resume Data
+
+**Purpose**: Records which LLM endpoint/model was used for a session, enabling accurate resume.
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmConfigSnapshot {
+    pub endpoint: String,
+    pub model: String,
+}
+```
+
+**Why**:
+- Prevents passing `(model, endpoint)` in wrong order (type-safe tuple)
+- Documents intent: "This is the LLM config for THIS specific session"
+- Makes session resumption type-safe
+
+**Usage**: Recorded on first LLM call, optional in Session struct.
+
+#### TokenUsage - Usage Statistics
+
+**Don't use**: `(usize, usize, usize)` tuple or separate variables
+
+**Do use**: Self-documenting struct
+```rust
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct TokenUsage {
+    pub prompt_tokens: usize,
+    pub completion_tokens: usize,
+    pub total_tokens: usize,
+}
+
+impl TokenUsage {
+    pub fn cost(&self, pricing: &TokenPricing) -> Decimal {
+        // Calculate cost from usage and pricing
+    }
+}
+```
+
+**Why**:
+- Can't accidentally swap prompt and completion tokens
+- Self-documenting
+- Can add methods for calculations
+- Clear which field is which in struct literals
+
+#### Command vs CommandResponse - Protocol Direction
+
+```rust
+// Agent → Orchestrator
+#[derive(Debug, Clone)]
+pub struct Command {
+    pub env: String,      // e.g., "bash", "python"
+    pub command: String,  // Command text
+}
+
+// Orchestrator → Agent
+#[derive(Debug, Clone)]
+pub struct CommandResponse {
+    pub output: String,
+    pub exit_code: Option<i32>,
+}
+```
+
+**Why**:
+- Makes data flow direction explicit
+- Can't accidentally use response where command expected
+- Documents the protocol
+- Could strengthen further with `EnvironmentName(String)` and `CommandText(String)` newtypes
+
+### Configuration Types
+
+#### Specialized Config Structs
+
+**Don't use**: Flat config with all fields mixed together
+
+**Do use**: Namespaced config structs
+```rust
+pub struct Config {
+    pub llm: LlmConfig,
+    pub sandbox: SandboxConfig,
+    pub budget: BudgetConfig,
+    pub behavior: BehaviorConfig,
+}
+
+pub struct LlmConfig {
+    pub endpoint: String,
+    pub model: String,
+    pub api_key: Option<String>,
+    pub pricing: TokenPricing,
+    pub temperature: Option<f32>,
+    pub max_tokens: Option<usize>,
+    pub timeout: Option<u64>,
+}
+
+pub struct BudgetConfig {
+    pub max_cost_per_call: Option<Decimal>,
+    pub max_session_cost: Option<Decimal>,
+    pub warning_threshold: f64,
+}
+
+pub struct SandboxConfig {
+    pub container_image: String,
+    pub timeout: u64,
+    pub resources: ResourceConfig,
+    pub file_access: FileAccessConfig,
+}
+
+pub struct BehaviorConfig {
+    pub max_history_messages: usize,
+    pub confirm_before_execute: bool,
+    pub auto_save: bool,
+    pub explain_actions: bool,
+}
+```
+
+**Why**:
+- **Clear namespacing**: `config.llm.endpoint` vs `config.budget.max_cost`
+- **Type safety**: Can pass just the relevant part: `fn check_budget(budget: &BudgetConfig)`
+- **Documentation**: Shows which subsystem uses which settings
+- **Prevention**: Type system prevents passing budget config to LLM client
+
+#### ValidatedLlmConfig - Validated Configuration
+
+**Purpose**: Separates user-facing config (from TOML) from validated internal config.
+
+```rust
+// User-facing (from TOML, allows missing api_key)
+pub struct LlmConfig {
+    pub endpoint: String,
+    pub model: String,
+    pub api_key: Option<String>,  // Optional - might come from env var
+    // ...
+}
+
+// Internal (validated, api_key required)
+pub struct ValidatedLlmConfig {
+    pub endpoint: String,
+    pub model: String,
+    pub api_key: String,  // Required!
+    pub pricing: TokenPricing,
+    pub timeout: u64,
+}
+
+impl LlmConfig {
+    pub fn validate(&self) -> Result<ValidatedLlmConfig> {
+        Ok(ValidatedLlmConfig {
+            endpoint: self.endpoint.clone(),
+            model: self.model.clone(),
+            api_key: self.api_key.as_ref()
+                .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+                .ok_or("API key required (config.llm.api_key or OPENAI_API_KEY)")?,
+            pricing: self.pricing.clone(),
+            timeout: self.timeout.unwrap_or(60),
+        })
+    }
+}
+
+// LLM client uses validated config
+impl OpenAiCompatibleClient {
+    pub fn new(config: ValidatedLlmConfig) -> Result<Self, LlmError> {
+        // Can't construct with invalid config
+    }
+}
+```
+
+**Why**:
+- **Parse, don't validate**: Transform into type that can't be invalid
+- **Clear boundary**: User config vs internal config
+- **Type safety**: Client can't be constructed with missing api_key
+- **Single validation point**: All checks in one place
+
+### Generic LLM Client Trait
+
+```rust
+#[async_trait]
+pub trait LlmClient: Send + Sync {
+    async fn complete(&self, request: CompletionRequest)
+        -> Result<CompletionResponse, LlmError>;
+
+    fn estimate_cost(&self, request: &CompletionRequest)
+        -> Result<Decimal, LlmError>;
+
+    fn count_tokens(&self, message: &str) -> usize;
+}
+
+pub struct Agent<C: LlmClient> {
+    llm_client: C,
+    // ...
+}
+```
+
+**Why**:
+- **Testability**: Can mock LLM for tests without heavy mocking framework
+- **Flexibility**: Easy to add Anthropic, Ollama, or other clients later
+- **Zero cost**: Monomorphization means no runtime overhead
+- **Idiomatic Rust**: Standard pattern for dependency injection
+
+### Benefits Summary
+
+| Type | Prevents | Enables |
+|------|----------|---------|
+| `SessionId` newtype | Mixing different UUID types | Compile-time ID checking |
+| `LlmConfigSnapshot` | Parameter order bugs | Type-safe resume |
+| `TokenUsage` struct | Swapping prompt/completion | Self-documenting code |
+| `Command`/`Response` | Using response as command | Clear protocol direction |
+| Specialized `Config` structs | Passing wrong config to wrong function | Type-guided development |
+| `ValidatedLlmConfig` | Constructing client with invalid config | Parse-don't-validate pattern |
+| Generic `LlmClient` | Tight coupling to one API | Easy testing and extensibility |
+
+**Core Insight**: The type system does the work, so humans (and LLMs) don't have to remember rules. If it compiles, the types are used correctly.
 
 ---
 
@@ -130,7 +375,9 @@ The agent is a Rust binary that runs on the host machine (outside the container)
 Continue? [y/n]:
 ```
 
-### Session Manager
+### Session Persistence
+
+**Design principle**: Session owns its persistence. No separate "SessionManager" - the Session struct has methods to save/load itself.
 
 **Session storage location**: `.7aigent/sessions/<session-id>/`
 
@@ -141,32 +388,145 @@ Continue? [y/n]:
   history.jsonl       # Conversation history (NDJSON, one message per line)
   screens.jsonl       # Screen states (NDJSON, one screen per step)
   cost.json           # Cost tracking (total, per-step, token usage)
-  config.toml         # Session-specific config overrides
 ```
 
-**Session metadata**:
-```json
-{
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "project_dir": "/home/user/myproject",
-  "task": "Add user authentication",
-  "created_at": "2026-01-08T10:30:00Z",
-  "updated_at": "2026-01-08T11:15:00Z",
-  "status": "active",  // active | paused | completed | failed
-  "llm_config": {
-    "endpoint": "https://api.openai.com/v1",
-    "model": "gpt-4"
-  },
-  "step_count": 12
+**Session struct**:
+```rust
+pub struct Session {
+    pub id: SessionId,
+    pub project_dir: PathBuf,
+    pub task: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub status: SessionStatus,
+    pub total_cost: Decimal,
+    pub token_usage: TokenUsage,
+    pub step_count: usize,
+    pub llm_config: Option<LlmConfigSnapshot>,  // Optional - recorded on first LLM call
+}
+
+pub enum SessionStatus {
+    Active,
+    Paused,
+    Completed,
+    Failed,
 }
 ```
 
+**Session API** (Session owns persistence):
+```rust
+impl Session {
+    /// Create a new session
+    pub fn create(project_dir: PathBuf, task: String) -> Result<Self> {
+        let id = SessionId::new();
+        let now = Utc::now();
+
+        let session = Session {
+            id,
+            project_dir,
+            task,
+            created_at: now,
+            updated_at: now,
+            status: SessionStatus::Active,
+            total_cost: Decimal::ZERO,
+            token_usage: TokenUsage::default(),
+            step_count: 0,
+            llm_config: None,  // Will be set on first LLM call
+        };
+
+        // Create session directory and initial files
+        session.init_storage()?;
+        session.save_metadata()?;
+
+        Ok(session)
+    }
+
+    /// Load an existing session
+    pub fn load(project_dir: &Path, id: SessionId) -> Result<Self> {
+        let metadata_path = Self::session_dir(project_dir, id).join("metadata.json");
+        let metadata = fs::read_to_string(metadata_path)?;
+        let session: Session = serde_json::from_str(&metadata)?;
+        Ok(session)
+    }
+
+    /// Load conversation history for this session
+    pub fn load_history(&self) -> Result<Vec<Message>> {
+        let history_path = self.session_dir().join("history.jsonl");
+        // Parse NDJSON...
+    }
+
+    /// Load screen states for this session
+    pub fn load_screens(&self) -> Result<Vec<ScreenState>> {
+        let screens_path = self.session_dir().join("screens.jsonl");
+        // Parse NDJSON...
+    }
+
+    /// Save step: updates metadata, appends message and screen atomically
+    pub fn save_step(&mut self, message: &Message, screen: &ScreenState) -> Result<()> {
+        // Update internal state
+        self.updated_at = Utc::now();
+        self.step_count += 1;
+
+        // Atomic save: all three or none
+        self.save_metadata()?;
+        self.append_message(message)?;
+        self.append_screen(screen)?;
+
+        Ok(())
+    }
+
+    /// Record which LLM was used (called on first LLM call)
+    pub fn record_llm_config(&mut self, snapshot: LlmConfigSnapshot) -> Result<()> {
+        self.llm_config = Some(snapshot);
+        self.save_metadata()
+    }
+
+    // Private helpers
+    fn session_dir(&self) -> PathBuf {
+        Self::session_dir(&self.project_dir, self.id)
+    }
+
+    fn session_dir(project_dir: &Path, id: SessionId) -> PathBuf {
+        project_dir.join(".7aigent/sessions").join(id.to_string())
+    }
+
+    fn save_metadata(&self) -> Result<()> {
+        let path = self.session_dir().join("metadata.json");
+        let json = serde_json::to_string_pretty(self)?;
+        fs::write(path, json)?;
+        Ok(())
+    }
+
+    fn append_message(&self, message: &Message) -> Result<()> {
+        let path = self.session_dir().join("history.jsonl");
+        let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+        serde_json::to_writer(&mut file, message)?;
+        file.write_all(b"\n")?;
+        Ok(())
+    }
+
+    fn append_screen(&self, screen: &ScreenState) -> Result<()> {
+        let path = self.session_dir().join("screens.jsonl");
+        let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+        serde_json::to_writer(&mut file, screen)?;
+        file.write_all(b"\n")?;
+        Ok(())
+    }
+}
+```
+
+**Key design decisions**:
+- **Session owns persistence**: No separate SessionManager, methods are on Session itself
+- **Single atomic save**: `save_step()` updates all files, not 3-4 separate calls
+- **Optional LlmConfigSnapshot**: Not required at creation, recorded on first use
+- **Simple API**: Create, load, save_step - that's it
+
 **Session lifecycle**:
-1. **Create**: User provides task, agent creates new session
-2. **Active**: Agent is actively working, auto-saves after each step
-3. **Paused**: User stopped agent (Ctrl+C), can resume later
-4. **Completed**: Agent finished task successfully
-5. **Failed**: Agent encountered unrecoverable error
+1. **Create**: `Session::create(project_dir, task)` - no config snapshot needed
+2. **Active**: Agent calls `session.save_step(&message, &screen)` after each step
+3. **Paused**: User stopped agent (Ctrl+C), status saved to metadata
+4. **Resume**: `Session::load(project_dir, id)` loads full state
+5. **Completed/Failed**: Status updated in metadata
 
 ### LLM Client
 
@@ -744,6 +1104,10 @@ Cost summary:
 
 ## Configuration System
 
+**See [Type System](#type-system) for the Rust type definitions** (`Config`, `LlmConfig`, `BudgetConfig`, etc.)
+
+This section focuses on the TOML file format and configuration loading.
+
 ### Configuration Files
 
 **Global config**: `~/.config/7aigent/config.toml`
@@ -855,12 +1219,33 @@ impl ConfigLoader {
 User runs: `7aigent "Add user authentication"`
 
 **Step 1: Initialization**
-```
-1. Load config (.7aigent.toml + ~/.config/7aigent/config.toml)
-2. Create new session (UUID, metadata.json)
-3. Build container image (nix build .#orchestratorContainer)
-4. Spawn container (podman run with mounts, network, limits)
-5. Initialize LLM client (endpoint, model, pricing)
+```rust
+// 1. Load and validate config
+let config = ConfigLoader::new().load(&project_dir)?;
+config.validate()?;
+
+// 2. Create new session (no LlmConfigSnapshot needed yet)
+let session = Session::create(project_dir.clone(), task)?;
+println!("Created session: {}", session.id);
+
+// 3. Build container image
+let container_manager = ContainerManager::new();
+let image = container_manager.build_container_image()?;
+
+// 4. Spawn container
+let container = container_manager.spawn_container(
+    &image,
+    &project_dir,
+    &config.sandbox,
+)?;
+
+// 5. Initialize LLM client (validate config first)
+let validated_config = config.llm.validate()?;
+let llm_client = OpenAiCompatibleClient::new(validated_config)?;
+
+// 6. Load history and screens (optimization - load once)
+let history = session.load_history()?;
+let screens = session.load_screens()?;
 ```
 
 **Step 2: System Prompt Construction**
@@ -894,7 +1279,7 @@ fn build_system_prompt(config: &Config, sandbox: &SandboxConfig) -> Message {
 ```rust
 loop {
     // Build context: system + task + history + screen
-    let messages = build_llm_messages(&session, &config);
+    let messages = build_llm_messages(&session, &history, &current_screen, &config);
 
     // Check budget
     let estimated_cost = llm_client.estimate_cost(&messages)?;
@@ -902,13 +1287,28 @@ loop {
 
     // Call LLM
     let response = llm_client.complete(messages).await?;
+
+    // Update session cost and token usage
     session.total_cost += response.cost;
+    session.token_usage.prompt_tokens += response.usage.prompt_tokens;
+    session.token_usage.completion_tokens += response.usage.completion_tokens;
+    session.step_count += 1;
+
+    // Record LLM config on first call
+    if session.llm_config.is_none() {
+        session.record_llm_config(LlmConfigSnapshot {
+            endpoint: config.llm.endpoint.clone(),
+            model: config.llm.model.clone(),
+        })?;
+    }
 
     // Parse response for commands
     let commands = parse_commands(&response.content)?;
 
     if commands.is_empty() {
         // Agent says task is complete
+        session.status = SessionStatus::Completed;
+        session.save_metadata()?;
         println!("✓ Task completed!");
         break;
     }
@@ -918,14 +1318,20 @@ loop {
         container.send_command(&cmd.env, &cmd.command)?;
         let (output, screen) = container.receive_response()?;
 
-        // Store in history
-        session.messages.push(Message::assistant(response.content.clone()));
-        session.messages.push(Message::user(output.output));
-        session.screen_history.push(screen);
-    }
+        // Create messages
+        let assistant_msg = Message::assistant(response.content.clone());
+        let user_msg = Message::user(output.output);
 
-    // Save session
-    session.save()?;
+        // Save step atomically (metadata + message + screen)
+        session.save_step(&assistant_msg, &screen)?;
+        session.save_step(&user_msg, &screen)?;
+
+        // Update in-memory state
+        history.push(assistant_msg);
+        history.push(user_msg);
+        screens.push(screen.clone());
+        current_screen = screen;
+    }
 }
 ```
 
