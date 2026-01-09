@@ -384,9 +384,13 @@ Only implement after design is solid.
 
 **CRITICAL: Nix builds use git-tracked files only. Untracked files are invisible to the build, causing false positive "build succeeds" on old code.**
 
+**CRITICAL: Always use `nix build .#packagename` not cargo/pytest directly. The project uses Nix as the build system. Running cargo/pytest directly bypasses formatters, linters, and may test code that won't be in the Nix build.**
+
 1. Read the design doc
 2. Use TodoWrite to plan steps
-3. **Verify build will see new code (choose one approach):**
+3. **IMMEDIATELY after creating ANY new file: `git add filename`** - Nix won't see untracked files
+4. **Run `nix build .#packagename` after EVERY change** - not cargo check/test
+5. **Verify build will see new code (choose one approach):**
 
    **Option A - Import Test (recommended for new modules):**
    ```bash
@@ -452,7 +456,8 @@ Only implement after design is solid.
 
 5. **Implement incrementally:**
    - Write code
-   - `git add` changes after each significant addition
+   - `git add` changes IMMEDIATELY after each file creation/modification
+   - Run `nix build .#package` after EVERY change - never use cargo/pytest directly
    - Build frequently to catch issues early
    - Tests guide implementation
 

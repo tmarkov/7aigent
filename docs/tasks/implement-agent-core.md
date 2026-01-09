@@ -14,12 +14,18 @@ Implement the core Rust agent that manages LLM interaction, session persistence,
 
 ### Phase 1: Core Types and Configuration
 
+**IMPORTANT: Use `nix build .#agent` for ALL verification, not `cargo check/test`**
+
 - [ ] Set up Rust project structure
+  - [ ] Verify agent is in flake.nix outputs
   - [ ] Create `agent/` directory with Cargo.toml
   - [ ] Add dependencies: tokio, serde, serde_json, thiserror, toml, uuid, chrono, rust_decimal
   - [ ] Configure for async runtime (tokio)
+  - [ ] `git add agent/Cargo.toml agent/src/main.rs`
+  - [ ] Verify `nix build .#agent` succeeds with stub
 
 - [ ] Implement core types (`agent/src/types.rs`)
+  - [ ] Create file with all type definitions
   - [ ] `Session` struct (id, project_dir, created_at, status, total_cost)
   - [ ] `SessionStatus` enum (Active, Paused, Completed, Failed)
   - [ ] `Message` struct (role, content, timestamp)
@@ -27,6 +33,8 @@ Implement the core Rust agent that manages LLM interaction, session persistence,
   - [ ] `ScreenState` struct (step, timestamp, sections)
   - [ ] `TokenUsage` struct (prompt_tokens, completion_tokens, total_tokens)
   - [ ] Property-based tests for serialization/deserialization
+  - [ ] `git add agent/src/types.rs agent/src/lib.rs`
+  - [ ] Verify `nix build .#agent` succeeds and tests pass
 
 - [ ] Implement configuration system (`agent/src/config.rs`)
   - [ ] `Config` struct matching schema in design doc
