@@ -132,36 +132,36 @@ Implement the core Rust agent that manages LLM interaction, session persistence,
   - [x] Loop until no commands returned (task complete)
   - [x] Handle errors (LLM, orchestrator, budget)
 
-### Phase 4.5: Update Design Document
+### Phase 4.5: Update Design Document ✅ COMPLETE
 
 **Context**: Implementation (Phases 1-4) diverged from design. Need to sync design and implementation.
 See: `docs/tasks/agent-refactor-plan.md` for full plan and `docs/agent-complexity-addendum.md` for analysis.
 
-- [ ] Add type system section to agent-design.md
-  - [ ] Document semantic types (LlmConfigSnapshot, TokenUsage, etc.)
-  - [ ] Explain "avoid primitive obsession" principle
-  - [ ] Show SessionId as proper newtype
-  - [ ] Document ValidatedLlmConfig pattern
+- [x] Add type system section to agent-design.md
+  - [x] Document semantic types (LlmConfigSnapshot, TokenUsage, etc.)
+  - [x] Explain "avoid primitive obsession" principle
+  - [x] Show SessionId as proper newtype
+  - [x] Document ValidatedLlmConfig pattern
 
-- [ ] Update config structure in design
-  - [ ] Document specialized config structs (LlmConfig, BudgetConfig, etc.)
-  - [ ] Show namespacing benefits
+- [x] Update config structure in design
+  - [x] Document specialized config structs (LlmConfig, BudgetConfig, etc.)
+  - [x] Show namespacing benefits
 
-- [ ] Simplify session persistence in design
-  - [ ] Remove SessionManager as separate component
-  - [ ] Show Session owns its persistence: `session.save_step()`
-  - [ ] Document single atomic save operation
-  - [ ] Make LlmConfigSnapshot optional in Session
+- [x] Simplify session persistence in design
+  - [x] Remove SessionManager as separate component
+  - [x] Show Session owns its persistence: `session.save_step()`
+  - [x] Document single atomic save operation
+  - [x] Make LlmConfigSnapshot optional in Session
 
-- [ ] Update Agent API in design
-  - [ ] Simple constructor (no SessionManager)
-  - [ ] Document generic LlmClient trait
-  - [ ] Show simplified initialization flow
+- [x] Update Agent API in design
+  - [x] Simple constructor (no SessionManager)
+  - [x] Document generic LlmClient trait
+  - [x] Show simplified initialization flow
 
-- [ ] Review consistency
-  - [ ] All code examples match new API
-  - [ ] Types align throughout document
-  - [ ] Main loop example is correct
+- [x] Review consistency
+  - [x] All code examples match new API
+  - [x] Types align throughout document
+  - [x] Main loop example is correct
 
 ### Phase 4.75: Refactor Implementation
 
