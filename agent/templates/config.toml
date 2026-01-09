@@ -1,0 +1,88 @@
+# 7aigent Configuration File
+#
+# This file configures the AI agent's behavior, budget, and sandbox restrictions.
+#
+# IMPORTANT: Set your API key as an environment variable:
+#   export OPENAI_API_KEY=your-key-here
+#
+# For custom API key environment variable:
+#   [llm]
+#   api_key_env = "MY_CUSTOM_API_KEY"
+
+[llm]
+# API endpoint (required)
+# For OpenAI: https://api.openai.com/v1
+# For OpenAI-compatible services: use their endpoint URL
+endpoint = "https://api.openai.com/v1"
+
+# Model to use (required)
+# Examples: gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-3.5-turbo
+# For Anthropic via compatible endpoint: claude-3-5-sonnet-20241022
+model = "gpt-4o-mini"
+
+# Environment variable containing API key (optional, defaults to OPENAI_API_KEY)
+# api_key_env = "OPENAI_API_KEY"
+
+# Temperature for sampling (optional, 0.0 to 2.0)
+# Higher values make output more random, lower values more deterministic
+# temperature = 0.7
+
+# Maximum tokens in response (optional)
+# max_tokens = 4096
+
+# Additional text to append to system prompt (optional)
+# system_prompt_suffix = "Always explain your reasoning."
+
+# Custom pricing for models (optional, defaults included for common models)
+# Format: "model-name" = { input_cost_per_1k = "0.001", output_cost_per_1k = "0.002" }
+# [llm.pricing]
+# "my-custom-model" = { input_cost_per_1k = "0.001", output_cost_per_1k = "0.002" }
+
+[budget]
+# Maximum cost per session in USD (optional, no limit if not set)
+# max_cost_per_session = "1.00"
+
+# Maximum cost per LLM call in USD (optional, no limit if not set)
+# max_cost_per_call = "0.10"
+
+# Warn when session cost reaches this fraction of max_cost_per_session (0.0 to 1.0)
+# Default: 0.80 (80%)
+warn_threshold = "0.80"
+
+[sandbox.files]
+# File patterns that should not be modified (glob patterns, advisory in V1)
+# read_only = [
+#     ".git/**",
+#     "*.lock",
+#     "package-lock.json",
+#     "Cargo.lock",
+# ]
+
+# File patterns that can be modified (glob patterns, advisory in V1)
+# read_write = [
+#     "src/**",
+#     "tests/**",
+# ]
+
+# File patterns that should not be accessed (glob patterns, advisory in V1)
+# no_access = [
+#     ".env",
+#     "**/.env",
+#     "**/credentials.json",
+#     "**/*.key",
+#     "**/*.pem",
+# ]
+
+[sandbox.resources]
+# Maximum memory for container (e.g., "4G", "512M")
+# max_memory = "4G"
+
+# Maximum CPUs for container (e.g., "2.0", "0.5")
+# max_cpus = "2.0"
+
+[behavior]
+# Whether agent should explain its actions (default: true)
+# explain_actions = true
+
+# Whether to ask before destructive operations (default: false, advisory in V1)
+# ask_before_destructive = false
