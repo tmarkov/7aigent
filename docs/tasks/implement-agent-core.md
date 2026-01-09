@@ -16,33 +16,35 @@ Implement the core Rust agent that manages LLM interaction, session persistence,
 
 **IMPORTANT: Use `nix build .#agent` for ALL verification, not `cargo check/test`**
 
-- [ ] Set up Rust project structure
-  - [ ] Verify agent is in flake.nix outputs
-  - [ ] Create `agent/` directory with Cargo.toml
-  - [ ] Add dependencies: tokio, serde, serde_json, thiserror, toml, uuid, chrono, rust_decimal
-  - [ ] Configure for async runtime (tokio)
-  - [ ] `git add agent/Cargo.toml agent/src/main.rs`
-  - [ ] Verify `nix build .#agent` succeeds with stub
+- [x] Set up Rust project structure
+  - [x] Verify agent is in flake.nix outputs
+  - [x] Create `agent/` directory with Cargo.toml
+  - [x] Add dependencies: tokio, serde, serde_json, thiserror, toml, uuid, chrono, rust_decimal
+  - [x] Configure for async runtime (tokio)
+  - [x] `git add agent/Cargo.toml agent/src/main.rs`
+  - [x] Verify `nix build .#agent` succeeds with stub
 
-- [ ] Implement core types (`agent/src/types.rs`)
-  - [ ] Create file with all type definitions
-  - [ ] `Session` struct (id, project_dir, created_at, status, total_cost)
-  - [ ] `SessionStatus` enum (Active, Paused, Completed, Failed)
-  - [ ] `Message` struct (role, content, timestamp)
-  - [ ] `MessageRole` enum (System, User, Assistant)
-  - [ ] `ScreenState` struct (step, timestamp, sections)
-  - [ ] `TokenUsage` struct (prompt_tokens, completion_tokens, total_tokens)
-  - [ ] Property-based tests for serialization/deserialization
-  - [ ] `git add agent/src/types.rs agent/src/lib.rs`
-  - [ ] Verify `nix build .#agent` succeeds and tests pass
+- [x] Implement core types (`agent/src/types.rs`)
+  - [x] Create file with all type definitions
+  - [x] `Session` struct (id, project_dir, created_at, status, total_cost)
+  - [x] `SessionStatus` enum (Active, Paused, Completed, Failed)
+  - [x] `Message` struct (role, content, timestamp)
+  - [x] `MessageRole` enum (System, User, Assistant)
+  - [x] `ScreenState` struct (step, timestamp, sections)
+  - [x] `TokenUsage` struct (prompt_tokens, completion_tokens, total_tokens)
+  - [x] Property-based tests for serialization/deserialization
+  - [x] `git add agent/src/types.rs agent/src/lib.rs`
+  - [x] Verify `nix build .#agent` succeeds and tests pass
 
-- [ ] Implement configuration system (`agent/src/config.rs`)
-  - [ ] `Config` struct matching schema in design doc
-  - [ ] `LlmConfig`, `SandboxConfig`, `BudgetConfig` structs
-  - [ ] `ConfigLoader::load()` - load global and project configs
-  - [ ] `ConfigLoader::merge()` - merge with precedence
-  - [ ] `Config::validate()` - ensure endpoint is set, budget values are sane
-  - [ ] Tests for config loading and merging
+- [x] Implement configuration system (`agent/src/config.rs`)
+  - [x] `Config` struct matching schema in design doc
+  - [x] `LlmConfig`, `SandboxConfig`, `BudgetConfig` structs
+  - [x] `ConfigLoader::load()` - load global and project configs
+  - [x] `ConfigLoader::merge()` - merge with precedence
+  - [x] `Config::validate()` - ensure endpoint is set, budget values are sane
+  - [x] Tests for config loading and merging
+  - [x] `git add agent/src/config.rs agent/src/lib.rs`
+  - [x] Verify `nix build .#agent` succeeds and tests pass
 
 - [ ] Implement session manager (`agent/src/session.rs`)
   - [ ] `Session::create()` - create new session in `.7aigent/sessions/<uuid>/`
