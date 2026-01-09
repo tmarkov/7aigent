@@ -116,21 +116,21 @@ Implement the core Rust agent that manages LLM interaction, session persistence,
   - [x] `Command` struct (env, command)
   - [x] Tests with example LLM responses
 
-- [ ] Implement budget checking (`agent/src/budget.rs`)
-  - [ ] `BudgetCheckResult` enum (Ok, WarningThreshold, ExceedsPerCall, ExceedsSession)
-  - [ ] `check_budget()` - verify estimated cost against limits
-  - [ ] Return appropriate result for prompting user
-  - [ ] Tests for budget logic
+- [x] Implement budget checking (`agent/src/budget.rs`)
+  - [x] `BudgetCheckResult` enum (Ok, WarningThreshold, ExceedsPerCall, ExceedsSession)
+  - [x] `check_budget()` - verify estimated cost against limits
+  - [x] Return appropriate result for prompting user
+  - [x] Tests for budget logic
 
-- [ ] Implement main loop (`agent/src/agent.rs`)
-  - [ ] `Agent` struct (session, config, container, llm_client)
-  - [ ] `run()` - main interaction loop
-  - [ ] Build LLM context → check budget → call LLM → parse commands
-  - [ ] For each command: send to orchestrator, receive response
-  - [ ] Update session history and screen states
-  - [ ] Save session after each step
-  - [ ] Loop until no commands returned (task complete)
-  - [ ] Handle errors (LLM, orchestrator, budget)
+- [x] Implement main loop (`agent/src/agent.rs`)
+  - [x] `Agent` struct (session, config, container, llm_client)
+  - [x] `run()` - main interaction loop
+  - [x] Build LLM context → check budget → call LLM → parse commands
+  - [x] For each command: send to orchestrator, receive response
+  - [x] Update session history and screen states
+  - [x] Save session after each step
+  - [x] Loop until no commands returned (task complete)
+  - [x] Handle errors (LLM, orchestrator, budget)
 
 ### Phase 5: CLI Interface
 
