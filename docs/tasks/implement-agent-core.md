@@ -46,40 +46,42 @@ Implement the core Rust agent that manages LLM interaction, session persistence,
   - [x] `git add agent/src/config.rs agent/src/lib.rs`
   - [x] Verify `nix build .#agent` succeeds and tests pass
 
-- [ ] Implement session manager (`agent/src/session.rs`)
-  - [ ] `Session::create()` - create new session in `.7aigent/sessions/<uuid>/`
-  - [ ] `Session::load()` - load existing session by ID
-  - [ ] `Session::save()` - persist metadata, history, screens, cost
-  - [ ] `Session::list()` - list all sessions in project
-  - [ ] File format: metadata.json, history.jsonl, screens.jsonl, cost.json
-  - [ ] Tests for session persistence
+- [x] Implement session manager (`agent/src/session.rs`)
+  - [x] `Session::create()` - create new session in `.7aigent/sessions/<uuid>/`
+  - [x] `Session::load()` - load existing session by ID
+  - [x] `Session::save()` - persist metadata, history, screens, cost
+  - [x] `Session::list()` - list all sessions in project
+  - [x] File format: metadata.json, history.jsonl, screens.jsonl, cost.json
+  - [x] Tests for session persistence
+  - [x] `git add agent/src/session.rs agent/src/lib.rs`
+  - [x] Verify `nix build .#agent` succeeds and tests pass
 
 ### Phase 2: LLM Client
 
-- [ ] Implement LLM client abstraction (`agent/src/llm/mod.rs`)
-  - [ ] `LlmClient` trait (complete, estimate_cost, count_tokens)
-  - [ ] `CompletionResponse` struct (content, usage, cost, finish_reason)
-  - [ ] `LlmError` enum with thiserror (RateLimit, Timeout, Auth, etc.)
+- [x] Implement LLM client abstraction (`agent/src/llm/mod.rs`)
+  - [x] `LlmClient` trait (complete, estimate_cost, count_tokens)
+  - [x] `CompletionResponse` struct (content, usage, cost, finish_reason)
+  - [x] `LlmError` enum with thiserror (RateLimit, Timeout, Auth, etc.)
 
-- [ ] Implement OpenAI-compatible client (`agent/src/llm/openai.rs`)
-  - [ ] `OpenAiCompatibleClient` struct
-  - [ ] HTTP client setup with reqwest
-  - [ ] `complete()` - POST to /chat/completions endpoint
-  - [ ] Parse response (content, usage, finish_reason)
-  - [ ] Calculate actual cost from usage
+- [x] Implement OpenAI-compatible client (`agent/src/llm/openai.rs`)
+  - [x] `OpenAiCompatibleClient` struct
+  - [x] HTTP client setup with reqwest
+  - [x] `complete()` - POST to /chat/completions endpoint
+  - [x] Parse response (content, usage, finish_reason)
+  - [x] Calculate actual cost from usage
 
-- [ ] Implement retry logic (`agent/src/llm/retry.rs`)
-  - [ ] Exponential backoff for rate limits
-  - [ ] Retry on timeout (max 3 retries)
-  - [ ] Don't retry on auth errors
-  - [ ] Tests with mock HTTP client
+- [x] Implement retry logic (`agent/src/llm/retry.rs`)
+  - [x] Exponential backoff for rate limits
+  - [x] Retry on timeout (max 3 retries)
+  - [x] Don't retry on auth errors
+  - [x] Tests with mock HTTP client
 
-- [ ] Implement cost estimation (`agent/src/llm/cost.rs`)
-  - [ ] Token counting (use tiktoken or char-based estimate)
-  - [ ] `TokenPricing` struct (input_cost_per_1k, output_cost_per_1k)
-  - [ ] Default pricing for common models (GPT-4, GPT-3.5, Claude)
-  - [ ] `estimate_cost()` - count tokens, multiply by pricing, add heuristic for completion
-  - [ ] Tests for cost calculation
+- [x] Implement cost estimation (`agent/src/llm/cost.rs`)
+  - [x] Token counting (char-based estimate)
+  - [x] `TokenPricing` struct (input_cost_per_1k, output_cost_per_1k)
+  - [x] Default pricing for common models (GPT-4, GPT-3.5, Claude)
+  - [x] `estimate_cost()` - count tokens, multiply by pricing, add heuristic for completion
+  - [x] Tests for cost calculation
 
 ### Phase 3: Container Manager (Basic)
 

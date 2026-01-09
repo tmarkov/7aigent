@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 # Async runtime
 tokio = { version = "1.42", features = ["full"] }
+async-trait = "0.1"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -26,6 +27,7 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-feature
 uuid = { version = "1.11", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 rust_decimal = { version = "1.37", features = ["serde-with-str"] }
+rust_decimal_macros = "1.37"
 dirs = "6.0"
 
 # Regex for parsing LLM responses
@@ -35,3 +37,4 @@ regex = "1.11"
 # Testing
 tempfile = "3.14"
 mockito = "1.6"
+rust_decimal_macros = "1.37"
