@@ -85,21 +85,21 @@ Implement the core Rust agent that manages LLM interaction, session persistence,
 
 ### Phase 3: Container Manager (Basic)
 
-- [ ] Implement container manager (`agent/src/container.rs`)
-  - [ ] `ContainerManager` struct
-  - [ ] `spawn_container()` - run podman with orchestrator
-  - [ ] Use `--network=none`, `--rm`, `-i` flags
-  - [ ] Mount project directory to `/workspace`
-  - [ ] Set `PROJECT_DIR=/workspace` env var
-  - [ ] Capture stdin/stdout pipes
+- [x] Implement container manager (`agent/src/container.rs`)
+  - [x] `ContainerManager` struct
+  - [x] `spawn_container()` - run podman with orchestrator
+  - [x] Use `--network=none`, `--rm`, `-i` flags
+  - [x] Mount project directory to `/workspace`
+  - [x] Set `PROJECT_DIR=/workspace` env var
+  - [x] Capture stdin/stdout pipes
 
-- [ ] Implement orchestrator communication (`agent/src/container.rs`)
-  - [ ] `ContainerHandle` struct (child process, stdin writer, stdout reader)
-  - [ ] `send_command()` - write NDJSON message to stdin
-  - [ ] `receive_response()` - read NDJSON message from stdout
-  - [ ] Parse response type (response vs error)
-  - [ ] Extract command output and screen state
-  - [ ] Tests with mock orchestrator (stdin/stdout simulation)
+- [x] Implement orchestrator communication (`agent/src/container.rs`)
+  - [x] `ContainerHandle` struct (child process, stdin writer, stdout reader)
+  - [x] `send_command()` - write NDJSON message to stdin
+  - [x] `receive_response()` - read NDJSON message from stdout
+  - [x] Parse response type (response vs error)
+  - [x] Extract command output and screen state
+  - [x] Tests for screen parsing
 
 ### Phase 4: Agent Core Loop
 
