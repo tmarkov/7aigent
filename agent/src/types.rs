@@ -7,8 +7,59 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use uuid::Uuid;
 
-/// Unique identifier for a session
-pub type SessionId = Uuid;
+/// Unique identifier for a session (strong newtype)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SessionId(Uuid);
+
+impl SessionId {
+    /// Create a new random session ID
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+
+    /// Get the underlying UUID
+    pub fn as_uuid(&self) -> &Uuid {
+        &self.0
+    }
+
+    /// Parse from a string
+    pub fn parse_str(s: &str) -> Result<Self, uuid::Error> {
+        Uuid::parse_str(s).map(SessionId)
+    }
+}
+
+impl Default for SessionId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Display for SessionId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<Uuid> for SessionId {
+    fn from(uuid: Uuid) -> Self {
+        SessionId(uuid)
+    }
+}
+
+impl From<SessionId> for Uuid {
+    fn from(id: SessionId) -> Self {
+        id.0
+    }
+}
+
+impl std::str::FromStr for SessionId {
+    type Err = uuid::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Uuid::parse_str(s).map(SessionId)
+    }
+}
 
 /// Session status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -205,7 +256,7 @@ mod tests {
     #[test]
     fn test_session_serialization() {
         let session = Session {
-            id: Uuid::new_v4(),
+            id: SessionId::new(),
             project_dir: PathBuf::from("/test/project"),
             task: "Test task".to_string(),
             created_at: Utc::now(),
