@@ -20,7 +20,7 @@ pub use config::{
     ResourceConfig, SandboxConfig, TokenPricing,
 };
 pub use container::{ContainerError, ContainerHandle, ContainerManager};
-pub use session::{SessionError, SessionManager};
+pub use session::SessionError;
 pub use types::{
     Command, CommandResponse, Message, MessageRole, ScreenSection, ScreenState, Session, SessionId,
     SessionStatus, TokenUsage,

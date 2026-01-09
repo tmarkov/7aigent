@@ -13,7 +13,6 @@ use crate::container::ContainerHandle;
 use crate::context::build_llm_messages;
 use crate::llm::{CompletionRequest, LlmClient, LlmMessage};
 use crate::parser::parse_commands;
-use crate::session::SessionManager;
 use crate::types::{Message, MessageRole, ScreenState, Session, SessionStatus};
 use anyhow::{Context, Result};
 use std::io::{self, Write};
@@ -22,8 +21,6 @@ use std::io::{self, Write};
 pub struct Agent<C: LlmClient> {
     /// Session metadata and tracking
     session: Session,
-    /// Session manager for persistence
-    session_manager: SessionManager,
     /// Agent configuration
     config: Config,
     /// Container handle for orchestrator communication
@@ -40,18 +37,16 @@ impl<C: LlmClient> Agent<C> {
     /// Create a new agent
     pub fn new(
         session: Session,
-        session_manager: SessionManager,
         config: Config,
         container: ContainerHandle,
         llm_client: C,
     ) -> Result<Self> {
         // Load history and screens from session
-        let history = session_manager.load_history(session.id)?;
-        let screens = session_manager.load_screens(session.id)?;
+        let history = session.load_history()?;
+        let screens = session.load_screens()?;
 
         Ok(Self {
             session,
-            session_manager,
             config,
             container,
             llm_client,
@@ -115,8 +110,8 @@ impl<C: LlmClient> Agent<C> {
                     if !confirm_continue()? {
                         println!("Session paused by user.");
                         self.session.status = SessionStatus::Paused;
-                        self.session_manager
-                            .save_metadata(&self.session)
+                        self.session
+                            .save_metadata()
                             .context("Failed to save session")?;
                         return Ok(());
                     }
@@ -128,8 +123,8 @@ impl<C: LlmClient> Agent<C> {
                     );
                     eprintln!("Cannot proceed. Consider increasing budget.max_cost_per_call.");
                     self.session.status = SessionStatus::Failed;
-                    self.session_manager
-                        .save_metadata(&self.session)
+                    self.session
+                        .save_metadata()
                         .context("Failed to save session")?;
                     anyhow::bail!("Budget per-call limit exceeded");
                 }
@@ -144,8 +139,8 @@ impl<C: LlmClient> Agent<C> {
                     );
                     eprintln!("Cannot proceed. Consider increasing budget.max_cost_per_session.");
                     self.session.status = SessionStatus::Failed;
-                    self.session_manager
-                        .save_metadata(&self.session)
+                    self.session
+                        .save_metadata()
                         .context("Failed to save session")?;
                     anyhow::bail!("Budget session limit exceeded");
                 }
@@ -168,27 +163,9 @@ impl<C: LlmClient> Agent<C> {
             self.session.token_usage.total_tokens += response.usage.total_tokens as usize;
             self.session.step_count += 1;
 
-            // Update metadata
-            self.session_manager
-                .save_metadata(&self.session)
-                .context("Failed to update session metadata")?;
-
-            // Update cost tracking
-            self.session_manager
-                .update_cost(
-                    self.session.id,
-                    self.session.total_cost,
-                    self.session.token_usage,
-                    Some((self.session.step_count, response.cost)),
-                )
-                .context("Failed to update cost")?;
-
             // Store assistant response in history
             let assistant_message = Message::assistant(response.content.clone());
             self.history.push(assistant_message.clone());
-            self.session_manager
-                .append_message(self.session.id, &assistant_message)
-                .context("Failed to save assistant message")?;
 
             // Parse commands from response
             let commands = parse_commands(&response.content).context("Failed to parse commands")?;
@@ -210,8 +187,8 @@ impl<C: LlmClient> Agent<C> {
                 println!();
 
                 self.session.status = SessionStatus::Completed;
-                self.session_manager
-                    .save_metadata(&self.session)
+                self.session
+                    .save_metadata()
                     .context("Failed to save session")?;
                 break;
             }
@@ -232,15 +209,14 @@ impl<C: LlmClient> Agent<C> {
                 // Store command output as user message
                 let user_message = Message::user(cmd_response.output);
                 self.history.push(user_message.clone());
-                self.session_manager
-                    .append_message(self.session.id, &user_message)
-                    .context("Failed to save user message")?;
 
                 // Store screen state
                 self.screens.push(screen_state.clone());
-                self.session_manager
-                    .append_screen(self.session.id, &screen_state)
-                    .context("Failed to save screen state")?;
+
+                // Save step (message + screen)
+                self.session
+                    .save_step(&user_message, &screen_state)
+                    .context("Failed to save step")?;
             }
 
             println!("  Session total: ${:.4}", self.session.total_cost);
@@ -404,6 +380,6 @@ mod tests {
         }
     }
 
-    // Note: Full integration tests would require mocking ContainerHandle and SessionManager
+    // Note: Full integration tests would require mocking ContainerHandle
     // which is complex. For now, we verify the types compile and basic logic works.
 }
