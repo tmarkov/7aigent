@@ -132,6 +132,75 @@ Implement the core Rust agent that manages LLM interaction, session persistence,
   - [x] Loop until no commands returned (task complete)
   - [x] Handle errors (LLM, orchestrator, budget)
 
+### Phase 4.5: Update Design Document
+
+**Context**: Implementation (Phases 1-4) diverged from design. Need to sync design and implementation.
+See: `docs/tasks/agent-refactor-plan.md` for full plan and `docs/agent-complexity-addendum.md` for analysis.
+
+- [ ] Add type system section to agent-design.md
+  - [ ] Document semantic types (LlmConfigSnapshot, TokenUsage, etc.)
+  - [ ] Explain "avoid primitive obsession" principle
+  - [ ] Show SessionId as proper newtype
+  - [ ] Document ValidatedLlmConfig pattern
+
+- [ ] Update config structure in design
+  - [ ] Document specialized config structs (LlmConfig, BudgetConfig, etc.)
+  - [ ] Show namespacing benefits
+
+- [ ] Simplify session persistence in design
+  - [ ] Remove SessionManager as separate component
+  - [ ] Show Session owns its persistence: `session.save_step()`
+  - [ ] Document single atomic save operation
+  - [ ] Make LlmConfigSnapshot optional in Session
+
+- [ ] Update Agent API in design
+  - [ ] Simple constructor (no SessionManager)
+  - [ ] Document generic LlmClient trait
+  - [ ] Show simplified initialization flow
+
+- [ ] Review consistency
+  - [ ] All code examples match new API
+  - [ ] Types align throughout document
+  - [ ] Main loop example is correct
+
+### Phase 4.75: Refactor Implementation
+
+**Context**: Simplify implementation to match updated design from Phase 4.5.
+See: `docs/tasks/agent-refactor-plan.md` for detailed steps.
+
+- [ ] **Step 1: Strengthen type safety**
+  - [ ] Convert SessionId to proper newtype (not type alias)
+  - [ ] Rename OpenAiConfig → ValidatedLlmConfig
+  - [ ] Add LlmConfig::validate() method
+
+- [ ] **Step 2: Move persistence into Session**
+  - [ ] Add save methods to Session (save_metadata, save_step, save_cost)
+  - [ ] Add load methods to Session (load, load_history, load_screens)
+  - [ ] Add Session::create() (no SessionManager)
+  - [ ] Make llm_config: Option<LlmConfigSnapshot>
+
+- [ ] **Step 3: Remove SessionManager**
+  - [ ] Update Agent to not use SessionManager
+  - [ ] Remove session_manager field from Agent
+  - [ ] Delete SessionManager type entirely
+
+- [ ] **Step 4: Simplify save operations**
+  - [ ] Replace 3-4 save calls with single save_step()
+  - [ ] Ensure atomic operation
+  - [ ] Remove redundant update_cost()
+
+- [ ] **Step 5: Update tests**
+  - [ ] Fix unit tests for new API
+  - [ ] Fix integration tests
+  - [ ] Verify all tests pass
+
+- [ ] **Step 6: Update documentation**
+  - [ ] Fix inline doc comments
+  - [ ] Update module documentation
+
+- [ ] **Step 7: Verify build**
+  - [ ] `nix build .#agent` passes all checks
+
 ### Phase 5: CLI Interface
 
 - [x] Implement CLI (`agent/src/cli.rs`)
