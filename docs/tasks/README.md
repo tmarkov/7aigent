@@ -66,6 +66,6 @@ The orchestrator can work as a standalone tool without an agent. Focus on these 
 These tasks are for designing and implementing the agent:
 
 - [x] [Design the agent](file://./design-agent.md) - Define scenarios, requirements, and architecture
-- [ ] [Implement agent core](file://./implement-agent-core.md)
+- [x] [Implement agent core](file://./implement-agent-core.md)
 - [ ] [Implement container integration](file://./implement-container-integration.md)
 - [ ] [End-to-end testing](file://./end-to-end-testing.md)
