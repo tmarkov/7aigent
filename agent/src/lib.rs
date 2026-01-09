@@ -1,5 +1,7 @@
 //! 7aigent agent library
 
+pub mod agent;
+pub mod budget;
 pub mod config;
 pub mod container;
 pub mod context;
@@ -8,6 +10,8 @@ pub mod parser;
 pub mod session;
 pub mod types;
 
+pub use agent::Agent;
+pub use budget::{check_budget, BudgetCheckResult};
 pub use config::{
     BehaviorConfig, BudgetConfig, Config, ConfigLoader, FileAccessConfig, LlmConfig,
     ResourceConfig, SandboxConfig, TokenPricing,
