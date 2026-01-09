@@ -7,7 +7,7 @@ result-*
 # Rust
 /agent/target/
 **/*.rs.bk
-Cargo.lock
+# Note: Cargo.lock is tracked for applications (required by Nix)
 
 # Python
 __pycache__/

@@ -4,7 +4,34 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# To be added as needed
+# Async runtime
+tokio = { version = "1.42", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# CLI
+clap = { version = "4.5", features = ["derive"] }
+
+# HTTP client for LLM API (use rustls to avoid OpenSSL dependency)
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# Utilities
+uuid = { version = "1.11", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+rust_decimal = { version = "1.37", features = ["serde-with-str"] }
+dirs = "6.0"
+
+# Regex for parsing LLM responses
+regex = "1.11"
 
 [dev-dependencies]
-# To be added as needed
+# Testing
+tempfile = "3.14"
+mockito = "1.6"

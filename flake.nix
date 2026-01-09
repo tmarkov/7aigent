@@ -134,6 +134,27 @@
             src = ./agent;
             pname = "7aigent-agent";
             version = "0.1.0";
+
+            # Run tests during build
+            doCheck = true;
+
+            # Additional build inputs for checks
+            nativeBuildInputs = with pkgs; [
+              rustfmt
+              clippy
+            ];
+
+            # Override check phase to run formatters, linters, and tests
+            checkPhase = ''
+              echo "Running rustfmt check..."
+              cargo fmt --check
+
+              echo "Running clippy linter..."
+              cargo clippy --all-targets --all-features -- -D warnings
+
+              echo "Running cargo test..."
+              cargo test --release
+            '';
           };
 
           # Build the orchestrator (Python)
