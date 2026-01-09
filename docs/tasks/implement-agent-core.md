@@ -168,38 +168,38 @@ See: `docs/tasks/agent-refactor-plan.md` for full plan and `docs/agent-complexit
 **Context**: Simplify implementation to match updated design from Phase 4.5.
 See: `docs/tasks/agent-refactor-plan.md` for detailed steps.
 
-- [ ] **Step 1: Strengthen type safety**
-  - [ ] Convert SessionId to proper newtype (not type alias)
-  - [ ] Rename OpenAiConfig → ValidatedLlmConfig
-  - [ ] Add LlmConfig::validate() method
+- [x] **Step 1: Strengthen type safety**
+  - [x] Convert SessionId to proper newtype (not type alias)
+  - [x] Rename OpenAiConfig → ValidatedLlmConfig
+  - [x] Add LlmConfig::validate() method
 
-- [ ] **Step 2: Move persistence into Session**
-  - [ ] Add save methods to Session (save_metadata, save_step, save_cost)
-  - [ ] Add load methods to Session (load, load_history, load_screens)
-  - [ ] Add Session::create() (no SessionManager)
-  - [ ] Make llm_config: Option<LlmConfigSnapshot>
+- [x] **Step 2: Move persistence into Session**
+  - [x] Add save methods to Session (save_metadata, save_step, save_cost)
+  - [x] Add load methods to Session (load, load_history, load_screens)
+  - [x] Add Session::create() (no SessionManager)
+  - [x] Make llm_config: Option<LlmConfigSnapshot>
 
-- [ ] **Step 3: Remove SessionManager**
-  - [ ] Update Agent to not use SessionManager
-  - [ ] Remove session_manager field from Agent
-  - [ ] Delete SessionManager type entirely
+- [x] **Step 3: Remove SessionManager**
+  - [x] Update Agent to not use SessionManager
+  - [x] Remove session_manager field from Agent
+  - [x] Delete SessionManager type entirely
 
-- [ ] **Step 4: Simplify save operations**
-  - [ ] Replace 3-4 save calls with single save_step()
-  - [ ] Ensure atomic operation
-  - [ ] Remove redundant update_cost()
+- [x] **Step 4: Simplify save operations**
+  - [x] Replace 3-4 save calls with single save_step()
+  - [x] Ensure atomic operation
+  - [x] Remove redundant update_cost()
 
-- [ ] **Step 5: Update tests**
-  - [ ] Fix unit tests for new API
-  - [ ] Fix integration tests
-  - [ ] Verify all tests pass
+- [x] **Step 5: Update tests**
+  - [x] Fix unit tests for new API
+  - [x] Fix integration tests
+  - [x] Verify all tests pass (67 tests passing)
 
-- [ ] **Step 6: Update documentation**
-  - [ ] Fix inline doc comments
-  - [ ] Update module documentation
+- [x] **Step 6: Update documentation**
+  - [x] Fix inline doc comments
+  - [x] Update module documentation
 
-- [ ] **Step 7: Verify build**
-  - [ ] `nix build .#agent` passes all checks
+- [x] **Step 7: Verify build**
+  - [x] `nix build .#agent` passes all checks
 
 ### Phase 5: CLI Interface
 
