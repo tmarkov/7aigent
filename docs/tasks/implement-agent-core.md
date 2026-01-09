@@ -134,28 +134,30 @@ Implement the core Rust agent that manages LLM interaction, session persistence,
 
 ### Phase 5: CLI Interface
 
-- [ ] Implement CLI (`agent/src/cli.rs`)
-  - [ ] Use clap for argument parsing
-  - [ ] Command: `7aigent <task>` - start new session
-  - [ ] Command: `7aigent --resume <id>` - resume session
-  - [ ] Command: `7aigent --list` - list sessions
-  - [ ] Command: `7aigent --inspect <id> [--step N]` - inspect session
-  - [ ] Command: `7aigent --init` - create .7aigent.toml template
+- [x] Implement CLI (`agent/src/cli.rs`)
+  - [x] Use clap for argument parsing
+  - [x] Command: `7aigent <task>` - start new session
+  - [x] Command: `7aigent --resume <id>` - resume session
+  - [x] Command: `7aigent --list` - list sessions
+  - [x] Command: `7aigent --inspect <id> [--step N]` - inspect session
+  - [x] Command: `7aigent --init` - create .7aigent.toml template
 
-- [ ] Implement user prompts (`agent/src/ui.rs`)
-  - [ ] Cost confirmation prompt (when exceeding budget)
-  - [ ] Display progress after each step
-  - [ ] Display cost summary at end
-  - [ ] Handle Ctrl+C gracefully (save session, mark as paused)
+- [x] Implement user prompts (`agent/src/ui.rs`)
+  - [x] Cost confirmation prompt (when exceeding budget)
+  - [x] Display progress after each step
+  - [x] Display cost summary at end
+  - [ ] Handle Ctrl+C gracefully (save session, mark as paused) - deferred to Phase 6
 
-- [ ] Implement main entry point (`agent/src/main.rs`)
-  - [ ] Parse CLI args
-  - [ ] Load config
-  - [ ] Create or load session
-  - [ ] Initialize container and LLM client
-  - [ ] Run agent loop
-  - [ ] Cleanup (shutdown container)
-  - [ ] Error handling and user-friendly error messages
+- [x] Implement main entry point (`agent/src/main.rs`)
+  - [x] Parse CLI args - placeholder implementation
+  - [ ] Load config - needs Agent API refactoring
+  - [ ] Create or load session - needs Agent API refactoring
+  - [ ] Initialize container and LLM client - needs Agent API refactoring
+  - [ ] Run agent loop - needs Agent API refactoring
+  - [ ] Cleanup (shutdown container) - needs Agent API refactoring
+  - [ ] Error handling and user-friendly error messages - needs Agent API refactoring
+
+**Note**: Phase 5 is partially complete. The CLI and UI modules are implemented and tested, but the main entry point needs refactoring to match the actual Agent implementation (which differs from the design doc).
 
 ### Phase 6: Testing and Polish
 
