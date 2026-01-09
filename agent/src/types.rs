@@ -105,8 +105,8 @@ pub struct Session {
     /// Number of steps completed
     pub step_count: usize,
 
-    /// LLM configuration snapshot (for resume)
-    pub llm_config: LlmConfigSnapshot,
+    /// LLM configuration snapshot (for resume, recorded on first LLM call)
+    pub llm_config: Option<LlmConfigSnapshot>,
 }
 
 /// LLM configuration snapshot (stored in session for resume)
@@ -114,6 +114,199 @@ pub struct Session {
 pub struct LlmConfigSnapshot {
     pub endpoint: String,
     pub model: String,
+}
+
+impl Session {
+    /// Create a new session
+    pub fn create(project_dir: PathBuf, task: String) -> crate::session::Result<Self> {
+        use crate::session::SessionError;
+
+        let session_id = SessionId::new();
+        let session_dir = project_dir
+            .join(".7aigent")
+            .join("sessions")
+            .join(session_id.to_string());
+
+        // Check if session already exists
+        if session_dir.exists() {
+            return Err(SessionError::AlreadyExists(session_id));
+        }
+
+        // Create session directory
+        std::fs::create_dir_all(&session_dir)?;
+
+        let now = Utc::now();
+        let session = Session {
+            id: session_id,
+            project_dir: project_dir.clone(),
+            task,
+            created_at: now,
+            updated_at: now,
+            status: SessionStatus::Active,
+            total_cost: Decimal::ZERO,
+            token_usage: Default::default(),
+            step_count: 0,
+            llm_config: None,
+        };
+
+        // Save initial metadata and create empty files
+        session.save_metadata()?;
+        std::fs::File::create(session_dir.join("history.jsonl"))?;
+        std::fs::File::create(session_dir.join("screens.jsonl"))?;
+
+        // Initialize cost tracking
+        let cost_data = serde_json::json!({
+            "total": session.total_cost,
+            "token_usage": session.token_usage,
+            "per_step": []
+        });
+        let mut cost_file =
+            std::io::BufWriter::new(std::fs::File::create(session_dir.join("cost.json"))?);
+        serde_json::to_writer_pretty(&mut cost_file, &cost_data)?;
+        use std::io::Write;
+        cost_file.flush()?;
+
+        Ok(session)
+    }
+
+    /// Load an existing session by ID
+    pub fn load(
+        project_dir: &std::path::Path,
+        session_id: SessionId,
+    ) -> crate::session::Result<Self> {
+        use crate::session::SessionError;
+
+        let session_dir = project_dir
+            .join(".7aigent")
+            .join("sessions")
+            .join(session_id.to_string());
+
+        if !session_dir.exists() {
+            return Err(SessionError::NotFound(session_id));
+        }
+
+        let metadata_path = session_dir.join("metadata.json");
+        let metadata_file = std::fs::File::open(metadata_path)?;
+        let session: Session = serde_json::from_reader(metadata_file)?;
+
+        Ok(session)
+    }
+
+    /// Get the session directory path
+    fn session_dir(&self) -> PathBuf {
+        self.project_dir
+            .join(".7aigent")
+            .join("sessions")
+            .join(self.id.to_string())
+    }
+
+    /// Save session metadata
+    pub fn save_metadata(&self) -> crate::session::Result<()> {
+        let session_dir = self.session_dir();
+        let metadata_path = session_dir.join("metadata.json");
+
+        let mut file = std::io::BufWriter::new(std::fs::File::create(metadata_path)?);
+        serde_json::to_writer_pretty(&mut file, self)?;
+        use std::io::Write;
+        file.flush()?;
+
+        Ok(())
+    }
+
+    /// Save a complete step (message, screen, and cost update)
+    pub fn save_step(&self, message: &Message, screen: &ScreenState) -> crate::session::Result<()> {
+        let session_dir = self.session_dir();
+
+        // Append message to history
+        let history_path = session_dir.join("history.jsonl");
+        let mut history_file = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(history_path)?;
+        serde_json::to_writer(&mut history_file, message)?;
+        use std::io::Write;
+        writeln!(history_file)?;
+
+        // Append screen to screens
+        let screens_path = session_dir.join("screens.jsonl");
+        let mut screens_file = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(screens_path)?;
+        serde_json::to_writer(&mut screens_file, screen)?;
+        writeln!(screens_file)?;
+
+        // Update metadata (contains updated cost, step_count, etc.)
+        self.save_metadata()?;
+
+        // Update cost tracking
+        let cost_path = session_dir.join("cost.json");
+        let cost_file = std::fs::File::open(&cost_path)?;
+        let mut cost_data: serde_json::Value = serde_json::from_reader(cost_file)?;
+
+        cost_data["total"] = serde_json::json!(self.total_cost);
+        cost_data["token_usage"] = serde_json::to_value(self.token_usage)?;
+
+        let mut file = std::io::BufWriter::new(std::fs::File::create(cost_path)?);
+        serde_json::to_writer_pretty(&mut file, &cost_data)?;
+        file.flush()?;
+
+        Ok(())
+    }
+
+    /// Record LLM configuration (called on first LLM use)
+    pub fn record_llm_config(&mut self, snapshot: LlmConfigSnapshot) -> crate::session::Result<()> {
+        self.llm_config = Some(snapshot);
+        self.save_metadata()
+    }
+
+    /// Load conversation history for this session
+    pub fn load_history(&self) -> crate::session::Result<Vec<Message>> {
+        let history_path = self.session_dir().join("history.jsonl");
+
+        if !history_path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let file = std::fs::File::open(history_path)?;
+        let reader = std::io::BufReader::new(file);
+        let mut messages = Vec::new();
+
+        use std::io::BufRead;
+        for line in reader.lines() {
+            let line = line?;
+            if !line.trim().is_empty() {
+                let message: Message = serde_json::from_str(&line)?;
+                messages.push(message);
+            }
+        }
+
+        Ok(messages)
+    }
+
+    /// Load screen states for this session
+    pub fn load_screens(&self) -> crate::session::Result<Vec<ScreenState>> {
+        let screens_path = self.session_dir().join("screens.jsonl");
+
+        if !screens_path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let file = std::fs::File::open(screens_path)?;
+        let reader = std::io::BufReader::new(file);
+        let mut screens = Vec::new();
+
+        use std::io::BufRead;
+        for line in reader.lines() {
+            let line = line?;
+            if !line.trim().is_empty() {
+                let screen: ScreenState = serde_json::from_str(&line)?;
+                screens.push(screen);
+            }
+        }
+
+        Ok(screens)
+    }
 }
 
 /// Token usage statistics
@@ -265,10 +458,10 @@ mod tests {
             total_cost: Decimal::new(123, 2), // $1.23
             token_usage: TokenUsage::default(),
             step_count: 5,
-            llm_config: LlmConfigSnapshot {
+            llm_config: Some(LlmConfigSnapshot {
                 endpoint: "https://api.openai.com/v1".to_string(),
                 model: "gpt-4".to_string(),
-            },
+            }),
         };
 
         // Test that it can be serialized and deserialized

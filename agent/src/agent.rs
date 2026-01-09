@@ -378,10 +378,10 @@ mod tests {
             total_cost: Decimal::ZERO,
             token_usage: TokenUsage::default(),
             step_count: 0,
-            llm_config: LlmConfigSnapshot {
+            llm_config: Some(LlmConfigSnapshot {
                 endpoint: "https://api.example.com".to_string(),
                 model: "test-model".to_string(),
-            },
+            }),
         }
     }
 

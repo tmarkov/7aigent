@@ -6,7 +6,7 @@
 //! - `screens.jsonl`: Screen states (NDJSON, one screen per step)
 //! - `cost.json`: Cost tracking (total, per-step, token usage)
 
-use crate::types::{LlmConfigSnapshot, Message, ScreenState, Session, SessionId, SessionStatus};
+use crate::types::{Message, ScreenState, Session, SessionId, SessionStatus};
 use chrono::Utc;
 use rust_decimal::Decimal;
 use std::fs;
@@ -63,7 +63,7 @@ impl SessionManager {
     }
 
     /// Create a new session
-    pub fn create(&self, task: String, llm_config: LlmConfigSnapshot) -> Result<Session> {
+    pub fn create(&self, task: String) -> Result<Session> {
         let session_id = SessionId::new();
         let session_dir = self.session_dir(session_id);
 
@@ -86,7 +86,7 @@ impl SessionManager {
             total_cost: Decimal::ZERO,
             token_usage: Default::default(),
             step_count: 0,
-            llm_config,
+            llm_config: None,
         };
 
         // Save initial metadata
@@ -304,7 +304,7 @@ impl SessionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{LlmConfigSnapshot, Message, TokenUsage};
+    use crate::types::{Message, TokenUsage};
     use std::collections::HashMap;
     use tempfile::TempDir;
 
@@ -318,12 +318,7 @@ mod tests {
     fn test_create_session() {
         let (manager, _temp) = create_test_manager();
 
-        let llm_config = LlmConfigSnapshot {
-            endpoint: "https://api.openai.com/v1".to_string(),
-            model: "gpt-4".to_string(),
-        };
-
-        let session = manager.create("Test task".to_string(), llm_config).unwrap();
+        let session = manager.create("Test task".to_string()).unwrap();
 
         assert_eq!(session.task, "Test task");
         assert_eq!(session.status, SessionStatus::Active);
@@ -342,12 +337,7 @@ mod tests {
     fn test_load_session() {
         let (manager, _temp) = create_test_manager();
 
-        let llm_config = LlmConfigSnapshot {
-            endpoint: "https://api.openai.com/v1".to_string(),
-            model: "gpt-4".to_string(),
-        };
-
-        let created = manager.create("Test task".to_string(), llm_config).unwrap();
+        let created = manager.create("Test task".to_string()).unwrap();
         let loaded = manager.load(created.id).unwrap();
 
         assert_eq!(created.id, loaded.id);
@@ -368,12 +358,7 @@ mod tests {
     fn test_append_message() {
         let (manager, _temp) = create_test_manager();
 
-        let llm_config = LlmConfigSnapshot {
-            endpoint: "https://api.openai.com/v1".to_string(),
-            model: "gpt-4".to_string(),
-        };
-
-        let session = manager.create("Test task".to_string(), llm_config).unwrap();
+        let session = manager.create("Test task".to_string()).unwrap();
 
         let msg1 = Message::user("Hello".to_string());
         let msg2 = Message::assistant("Hi there".to_string());
@@ -391,12 +376,7 @@ mod tests {
     fn test_append_screen() {
         let (manager, _temp) = create_test_manager();
 
-        let llm_config = LlmConfigSnapshot {
-            endpoint: "https://api.openai.com/v1".to_string(),
-            model: "gpt-4".to_string(),
-        };
-
-        let session = manager.create("Test task".to_string(), llm_config).unwrap();
+        let session = manager.create("Test task".to_string()).unwrap();
 
         let screen = ScreenState {
             step: 1,
@@ -415,12 +395,7 @@ mod tests {
     fn test_update_cost() {
         let (manager, _temp) = create_test_manager();
 
-        let llm_config = LlmConfigSnapshot {
-            endpoint: "https://api.openai.com/v1".to_string(),
-            model: "gpt-4".to_string(),
-        };
-
-        let session = manager.create("Test task".to_string(), llm_config).unwrap();
+        let session = manager.create("Test task".to_string()).unwrap();
 
         let total_cost = Decimal::new(150, 2); // $1.50
         let token_usage = TokenUsage {
@@ -450,19 +425,10 @@ mod tests {
     fn test_list_sessions() {
         let (manager, _temp) = create_test_manager();
 
-        let llm_config = LlmConfigSnapshot {
-            endpoint: "https://api.openai.com/v1".to_string(),
-            model: "gpt-4".to_string(),
-        };
-
         // Create multiple sessions
-        manager
-            .create("Task 1".to_string(), llm_config.clone())
-            .unwrap();
-        manager
-            .create("Task 2".to_string(), llm_config.clone())
-            .unwrap();
-        manager.create("Task 3".to_string(), llm_config).unwrap();
+        manager.create("Task 1".to_string()).unwrap();
+        manager.create("Task 2".to_string()).unwrap();
+        manager.create("Task 3".to_string()).unwrap();
 
         let sessions = manager.list().unwrap();
         assert_eq!(sessions.len(), 3);
@@ -476,12 +442,7 @@ mod tests {
     fn test_delete_session() {
         let (manager, _temp) = create_test_manager();
 
-        let llm_config = LlmConfigSnapshot {
-            endpoint: "https://api.openai.com/v1".to_string(),
-            model: "gpt-4".to_string(),
-        };
-
-        let session = manager.create("Test task".to_string(), llm_config).unwrap();
+        let session = manager.create("Test task".to_string()).unwrap();
 
         manager.delete(session.id).unwrap();
 
@@ -493,12 +454,7 @@ mod tests {
     fn test_save_metadata() {
         let (manager, _temp) = create_test_manager();
 
-        let llm_config = LlmConfigSnapshot {
-            endpoint: "https://api.openai.com/v1".to_string(),
-            model: "gpt-4".to_string(),
-        };
-
-        let mut session = manager.create("Test task".to_string(), llm_config).unwrap();
+        let mut session = manager.create("Test task".to_string()).unwrap();
 
         // Modify session
         session.status = SessionStatus::Completed;

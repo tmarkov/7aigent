@@ -294,10 +294,10 @@ mod tests {
             total_cost: dec!(1.23),
             token_usage: Default::default(),
             step_count: 0,
-            llm_config: LlmConfigSnapshot {
+            llm_config: Some(LlmConfigSnapshot {
                 endpoint: "http://localhost".to_string(),
                 model: "gpt-4".to_string(),
-            },
+            }),
         };
 
         // Just verify it doesn't panic
