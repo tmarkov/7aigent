@@ -15,6 +15,8 @@ pub struct Config {
     pub sandbox: SandboxConfig,
     #[serde(default)]
     pub budget: BudgetConfig,
+    #[serde(default)]
+    pub behavior: BehaviorConfig,
 }
 
 impl Config {
@@ -241,6 +243,31 @@ impl Default for BudgetConfig {
     }
 }
 
+/// Behavioral configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BehaviorConfig {
+    /// Whether agent should explain its actions
+    #[serde(default = "default_explain_actions")]
+    pub explain_actions: bool,
+
+    /// Whether to ask before destructive operations
+    #[serde(default)]
+    pub ask_before_destructive: bool,
+}
+
+fn default_explain_actions() -> bool {
+    true
+}
+
+impl Default for BehaviorConfig {
+    fn default() -> Self {
+        Self {
+            explain_actions: default_explain_actions(),
+            ask_before_destructive: false,
+        }
+    }
+}
+
 /// Configuration loader
 pub struct ConfigLoader;
 
@@ -354,6 +381,7 @@ mod tests {
             },
             sandbox: SandboxConfig::default(),
             budget: BudgetConfig::default(),
+            behavior: BehaviorConfig::default(),
         };
 
         // Test that it can be serialized and deserialized
