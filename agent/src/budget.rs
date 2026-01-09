@@ -82,14 +82,13 @@ pub fn check_budget(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{LlmConfigSnapshot, Session, SessionStatus, TokenUsage};
+    use crate::types::{LlmConfigSnapshot, Session, SessionId, SessionStatus, TokenUsage};
     use chrono::Utc;
     use std::path::PathBuf;
-    use uuid::Uuid;
 
     fn create_test_session(total_cost: Decimal) -> Session {
         Session {
-            id: Uuid::new_v4(),
+            id: SessionId::new(),
             project_dir: PathBuf::from("/test"),
             task: "test task".to_string(),
             created_at: Utc::now(),

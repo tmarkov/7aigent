@@ -252,11 +252,10 @@ pub fn get_config_template() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{ScreenSection, ScreenState, Session, SessionStatus};
+    use crate::types::{ScreenSection, ScreenState, Session, SessionId, SessionStatus};
     use chrono::Utc;
     use rust_decimal_macros::dec;
     use std::path::PathBuf;
-    use uuid::Uuid;
 
     #[test]
     fn test_display_step_progress() {
@@ -286,7 +285,7 @@ mod tests {
         use crate::types::LlmConfigSnapshot;
 
         let session = Session {
-            id: Uuid::new_v4(),
+            id: SessionId::new(),
             project_dir: PathBuf::from("/test"),
             task: "test task".to_string(),
             created_at: Utc::now(),

@@ -284,14 +284,13 @@ mod tests {
     use super::*;
     use crate::config::{BehaviorConfig, BudgetConfig, LlmConfig, SandboxConfig, TokenPricing};
     use crate::llm::{CompletionResponse, FinishReason, LlmError, TokenUsage as LlmTokenUsage};
-    use crate::types::{LlmConfigSnapshot, TokenUsage};
+    use crate::types::{LlmConfigSnapshot, SessionId, TokenUsage};
     use async_trait::async_trait;
     use chrono::Utc;
     use rust_decimal::Decimal;
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
-    use uuid::Uuid;
 
     /// Mock LLM client for testing
     struct MockLlmClient {
@@ -373,7 +372,7 @@ mod tests {
 
     fn create_test_session() -> Session {
         Session {
-            id: Uuid::new_v4(),
+            id: SessionId::new(),
             project_dir: PathBuf::from("/test"),
             task: "Test task".to_string(),
             created_at: Utc::now(),

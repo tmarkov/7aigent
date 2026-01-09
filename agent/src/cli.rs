@@ -110,10 +110,12 @@ mod tests {
 
     #[test]
     fn test_parse_resume() {
-        let session_id = Uuid::new_v4();
+        let session_id = crate::types::SessionId::new();
         let cli = Cli::parse_from(["7aigent", "resume", &session_id.to_string()]);
         match cli.command {
-            Some(Commands::Resume { session_id: id }) => assert_eq!(id, session_id),
+            Some(Commands::Resume { session_id: id }) => {
+                assert_eq!(id, session_id.as_uuid().to_owned())
+            }
             _ => panic!("Expected Resume command"),
         }
     }
@@ -144,7 +146,7 @@ mod tests {
 
     #[test]
     fn test_parse_inspect() {
-        let session_id = Uuid::new_v4();
+        let session_id = crate::types::SessionId::new();
         let cli = Cli::parse_from(["7aigent", "inspect", &session_id.to_string()]);
         match cli.command {
             Some(Commands::Inspect {
@@ -152,7 +154,7 @@ mod tests {
                 step,
                 show_screens,
             }) => {
-                assert_eq!(id, session_id);
+                assert_eq!(id, session_id.as_uuid().to_owned());
                 assert!(step.is_none());
                 assert!(!show_screens);
             }
@@ -162,7 +164,7 @@ mod tests {
 
     #[test]
     fn test_parse_inspect_with_step() {
-        let session_id = Uuid::new_v4();
+        let session_id = crate::types::SessionId::new();
         let cli = Cli::parse_from([
             "7aigent",
             "inspect",
@@ -177,7 +179,7 @@ mod tests {
                 step,
                 show_screens,
             }) => {
-                assert_eq!(id, session_id);
+                assert_eq!(id, session_id.as_uuid().to_owned());
                 assert_eq!(step, Some(5));
                 assert!(show_screens);
             }

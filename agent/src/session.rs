@@ -64,7 +64,7 @@ impl SessionManager {
 
     /// Create a new session
     pub fn create(&self, task: String, llm_config: LlmConfigSnapshot) -> Result<Session> {
-        let session_id = SessionId::new_v4();
+        let session_id = SessionId::new();
         let session_dir = self.session_dir(session_id);
 
         // Check if session already exists
@@ -358,7 +358,7 @@ mod tests {
     #[test]
     fn test_load_nonexistent_session() {
         let (manager, _temp) = create_test_manager();
-        let nonexistent_id = SessionId::new_v4();
+        let nonexistent_id = SessionId::new();
 
         let result = manager.load(nonexistent_id);
         assert!(matches!(result, Err(SessionError::NotFound(_))));
