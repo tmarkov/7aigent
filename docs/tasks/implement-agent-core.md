@@ -103,18 +103,18 @@ Implement the core Rust agent that manages LLM interaction, session persistence,
 
 ### Phase 4: Agent Core Loop
 
-- [ ] Implement context building (`agent/src/context.rs`)
-  - [ ] `build_system_prompt()` - construct from config + sandbox rules
-  - [ ] `build_llm_messages()` - system + task + history + screen
-  - [ ] `truncate_history()` - keep recent messages within token limit
-  - [ ] `format_screen()` - convert screen state to user message
-  - [ ] Tests for message construction
+- [x] Implement context building (`agent/src/context.rs`)
+  - [x] `build_system_prompt()` - construct from config + sandbox rules
+  - [x] `build_llm_messages()` - system + task + history + screen
+  - [x] `truncate_history()` - keep recent messages within token limit
+  - [x] `format_screen()` - convert screen state to user message
+  - [x] Tests for message construction
 
-- [ ] Implement command parsing (`agent/src/parser.rs`)
-  - [ ] `parse_commands()` - extract fenced code blocks from LLM response
-  - [ ] Regex for ```env\ncommand``` pattern
-  - [ ] `Command` struct (env, command)
-  - [ ] Tests with example LLM responses
+- [x] Implement command parsing (`agent/src/parser.rs`)
+  - [x] `parse_commands()` - extract fenced code blocks from LLM response
+  - [x] Regex for ```env\ncommand``` pattern
+  - [x] `Command` struct (env, command)
+  - [x] Tests with example LLM responses
 
 - [ ] Implement budget checking (`agent/src/budget.rs`)
   - [ ] `BudgetCheckResult` enum (Ok, WarningThreshold, ExceedsPerCall, ExceedsSession)

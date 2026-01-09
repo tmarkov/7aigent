@@ -4,6 +4,7 @@ pub mod config;
 pub mod container;
 pub mod context;
 pub mod llm;
+pub mod parser;
 pub mod session;
 pub mod types;
 
