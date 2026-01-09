@@ -61,10 +61,11 @@ The orchestrator can work as a standalone tool without an agent. Focus on these 
 - [x] [Implement help system](file://./implement-help-system.md) - Implement the designed help system
 - [x] [Review orchestrator implementation](file://./review-orchestrator-implementation.md) - Comprehensive review of design, code, tests, and documentation
 
-### Agent Integration (Deferred)
+### Agent Design and Implementation
 
-These tasks are deferred until orchestrator is complete and tested:
+These tasks are for designing and implementing the agent:
 
+- [x] [Design the agent](file://./design-agent.md) - Define scenarios, requirements, and architecture
 - [ ] [Implement agent core](file://./implement-agent-core.md)
 - [ ] [Implement container integration](file://./implement-container-integration.md)
 - [ ] [End-to-end testing](file://./end-to-end-testing.md)
