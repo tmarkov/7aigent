@@ -67,5 +67,6 @@ These tasks are for designing and implementing the agent:
 
 - [x] [Design the agent](file://./design-agent.md) - Define scenarios, requirements, and architecture
 - [x] [Implement agent core](file://./implement-agent-core.md)
-- [ ] [Implement container integration](file://./implement-container-integration.md)
+- [x] [Design sandbox container](file://./design-sandbox-container.md) - Design bubblewrap-based sandbox to replace Podman
+- [ ] [Implement sandbox container](file://./implement-sandbox-container.md) - Implement the sandbox design
 - [ ] [End-to-end testing](file://./end-to-end-testing.md)
