@@ -41,8 +41,8 @@ This section contains a list of all tasks, formatted as a checklist. Tasks are t
 
 ## Planning Phase
 
-- [x] [Create a plan for the project](file://./plan.md)
-- [x] [Design the orchestrator and environment contract](file://./orchestrator-design.md)
+- [x] [01 - Create a plan for the project](./01-plan.md)
+- [x] [02 - Design the orchestrator and environment contract](./02-orchestrator-design.md)
 
 ## Implementation Phase
 
@@ -50,23 +50,27 @@ This section contains a list of all tasks, formatted as a checklist. Tasks are t
 
 The orchestrator can work as a standalone tool without an agent. Focus on these tasks:
 
-- [x] [Implement orchestrator core types](file://./implement-orchestrator-types.md)
-- [x] [Implement bash environment](file://./implement-bash-environment.md)
-- [x] [Implement minimal orchestrator](file://./implement-minimal-orchestrator.md) - Get bash working end-to-end first
-- [x] [Implement python environment](file://./implement-python-environment.md)
-- [x] [Implement editor environment](file://./implement-editor-environment.md)
-- [x] [Implement orchestrator core](file://./implement-orchestrator-core.md) - Full version with all environments
-- [x] [Design help system](file://./design-help-system.md) - Design self-documenting capability discovery
-- [x] [Implement DeclarativeEnvironment base class](file://./implement-declarative-environment.md) - Base class for structured command environments with auto-help
-- [x] [Implement help system](file://./implement-help-system.md) - Implement the designed help system
-- [x] [Review orchestrator implementation](file://./review-orchestrator-implementation.md) - Comprehensive review of design, code, tests, and documentation
+- [x] [03 - Implement orchestrator core types](./03-implement-orchestrator-types.md)
+- [x] [04 - Implement bash environment](./04-implement-bash-environment.md)
+- [x] [05 - Implement minimal orchestrator](./05-implement-minimal-orchestrator.md) - Get bash working end-to-end first
+- [x] [06 - Implement python environment](./06-implement-python-environment.md)
+- [x] [07 - Implement editor environment](./07-implement-editor-environment.md)
+- [x] [08 - Implement orchestrator core](./08-implement-orchestrator-core.md) - Full version with all environments
+- [x] [09 - Design help system](./09-design-help-system.md) - Design self-documenting capability discovery
+- [x] [10 - Implement DeclarativeEnvironment base class](./10-implement-declarative-environment.md) - Base class for structured command environments with auto-help
+- [x] [11 - Implement help system](./11-implement-help-system.md) - Implement the designed help system
+- [x] [12 - Review orchestrator implementation](./12-review-orchestrator-implementation.md) - Comprehensive review of design, code, tests, and documentation
 
 ### Agent Design and Implementation
 
 These tasks are for designing and implementing the agent:
 
-- [x] [Design the agent](file://./design-agent.md) - Define scenarios, requirements, and architecture
-- [x] [Implement agent core](file://./implement-agent-core.md)
-- [x] [Design sandbox container](file://./design-sandbox-container.md) - Design bubblewrap-based sandbox to replace Podman
-- [x] [Implement sandbox container](file://./implement-sandbox-container.md) - Bubblewrap-based sandbox with integrated tests
-- [ ] [End-to-end testing](file://./end-to-end-testing.md)
+- [x] [13 - Design the agent](./13-design-agent.md) - Define scenarios, requirements, and architecture
+- [x] [14 - Implement agent core](./14-implement-agent-core.md)
+- [x] [15 - Design sandbox container](./15-design-sandbox-container.md) - Design bubblewrap-based sandbox to replace Podman
+- [x] [16 - Implement sandbox container](./16-implement-sandbox-container.md) - Bubblewrap-based sandbox with integrated tests
+- [ ] [17 - End-to-end testing](./17-end-to-end-testing.md)
+
+### Documentation
+
+- [ ] [18 - Refactor documentation structure](./18-refactor-documentation-structure.md) - Reorganize docs for better navigation

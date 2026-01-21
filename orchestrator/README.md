@@ -8,7 +8,7 @@ The orchestrator is the main process inside the container that manages environme
 - **Protocol**: Defines the contract all environments must implement
 - **Communication**: NDJSON over stdin/stdout for agent-orchestrator communication
 
-See [docs/orchestrator.md](../docs/orchestrator.md) for complete architecture and design documentation.
+See [docs/design/orchestrator/](../docs/design/orchestrator/) for complete architecture and design documentation.
 
 ## Development
 

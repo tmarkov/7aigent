@@ -12,7 +12,7 @@ When working on this project, follow these guidelines:
 4. **Explicit over implicit**: Code should be clear and obvious, not clever
 5. **Test thoroughly**: Property-based testing ensures correctness across input space
 
-See [docs/coding-style.md](docs/coding-style.md) for detailed conventions that support these principles.
+See [docs/reference/coding-style.md](docs/reference/coding-style.md) for detailed conventions that support these principles.
 
 ## Build System
 
@@ -53,7 +53,7 @@ Understanding where different types of work belong:
 - **Purpose**: Explains HOW things work and WHY decisions were made
 - **Audience**: Anyone trying to understand the system
 - **Lifecycle**: Long-term reference material
-- **Examples**: `docs/orchestrator.md`, `docs/coding-style.md`, `docs/technology.md`
+- **Examples**: `docs/design/orchestrator/`, `docs/reference/coding-style.md`, `docs/development/technology.md`
 
 ### Tasks (docs/tasks/)
 
@@ -94,7 +94,7 @@ Python environment consumes unbounded memory over long sessions...
 
 ## Context
 - Component: orchestrator/environments/python.py
-- Related: Issue #42, Performance requirements in docs/orchestrator.md
+- Related: Issue #42, Performance requirements in docs/design/orchestrator/
 
 ## Scenarios
 1. Agent runs 1000 small Python commands - memory usage should stay bounded
@@ -332,7 +332,7 @@ For each scenario, trace the interaction:
 Only implement after design is solid.
 
 **Implementation checklist**:
-- Follow [docs/coding-style.md](docs/coding-style.md) strictly
+- Follow [docs/reference/coding-style.md](docs/reference/coding-style.md) strictly
 - Use TodoWrite to track implementation steps
 - **CRITICAL: Verify build sees new code first** (see Implementation Task below)
   - Create test file that imports new module
@@ -461,7 +461,7 @@ Only implement after design is solid.
    - Build frequently to catch issues early
    - Tests guide implementation
 
-6. Follow coding-style.md strictly
+6. Follow reference/coding-style.md strictly
 
 7. Write tests as you go (property-based for public APIs)
 
@@ -626,7 +626,7 @@ You're doing well if:
   - This verifies all tests pass
 - Tests are comprehensive and use property-based testing where applicable
 - Documentation is clear and up-to-date
-- You followed coding-style.md strictly
+- You followed reference/coding-style.md strictly
 - You found no surprises (design was accurate)
 
 ### For Overall Collaboration

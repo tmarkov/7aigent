@@ -44,7 +44,7 @@ shell_prefix = "nix develop --command"
 
 Now the agent's Python environment will have numpy and pandas available, and bash can use cargo/rustc.
 
-See [docs/sandbox-design.md](./docs/sandbox-design.md) for details.
+See [docs/design/sandbox/](./docs/design/sandbox/) for details.
 
 ## Development
 

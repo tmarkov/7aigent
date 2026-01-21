@@ -192,7 +192,7 @@ fn display_screen_section_full(screen: &ScreenState) {
 /// Display the initial config template content
 pub fn get_config_template() -> &'static str {
     r#"# 7aigent configuration file
-# See docs/agent-design.md for full documentation
+# See docs/design/agent/ for full documentation
 
 [llm]
 # OpenAI-compatible API endpoint

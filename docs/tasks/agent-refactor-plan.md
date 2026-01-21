@@ -18,7 +18,7 @@ See:
 ## Two-Phase Approach
 
 ### Phase A: Update Design Document
-Update `docs/agent-design.md` to incorporate justified implementation improvements.
+Update `docs/design/agent/` to incorporate justified implementation improvements.
 
 ### Phase B: Refactor Implementation
 Simplify implementation to match the updated design, removing unjustified complexity.
@@ -27,7 +27,7 @@ Simplify implementation to match the updated design, removing unjustified comple
 
 ## Phase A: Update Design Document
 
-**Goal**: Revise `docs/agent-design.md` to include the good ideas from implementation.
+**Goal**: Revise `docs/design/agent/` to include the good ideas from implementation.
 
 ### Checklist
 
