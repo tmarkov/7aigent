@@ -100,8 +100,8 @@
             isort
             ruff
 
-            # Containerization
-            podman
+            # Sandboxing
+            bubblewrap
 
             # Version control
             git
@@ -120,41 +120,17 @@
           shellHook = ''
             echo "🦀 Rust toolchain: $(rustc --version)"
             echo "🐍 Python: $(python --version)"
-            echo "📦 Podman: $(podman --version)"
+            echo "🔒 Bubblewrap: $(bwrap --version)"
             echo ""
             echo "Development environment loaded!"
             echo "Run 'pre-commit install' to set up git hooks"
           ''
           + pre-commit-check.shellHook;
         };
-        packages = {
-
-          # Build the agent (Rust)
-          agent = naersk-lib.buildPackage {
-            src = ./agent;
-            pname = "7aigent-agent";
-            version = "0.1.0";
-
-            # Run tests during build
-            doCheck = true;
-
-            # Additional build inputs for checks
-            nativeBuildInputs = with pkgs; [
-              rustfmt
-              clippy
-            ];
-
-            # Override check phase to run formatters, linters, and tests
-            checkPhase = ''
-              echo "Running rustfmt check..."
-              cargo fmt --check
-
-              echo "Running clippy linter..."
-              cargo clippy --all-targets --all-features -- -D warnings
-
-              echo "Running cargo test..."
-              cargo test --release
-            '';
+        packages = rec {
+          # Build the agent (Rust) with embedded sandbox
+          agent = pkgs.callPackage ./agent {
+            sandbox = sandbox;
           };
 
           # Build the orchestrator (Python)
@@ -205,6 +181,11 @@
               description = "7aigent orchestrator - manages environments inside container";
               license = licenses.mit;
             };
+          };
+
+          # Build the sandbox script (bubblewrap wrapper)
+          sandbox = pkgs.callPackage ./sandbox {
+            orchestrator = self.packages.${system}.orchestrator;
           };
 
           # Default package

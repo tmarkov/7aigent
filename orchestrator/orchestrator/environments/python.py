@@ -57,12 +57,27 @@ class PythonEnvironment:
 
     def _start_process(self) -> None:
         """Start Python process and configure prompt."""
-        # Spawn Python REPL using same Python executable as current process
-        # This ensures compatibility in Nix build environment
+        # Check for shell prefix (e.g., "nix develop --command")
+        shell_prefix = os.environ.get("SHELL_PREFIX", "")
+
+        if shell_prefix:
+            # Parse prefix and append python command
+            # Example: "nix develop --command" + "python"
+            import shlex
+
+            cmd_parts = shlex.split(shell_prefix) + [sys.executable, "-u", "-q"]
+            cmd = cmd_parts[0]
+            args = cmd_parts[1:]
+        else:
+            # No wrapper, direct python
+            cmd = sys.executable
+            args = ["-u", "-q"]  # -u: unbuffered, -q: quiet (no banner)
+
+        # Spawn Python REPL
         # Set TERM=dumb to disable ANSI escape codes
         self._process = pexpect.spawn(
-            sys.executable,
-            ["-u", "-q"],  # -u: unbuffered, -q: quiet (no banner)
+            cmd,
+            args,
             encoding="utf-8",
             codec_errors="replace",
             echo=False,

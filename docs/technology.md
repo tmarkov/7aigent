@@ -55,20 +55,26 @@ For coding conventions and style guidelines, see [coding-style.md](coding-style.
 
 **Validation**: Runtime introspection by orchestrator validates type signatures and method presence
 
-### Containerization
+### Sandboxing
 
-**Technology**: Podman
+**Technology**: Bubblewrap (Linux namespaces)
 
 **Rationale**:
-- Daemonless architecture (better security model)
-- Rootless containers by default
-- Compatible with Docker tooling
-- Better for sandboxed execution
+- Lightweight isolation without daemon or OCI complexity
+- Designed for sandboxing single applications
+- Rootless by default, uses Linux namespaces directly
+- Fast startup (~200-300ms vs 1-2s for containers)
+- Simple integration with Nix derivations
+- Transparent stdin/stdout forwarding for NDJSON protocol
 
 **Configuration**:
-- Container only has access to project directory
-- Whitelisted internet resources (to be defined)
-- Orchestrator runs as main container process
+- Sandbox only has access to project directory (`/workspace`)
+- Read-only access to `/nix/store` for packages
+- Network access shared with host by default (can be disabled)
+- Orchestrator runs as main process inside namespace
+- Customizable via `shell_prefix` config (e.g., `nix develop --command`)
+
+**Design**: See `docs/sandbox-design.md` for complete architecture and security model
 
 ## Development Workflow
 

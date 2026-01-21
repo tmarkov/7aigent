@@ -511,6 +511,96 @@ sandbox_path = ".7aigent/result/bin/7aigent-sandbox"
 
 ---
 
+## IMPLEMENTED: Shell Prefix Customization (V1)
+
+**Note**: The above `extraPackages` approach was NOT implemented. Instead, we use a simpler `shell_prefix` design that allows post-install customization.
+
+### Design Philosophy
+
+Users customize their environment AFTER agent installation using standard Nix workflows. The agent ships with a minimal sandbox containing only essentials (Python, bash, coreutils, nix). Users add project-specific tools via `shell_prefix` configuration.
+
+### How Shell Prefix Works
+
+1. **Agent reads config** and passes `shell_prefix` to orchestrator via `SHELL_PREFIX` environment variable
+2. **Orchestrator's interactive environments** (Python, etc.) check for `SHELL_PREFIX` on startup
+3. **If set**, they wrap their process spawn: `nix develop --command python` instead of just `python`
+4. **Python REPL** starts inside the devshell with custom packages available
+5. **Bash environment** ignores `SHELL_PREFIX` - agent controls bash shell directly via commands
+
+### User Setup
+
+**Step 1: Create development shell in project**
+
+```nix
+# flake.nix in project directory
+{
+  description = "My Rust Project";
+
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+  outputs = { self, nixpkgs }: {
+    devShells.x86_64-linux.default = nixpkgs.legacyPackages.x86_64-linux.mkShell {
+      packages = with nixpkgs.legacyPackages.x86_64-linux; [
+        # Rust toolchain
+        cargo rustc clippy rust-analyzer
+
+        # Python packages
+        (python3.withPackages (ps: [ ps.numpy ps.pandas ]))
+      ];
+    };
+  };
+}
+```
+
+**Step 2: Configure agent**
+
+```toml
+# .7aigent.toml
+[sandbox]
+shell_prefix = "nix develop --command"
+```
+
+### Example Session
+
+```python
+# Agent uses Python environment
+>>> import numpy as np  # Works! Python started in devshell
+>>> arr = np.array([1, 2, 3])
+```
+
+```bash
+# Agent controls bash directly
+$ nix develop  # Agent can enter devshell
+(devshell) $ cargo build
+(devshell) $ exit
+```
+
+### Alternative Shell Wrappers
+
+```toml
+# Poetry projects
+[sandbox]
+shell_prefix = "poetry run"
+
+# Conda environments
+[sandbox]
+shell_prefix = "conda run -n myenv"
+
+# No customization (default minimal environment)
+[sandbox]
+# shell_prefix not set
+```
+
+### Benefits
+
+✅ **Post-install customization**: Edit flake.nix, no agent rebuild
+✅ **One agent binary**: Works for all project types
+✅ **Standard workflow**: Uses familiar `nix develop`
+✅ **Encapsulated**: Agent → sandbox → orchestrator boundary maintained
+✅ **Extensible**: Works with any shell wrapper
+
+---
+
 ## Security Model
 
 ### Isolation Boundaries

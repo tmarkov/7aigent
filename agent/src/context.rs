@@ -178,6 +178,9 @@ mod tests {
         let config = Config::default();
 
         let sandbox = SandboxConfig {
+            shell_prefix: None,
+            disable_network: false,
+            sandbox_path: None,
             files: FileAccessConfig::default(),
             resources: ResourceConfig::default(),
         };
@@ -197,6 +200,9 @@ mod tests {
         config.behavior.ask_before_destructive = true;
 
         let sandbox = SandboxConfig {
+            shell_prefix: None,
+            disable_network: false,
+            sandbox_path: None,
             files: FileAccessConfig {
                 read_only: vec!["*.lock".to_string()],
                 read_write: vec![],
@@ -274,6 +280,9 @@ mod tests {
         let config = Config::default();
 
         let sandbox = SandboxConfig {
+            shell_prefix: None,
+            disable_network: false,
+            sandbox_path: None,
             files: FileAccessConfig::default(),
             resources: ResourceConfig::default(),
         };

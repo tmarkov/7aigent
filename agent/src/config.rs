@@ -80,7 +80,17 @@ impl Config {
             self.llm.pricing.insert(model, pricing);
         }
 
-        // Sandbox config: replace lists if non-empty
+        // Sandbox config: override if set
+        if other.sandbox.shell_prefix.is_some() {
+            self.sandbox.shell_prefix = other.sandbox.shell_prefix;
+        }
+        if other.sandbox.sandbox_path.is_some() {
+            self.sandbox.sandbox_path = other.sandbox.sandbox_path;
+        }
+        // disable_network is a boolean, so just copy it
+        self.sandbox.disable_network = other.sandbox.disable_network;
+
+        // File access: replace lists if non-empty
         if !other.sandbox.files.read_only.is_empty() {
             self.sandbox.files.read_only = other.sandbox.files.read_only;
         }
@@ -205,8 +215,24 @@ pub use crate::llm::cost::TokenPricing;
 /// Sandbox configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SandboxConfig {
+    /// Shell prefix for wrapping interactive processes (e.g., "nix develop --command")
+    /// This is passed to orchestrator via SHELL_PREFIX environment variable.
+    /// Interactive environments (python, etc.) will spawn their processes using this prefix.
+    /// Bash environment ignores this - agent controls bash shell directly.
+    pub shell_prefix: Option<String>,
+
+    /// Disable network access (default: false, network enabled)
+    #[serde(default)]
+    pub disable_network: bool,
+
+    /// Path to custom sandbox script (optional, overrides default)
+    pub sandbox_path: Option<PathBuf>,
+
+    /// File access configuration (advisory in V1)
     #[serde(default)]
     pub files: FileAccessConfig,
+
+    /// Resource limits (V1: not implemented, use systemd-run manually)
     #[serde(default)]
     pub resources: ResourceConfig,
 }

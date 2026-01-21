@@ -1,6 +1,50 @@
 # 7aigent
 
-7aigent is an general autonomous AI agent. It runs an interaction loop where an LLM executes actions in a system, and then receives feedback as a result of these actions, in order to complete a given task.
+7aigent is a general autonomous AI agent. It runs an interaction loop where an LLM executes actions in a system, and then receives feedback as a result of these actions, in order to complete a given task.
+
+## Quick Start
+
+```bash
+# Build the agent
+nix build .#agent
+
+# Run the agent
+./result/bin/7aigent "your task here"
+```
+
+## Customizing the Environment
+
+The agent runs in a minimal sandbox by default (Python, bash, coreutils). To add project-specific tools (Rust, npm, Python packages, etc.):
+
+**1. Create a development shell in your project:**
+
+```nix
+# flake.nix in your project
+{
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+  outputs = { nixpkgs, ... }: {
+    devShells.x86_64-linux.default = nixpkgs.legacyPackages.x86_64-linux.mkShell {
+      packages = with nixpkgs.legacyPackages.x86_64-linux; [
+        cargo rustc  # Rust toolchain
+        (python3.withPackages (ps: [ ps.numpy ps.pandas ]))
+      ];
+    };
+  };
+}
+```
+
+**2. Configure the agent:**
+
+```toml
+# .7aigent.toml in your project
+[sandbox]
+shell_prefix = "nix develop --command"
+```
+
+Now the agent's Python environment will have numpy and pandas available, and bash can use cargo/rustc.
+
+See [docs/sandbox-design.md](./docs/sandbox-design.md) for details.
 
 ## Development
 

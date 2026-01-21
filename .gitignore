@@ -34,5 +34,4 @@ build/
 Thumbs.db
 
 # Development/testing artifacts
-sandbox
 test_orchestrator.sh

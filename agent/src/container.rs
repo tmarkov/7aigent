@@ -1,25 +1,22 @@
-//! Container management for spawning and communicating with the orchestrator.
+//! Sandbox management for spawning and communicating with the orchestrator.
 
 use crate::config::SandboxConfig;
 use crate::types::{CommandResponse, ScreenSection, ScreenState};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, BufWriter, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ContainerError {
-    #[error("Failed to build container image: {0}")]
-    BuildError(String),
-
-    #[error("Failed to spawn container: {0}")]
+    #[error("Failed to spawn sandbox: {0}")]
     SpawnError(#[from] std::io::Error),
 
-    #[error("Failed to send command to container: {0}")]
+    #[error("Failed to send command to sandbox: {0}")]
     SendError(String),
 
-    #[error("Failed to receive response from container: {0}")]
+    #[error("Failed to receive response from sandbox: {0}")]
     ReceiveError(String),
 
     #[error("Orchestrator returned error: {0}")]
@@ -28,109 +25,71 @@ pub enum ContainerError {
     #[error("Invalid message format")]
     InvalidMessage,
 
-    #[error("Container process terminated unexpectedly")]
+    #[error("Sandbox process terminated unexpectedly")]
     ProcessTerminated,
+
+    #[error("Sandbox script not found at {path}")]
+    SandboxNotFound { path: PathBuf },
 }
 
 pub type Result<T> = std::result::Result<T, ContainerError>;
 
-/// Manages container lifecycle and image building
-pub struct ContainerManager;
+/// Manages sandbox lifecycle
+pub struct ContainerManager {
+    sandbox_path: PathBuf,
+}
 
 impl ContainerManager {
     /// Create a new container manager
-    pub fn new() -> Self {
-        Self
-    }
-
-    /// Build the container image from Nix derivation
     ///
-    /// Returns the image tag loaded into Podman
-    pub fn build_container_image(&self) -> Result<String> {
-        // Build the OCI image using Nix
-        let output = Command::new("nix")
-            .args(["build", ".#orchestratorContainer", "--print-out-paths"])
-            .output()
-            .map_err(|e| ContainerError::BuildError(format!("nix build failed: {}", e)))?;
+    /// Reads sandbox path from SANDBOX_PATH environment variable (set by Nix wrapper),
+    /// or falls back to looking for "7aigent-sandbox" in PATH.
+    pub fn new() -> Result<Self> {
+        let sandbox_path = std::env::var("SANDBOX_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("7aigent-sandbox"));
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(ContainerError::BuildError(format!(
-                "nix build failed: {}",
-                stderr
-            )));
-        }
-
-        let image_path = String::from_utf8(output.stdout)
-            .map_err(|e| ContainerError::BuildError(format!("invalid output: {}", e)))?
-            .trim()
-            .to_string();
-
-        // Load image into Podman
-        let load_output = Command::new("podman")
-            .args(["load", "-i", &format!("{}/image.tar", image_path)])
-            .output()
-            .map_err(|e| ContainerError::BuildError(format!("podman load failed: {}", e)))?;
-
-        if !load_output.status.success() {
-            let stderr = String::from_utf8_lossy(&load_output.stderr);
-            return Err(ContainerError::BuildError(format!(
-                "podman load failed: {}",
-                stderr
-            )));
-        }
-
-        Ok("7aigent-orchestrator:latest".to_string())
+        Ok(Self { sandbox_path })
     }
 
-    /// Spawn a container with the orchestrator
+    /// Spawn the sandbox with the orchestrator
     ///
     /// Returns a handle for communicating with the orchestrator
     pub fn spawn_container(
         &self,
-        image: &str,
         project_dir: &Path,
         config: &SandboxConfig,
     ) -> Result<ContainerHandle> {
-        let mut cmd = Command::new("podman");
+        let mut cmd = Command::new(&self.sandbox_path);
 
-        cmd.args([
-            "run",
-            "--rm",           // Remove after exit
-            "-i",             // Interactive (stdin)
-            "--network=none", // No network by default
-        ]);
+        // First argument: project directory
+        cmd.arg(project_dir);
 
-        // Resource limits
-        if let Some(mem) = &config.resources.max_memory {
-            cmd.args(["--memory", mem]);
+        // Optional: disable network if configured
+        if config.disable_network {
+            cmd.arg("--unshare-net");
         }
 
-        if let Some(cpus) = &config.resources.max_cpus {
-            cmd.args(["--cpus", cpus]);
+        // Pass shell_prefix to orchestrator via environment variable
+        if let Some(prefix) = &config.shell_prefix {
+            cmd.env("SHELL_PREFIX", prefix);
         }
-
-        // Mount project directory
-        cmd.args([
-            "--mount",
-            &format!(
-                "type=bind,source={},target=/workspace",
-                project_dir.display()
-            ),
-        ]);
-
-        // Environment variables
-        cmd.args(["-e", "PROJECT_DIR=/workspace"]);
-
-        // Image name
-        cmd.arg(image);
 
         // Spawn with stdin/stdout pipes
         let mut child = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
-            .spawn()?;
+            .spawn()
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    ContainerError::SandboxNotFound {
+                        path: self.sandbox_path.clone(),
+                    }
+                } else {
+                    ContainerError::from(e)
+                }
+            })?;
 
         let stdin = child.stdin.take().ok_or_else(|| {
             ContainerError::SpawnError(std::io::Error::other("failed to capture stdin"))
@@ -141,7 +100,7 @@ impl ContainerManager {
         })?;
 
         Ok(ContainerHandle {
-            child,
+            child: Some(child),
             stdin: BufWriter::new(stdin),
             stdout: BufReader::new(stdout),
         })
@@ -150,13 +109,13 @@ impl ContainerManager {
 
 impl Default for ContainerManager {
     fn default() -> Self {
-        Self::new()
+        Self::new().expect("failed to create container manager")
     }
 }
 
 /// Handle for communicating with a running container
 pub struct ContainerHandle {
-    child: Child,
+    child: Option<Child>,
     stdin: BufWriter<std::process::ChildStdin>,
     stdout: BufReader<std::process::ChildStdout>,
 }
@@ -165,8 +124,7 @@ impl ContainerHandle {
     /// Send a command to the orchestrator
     pub fn send_command(&mut self, env: &str, command: &str) -> Result<()> {
         let message = serde_json::json!({
-            "type": "command",
-            "environment": env,
+            "env": env,
             "command": command,
         });
 
@@ -199,63 +157,70 @@ impl ContainerHandle {
         let message: serde_json::Value = serde_json::from_str(&line)
             .map_err(|e| ContainerError::ReceiveError(format!("invalid JSON: {}", e)))?;
 
-        match message["type"].as_str() {
-            Some("response") => {
-                let response = CommandResponse {
-                    output: message["response"]["output"]
-                        .as_str()
-                        .ok_or(ContainerError::InvalidMessage)?
-                        .to_string(),
-                    success: message["response"]["success"]
-                        .as_bool()
-                        .ok_or(ContainerError::InvalidMessage)?,
-                };
-
-                let screen = parse_screen(&message["screen"])?;
-
-                Ok((response, screen))
-            }
-            Some("error") => Err(ContainerError::OrchestratorError(
+        // Check for error response
+        if message["type"].as_str() == Some("error") {
+            return Err(ContainerError::OrchestratorError(
                 message["message"]
                     .as_str()
                     .ok_or(ContainerError::InvalidMessage)?
                     .to_string(),
-            )),
-            _ => Err(ContainerError::InvalidMessage),
+            ));
         }
+
+        // Parse successful response
+        let response = CommandResponse {
+            output: message["response"]["output"]
+                .as_str()
+                .ok_or(ContainerError::InvalidMessage)?
+                .to_string(),
+            success: message["response"]["success"]
+                .as_bool()
+                .ok_or(ContainerError::InvalidMessage)?,
+        };
+
+        let screen = parse_screen(&message["screen"])?;
+
+        Ok((response, screen))
     }
 
-    /// Shutdown the container gracefully
+    /// Shutdown the sandbox gracefully
     pub fn shutdown(mut self) -> Result<()> {
-        // Send shutdown command if orchestrator supports it
-        // For now, just kill the process
-        self.child
-            .kill()
-            .map_err(|e| ContainerError::SendError(format!("failed to kill container: {}", e)))?;
+        // stdin is automatically dropped when self is consumed
+        // This sends EOF to the orchestrator
 
-        self.child.wait().map_err(|e| {
-            ContainerError::SendError(format!("failed to wait for container: {}", e))
-        })?;
+        // Take the child process out of Option
+        if let Some(mut child) = self.child.take() {
+            // Wait for process to exit
+            let status = child.wait().map_err(|e| {
+                ContainerError::SendError(format!("failed to wait for sandbox: {}", e))
+            })?;
+
+            if !status.success() {
+                eprintln!("Warning: sandbox exited with status: {}", status);
+            }
+        }
 
         Ok(())
     }
 }
 
+impl Drop for ContainerHandle {
+    fn drop(&mut self) {
+        // Ensure child process is killed if dropped without explicit shutdown
+        if let Some(child) = &mut self.child {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
 /// Parse screen state from JSON value
+///
+/// Note: The orchestrator doesn't send step and timestamp in the screen message.
+/// These are added by the agent when saving to session.
+/// The raw format is: {"bash": {"content": "...", "max_lines": 50}, ...}
 fn parse_screen(screen_value: &serde_json::Value) -> Result<ScreenState> {
-    let step = screen_value["step"]
-        .as_u64()
-        .ok_or(ContainerError::InvalidMessage)? as usize;
-
-    let timestamp_str = screen_value["timestamp"]
-        .as_str()
-        .ok_or(ContainerError::InvalidMessage)?;
-
-    let timestamp = chrono::DateTime::parse_from_rfc3339(timestamp_str)
-        .map_err(|_| ContainerError::InvalidMessage)?
-        .with_timezone(&chrono::Utc);
-
-    let sections_obj = screen_value["sections"]
+    let sections_obj = screen_value
         .as_object()
         .ok_or(ContainerError::InvalidMessage)?;
 
@@ -273,9 +238,11 @@ fn parse_screen(screen_value: &serde_json::Value) -> Result<ScreenState> {
         sections.insert(env_name.clone(), ScreenSection { content, max_lines });
     }
 
+    // Create ScreenState with placeholder values for step and timestamp
+    // These will be filled in by the agent when saving to session
     Ok(ScreenState {
-        step,
-        timestamp,
+        step: 0,
+        timestamp: chrono::Utc::now(),
         sections,
     })
 }
@@ -287,18 +254,13 @@ mod tests {
     #[test]
     fn test_parse_screen() {
         let screen_json = serde_json::json!({
-            "step": 1,
-            "timestamp": "2026-01-09T10:00:00Z",
-            "sections": {
-                "bash": {
-                    "content": "$ ls\nfile1.txt\nfile2.txt\n",
-                    "max_lines": 50
-                }
+            "bash": {
+                "content": "$ ls\nfile1.txt\nfile2.txt\n",
+                "max_lines": 50
             }
         });
 
         let screen = parse_screen(&screen_json).unwrap();
-        assert_eq!(screen.step, 1);
         assert_eq!(screen.sections.len(), 1);
         assert!(screen.sections.contains_key("bash"));
 
@@ -308,11 +270,19 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_screen_invalid_step() {
+    fn test_parse_screen_invalid_format() {
+        let screen_json = serde_json::json!("not an object");
+
+        let result = parse_screen(&screen_json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_screen_missing_content() {
         let screen_json = serde_json::json!({
-            "step": "not a number",
-            "timestamp": "2026-01-09T10:00:00Z",
-            "sections": {}
+            "bash": {
+                "max_lines": 50
+            }
         });
 
         let result = parse_screen(&screen_json);
@@ -320,22 +290,11 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_screen_invalid_timestamp() {
+    fn test_parse_screen_missing_max_lines() {
         let screen_json = serde_json::json!({
-            "step": 1,
-            "timestamp": "invalid timestamp",
-            "sections": {}
-        });
-
-        let result = parse_screen(&screen_json);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_parse_screen_missing_sections() {
-        let screen_json = serde_json::json!({
-            "step": 1,
-            "timestamp": "2026-01-09T10:00:00Z"
+            "bash": {
+                "content": "test"
+            }
         });
 
         let result = parse_screen(&screen_json);

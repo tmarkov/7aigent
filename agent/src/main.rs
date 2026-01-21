@@ -279,18 +279,12 @@ async fn run_agent(project_dir: &Path, session: Session) -> Result<()> {
     let validated_config = config.llm.validate()?;
     let llm_client = OpenAiCompatibleClient::new(validated_config)?;
 
-    // Create container manager and spawn container
-    let container_manager = ContainerManager::new();
+    // Create container manager and spawn sandbox
+    let container_manager = ContainerManager::new()?;
 
-    println!("Building container image...");
-    let image_name = container_manager.build_container_image()?;
-    println!("✓ Container image built: {}", image_name);
-    println!();
-
-    println!("Spawning orchestrator container...");
-    let container_handle =
-        container_manager.spawn_container(&image_name, project_dir, &config.sandbox)?;
-    println!("✓ Container spawned");
+    println!("Spawning sandbox...");
+    let container_handle = container_manager.spawn_container(project_dir, &config.sandbox)?;
+    println!("✓ Sandbox spawned");
     println!();
 
     // Create agent and run
