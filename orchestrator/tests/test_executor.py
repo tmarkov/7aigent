@@ -2,10 +2,8 @@
 
 from unittest.mock import Mock
 
-import pytest
-
 from orchestrator.core_types import CommandResponse, CommandText, EnvironmentName
-from orchestrator.executor import UnknownEnvironmentError, execute_command
+from orchestrator.executor import execute_command
 
 
 class TestExecuteCommand:
@@ -47,13 +45,15 @@ class TestExecuteCommand:
         assert response.output == "error"
 
     def test_unknown_environment(self) -> None:
-        """Test executing command in unknown environment."""
+        """Test executing command in unknown environment returns failed response."""
         envs = {EnvironmentName("bash"): Mock()}
 
-        with pytest.raises(
-            UnknownEnvironmentError, match="Unknown environment: 'python'"
-        ):
-            execute_command(EnvironmentName("python"), "print('hello')", envs)
+        response = execute_command(EnvironmentName("python"), "print('hello')", envs)
+
+        # Should return failed response with helpful error message
+        assert response.success is False
+        assert "Unknown environment: 'python'" in response.output
+        assert "Available environments" in response.output
 
     def test_unknown_environment_shows_available(self) -> None:
         """Test that error message lists available environments."""
@@ -62,8 +62,13 @@ class TestExecuteCommand:
             EnvironmentName("python"): Mock(),
         }
 
-        with pytest.raises(UnknownEnvironmentError, match="Available environments"):
-            execute_command(EnvironmentName("editor"), "view foo.py", envs)
+        response = execute_command(EnvironmentName("editor"), "view foo.py", envs)
+
+        # Should list all available environments in error message
+        assert response.success is False
+        assert "Available environments" in response.output
+        assert "bash" in response.output
+        assert "python" in response.output
 
     def test_environment_exception_caught(self) -> None:
         """Test that exceptions from environment are caught."""

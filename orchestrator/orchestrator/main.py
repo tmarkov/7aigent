@@ -16,7 +16,7 @@ from orchestrator.communication import (
     send_error_response,
     send_response,
 )
-from orchestrator.executor import UnknownEnvironmentError, execute_command
+from orchestrator.executor import execute_command
 from orchestrator.loader import load_all_environments
 from orchestrator.screen import collect_screen_updates
 
@@ -60,12 +60,7 @@ def main() -> NoReturn:
                 break
 
             # Execute command
-            try:
-                response = execute_command(message.env, message.command, environments)
-            except UnknownEnvironmentError as e:
-                # Send error response and continue
-                send_error_response(str(e))
-                continue
+            response = execute_command(message.env, message.command, environments)
 
             # Collect screen updates
             screen = collect_screen_updates(environments)

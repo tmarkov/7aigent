@@ -32,10 +32,8 @@ def execute_command(
         environments: Mapping of available environments
 
     Returns:
-        CommandResponse from the environment
-
-    Raises:
-        UnknownEnvironmentError: If environment name is not in environments mapping
+        CommandResponse from the environment.
+        If environment is unknown, returns failed CommandResponse with error message.
 
     Examples:
         >>> from orchestrator.environments.bash import BashEnvironment
@@ -54,9 +52,10 @@ def execute_command(
     # Check if environment exists
     if env_name not in environments:
         available = ", ".join(name.value for name in environments.keys())
-        raise UnknownEnvironmentError(
-            f"Unknown environment: {env_name.value!r}. "
-            f"Available environments: {available}"
+        return CommandResponse(
+            output=f"Unknown environment: {env_name.value!r}. "
+            f"Available environments: {available}",
+            success=False,
         )
 
     # Get environment
