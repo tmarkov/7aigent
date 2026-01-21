@@ -60,6 +60,44 @@ impl<C: LlmClient> Agent<C> {
         println!("Starting task: {}", self.session.task);
         println!();
 
+        // On first run, save system prompt and task to history
+        if self.history.is_empty() {
+            let system_prompt =
+                crate::context::build_system_prompt(&self.config, &self.config.sandbox);
+            let task_message = Message::user(self.session.task.clone());
+
+            // Print system message
+            println!("=== SYSTEM ===");
+            println!("{}", system_prompt.content);
+            println!();
+
+            // Print task message
+            println!("=== TASK ===");
+            println!("{}", task_message.content);
+            println!();
+
+            // Save to history
+            self.history.push(system_prompt.clone());
+            self.history.push(task_message.clone());
+
+            self.session.save_step(
+                &system_prompt,
+                &ScreenState {
+                    step: 0,
+                    timestamp: chrono::Utc::now(),
+                    sections: std::collections::HashMap::new(),
+                },
+            )?;
+            self.session.save_step(
+                &task_message,
+                &ScreenState {
+                    step: 0,
+                    timestamp: chrono::Utc::now(),
+                    sections: std::collections::HashMap::new(),
+                },
+            )?;
+        }
+
         loop {
             // Get current screen state (last one in history, or empty)
             let current_screen = self.screens.last().cloned().unwrap_or_else(|| ScreenState {
@@ -163,9 +201,27 @@ impl<C: LlmClient> Agent<C> {
             self.session.token_usage.total_tokens += response.usage.total_tokens as usize;
             self.session.step_count += 1;
 
+            // Print LLM response
+            println!();
+            println!("=== ASSISTANT ===");
+            println!("{}", response.content);
+            println!();
+
             // Store assistant response in history
             let assistant_message = Message::assistant(response.content.clone());
             self.history.push(assistant_message.clone());
+
+            // Save assistant message to history.jsonl (with empty screen since no command executed yet)
+            self.session
+                .save_step(
+                    &assistant_message,
+                    &ScreenState {
+                        step: self.session.step_count,
+                        timestamp: chrono::Utc::now(),
+                        sections: std::collections::HashMap::new(),
+                    },
+                )
+                .context("Failed to save assistant message")?;
 
             // Parse commands from response
             let commands = parse_commands(&response.content).context("Failed to parse commands")?;
@@ -205,6 +261,12 @@ impl<C: LlmClient> Agent<C> {
                     .container
                     .receive_response()
                     .context("Failed to receive response from orchestrator")?;
+
+                // Print command output
+                println!();
+                println!("=== ORCHESTRATOR ===");
+                println!("{}", cmd_response.output);
+                println!();
 
                 // Store command output as user message
                 let user_message = Message::user(cmd_response.output);
