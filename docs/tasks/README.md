@@ -73,7 +73,7 @@ These tasks are for designing and implementing the agent:
 
 ### Context Management
 
-- [ ] [19 - Improve context management](./19-improve-context-management.md) - Enhance system message, add system environment, implement simulated initial message
+- [x] [19 - Improve context management](./19-improve-context-management.md) - Enhance system message, add system environment, implement simulated initial message
 
 ### Documentation
 

@@ -60,7 +60,10 @@ def load_all_environments(
     from orchestrator.environments.bash import BashEnvironment
     from orchestrator.environments.editor import EditorEnvironment
     from orchestrator.environments.python import PythonEnvironment
+    from orchestrator.environments.system import SystemEnvironment
 
+    # System environment first (appears first in screen)
+    environments[EnvironmentName("system")] = SystemEnvironment(project_dir)
     environments[EnvironmentName("bash")] = BashEnvironment()
     environments[EnvironmentName("python")] = PythonEnvironment()
     environments[EnvironmentName("editor")] = EditorEnvironment(project_dir)

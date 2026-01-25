@@ -27,6 +27,23 @@ pub fn build_system_prompt(config: &Config, sandbox: &SandboxConfig) -> Message 
         "You are 7aigent, an AI assistant that helps users accomplish diverse tasks.\n\n",
     );
 
+    // Working directory context
+    prompt.push_str(
+        "You are working in a project directory. All commands execute within this directory. ",
+    );
+    prompt.push_str("The project context (directory structure, git status, and any project-specific instructions in AGENTS.md) ");
+    prompt.push_str("is shown in the screen state.\n\n");
+
+    // Screen mechanism explanation
+    prompt.push_str("IMPORTANT: Screen Mechanism\n");
+    prompt.push_str("After each command you execute, you receive a 'screen' showing the current state of all environments. ");
+    prompt.push_str("The screen is NOT part of the conversation history - it's ephemeral state that updates after every command. ");
+    prompt.push_str("You can reference information from the screen (e.g., 'I can see from the file tree that...'), ");
+    prompt.push_str("but this information is only visible to you in the current screen, not in previous messages. ");
+    prompt.push_str(
+        "Check the screen sections to see what information each environment provides.\n\n",
+    );
+
     // Available environments
     prompt.push_str("You have access to the following environments:\n");
     prompt.push_str("- bash: Execute shell commands\n");

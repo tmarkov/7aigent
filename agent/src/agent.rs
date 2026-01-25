@@ -17,6 +17,9 @@ use crate::types::{Message, MessageRole, ScreenState, Session, SessionStatus};
 use anyhow::{Context, Result};
 use std::io::{self, Write};
 
+/// Default search pattern for initial keyword search
+const DEFAULT_SEARCH_PATTERN: &str = "**/*";
+
 /// Main agent that manages LLM interaction and command execution
 pub struct Agent<C: LlmClient> {
     /// Session metadata and tracking
@@ -55,12 +58,21 @@ impl<C: LlmClient> Agent<C> {
         })
     }
 
+    /// Create an empty screen state with the given step number
+    fn create_empty_screen(step: usize) -> ScreenState {
+        ScreenState {
+            step,
+            timestamp: chrono::Utc::now(),
+            sections: std::collections::HashMap::new(),
+        }
+    }
+
     /// Run the main agent loop until task completion or error
     pub async fn run(&mut self) -> Result<()> {
         println!("Starting task: {}", self.session.task);
         println!();
 
-        // On first run, save system prompt and task to history
+        // On first run, save system prompt and task to history, then execute simulated initial message
         if self.history.is_empty() {
             let system_prompt =
                 crate::context::build_system_prompt(&self.config, &self.config.sandbox);
@@ -80,31 +92,79 @@ impl<C: LlmClient> Agent<C> {
             self.history.push(system_prompt.clone());
             self.history.push(task_message.clone());
 
-            self.session.save_step(
-                &system_prompt,
-                &ScreenState {
-                    step: 0,
-                    timestamp: chrono::Utc::now(),
-                    sections: std::collections::HashMap::new(),
-                },
-            )?;
-            self.session.save_step(
-                &task_message,
-                &ScreenState {
-                    step: 0,
-                    timestamp: chrono::Utc::now(),
-                    sections: std::collections::HashMap::new(),
-                },
-            )?;
+            self.session
+                .save_step(&system_prompt, &Self::create_empty_screen(0))?;
+            self.session
+                .save_step(&task_message, &Self::create_empty_screen(0))?;
+
+            // Extract keyword and generate simulated initial message
+            println!("[Initialization] Extracting search keyword from task...");
+            let keyword = self
+                .extract_search_keyword(&self.session.task)
+                .await
+                .unwrap_or_else(|e| {
+                    eprintln!("Warning: Failed to extract keyword: {}", e);
+                    "main".to_string()
+                });
+            println!("  Keyword: {}", keyword);
+            println!();
+
+            let simulated_content = Self::generate_simulated_message(&keyword);
+            let simulated_message = Message::assistant(simulated_content.clone());
+
+            // Print simulated message
+            println!("=== ASSISTANT (Initial) ===");
+            println!("{}", simulated_content);
+            println!();
+
+            // Save simulated message to history
+            self.history.push(simulated_message.clone());
+            self.session
+                .save_step(&simulated_message, &Self::create_empty_screen(0))?;
+
+            // Execute the editor search command
+            println!("  [1] Executing editor command...");
+            self.container
+                .send_command(
+                    "editor",
+                    &format!("search \"{}\" {}", keyword, DEFAULT_SEARCH_PATTERN),
+                )
+                .context("Failed to send initial search command")?;
+
+            let (cmd_response, screen_state) = self
+                .container
+                .receive_response()
+                .context("Failed to receive initial search response")?;
+
+            // Print command output
+            println!();
+            println!("=== ORCHESTRATOR ===");
+            println!("{}", cmd_response.output);
+            println!();
+
+            // Store command output as user message
+            let user_message = Message::user(cmd_response.output);
+            self.history.push(user_message.clone());
+
+            // Store screen state
+            self.screens.push(screen_state.clone());
+
+            // Save step (message + screen)
+            self.session
+                .save_step(&user_message, &screen_state)
+                .context("Failed to save initial search step")?;
+
+            println!("[Initialization] Complete. Starting main loop...");
+            println!();
         }
 
         loop {
             // Get current screen state (last one in history, or empty)
-            let current_screen = self.screens.last().cloned().unwrap_or_else(|| ScreenState {
-                step: 0,
-                timestamp: chrono::Utc::now(),
-                sections: std::collections::HashMap::new(),
-            });
+            let current_screen = self
+                .screens
+                .last()
+                .cloned()
+                .unwrap_or_else(|| Self::create_empty_screen(0));
 
             // Build LLM context
             let messages = self.build_context(&current_screen);
@@ -215,11 +275,7 @@ impl<C: LlmClient> Agent<C> {
             self.session
                 .save_step(
                     &assistant_message,
-                    &ScreenState {
-                        step: self.session.step_count,
-                        timestamp: chrono::Utc::now(),
-                        sections: std::collections::HashMap::new(),
-                    },
+                    &Self::create_empty_screen(self.session.step_count),
                 )
                 .context("Failed to save assistant message")?;
 
@@ -302,6 +358,73 @@ impl<C: LlmClient> Agent<C> {
     /// Get the current session (useful for inspecting state after run)
     pub fn session(&self) -> &Session {
         &self.session
+    }
+
+    /// Extract a search keyword from the task using a simple LLM question.
+    ///
+    /// This uses a separate LLM call (outside the main conversation) to identify
+    /// the most relevant keyword to search for based on the task description.
+    async fn extract_search_keyword(&self, task: &str) -> Result<String> {
+        // Create a minimal request to extract keyword
+        let keyword_request = CompletionRequest {
+            messages: vec![
+                LlmMessage::system(
+                    "You are a helpful assistant. Extract the single most important keyword from the given task."
+                        .to_string(),
+                ),
+                LlmMessage::user(format!(
+                    "Given this task: '{}'. What is the single most important keyword to search for? Respond with ONLY the keyword, nothing else.",
+                    task
+                )),
+            ],
+            model: self.config.llm.model.clone(),
+            max_tokens: Some(20),
+            temperature: Some(0.3),
+        };
+
+        let response = self
+            .llm_client
+            .complete(keyword_request)
+            .await
+            .context("Failed to extract keyword")?;
+
+        // Parse response - take first word, trim whitespace
+        let keyword = response
+            .content
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+
+        // Fallback if keyword is empty or too short
+        if keyword.is_empty() || keyword.len() <= 3 {
+            // Extract first meaningful word from task (>3 chars, not common words)
+            let common_words = ["the", "and", "for", "with", "from", "this", "that"];
+            for word in task.split_whitespace() {
+                let clean = word
+                    .trim_matches(|c: char| !c.is_alphanumeric())
+                    .to_lowercase();
+                if clean.len() > 3 && !common_words.contains(&clean.as_str()) {
+                    return Ok(clean);
+                }
+            }
+            // Last resort fallback
+            return Ok("main".to_string());
+        }
+
+        Ok(keyword)
+    }
+
+    /// Generate a simulated initial assistant message that searches for a keyword.
+    ///
+    /// This creates the appearance that the LLM has already taken a first step
+    /// by searching for relevant files using the editor's search command.
+    fn generate_simulated_message(keyword: &str) -> String {
+        format!(
+            "I can see the project structure and git status on screen. Let me search for '{}' to find relevant files.\n\n```editor\nsearch \"{}\" {}\n```",
+            keyword, keyword, DEFAULT_SEARCH_PATTERN
+        )
     }
 }
 
