@@ -238,10 +238,8 @@ fn parse_screen(screen_value: &serde_json::Value) -> Result<ScreenState> {
         sections.insert(env_name.clone(), ScreenSection { content, max_lines });
     }
 
-    // Create ScreenState with placeholder values for step and timestamp
-    // These will be filled in by the agent when saving to session
+    // Create ScreenState with timestamp (step field removed in new design)
     Ok(ScreenState {
-        step: 0,
         timestamp: chrono::Utc::now(),
         sections,
     })

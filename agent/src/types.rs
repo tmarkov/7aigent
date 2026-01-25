@@ -302,6 +302,7 @@ impl SessionManager {
         std::fs::create_dir_all(&base_dir)?;
 
         let counter_path = base_dir.join("next_session_id");
+        #[allow(clippy::suspicious_open_options)]
         let mut file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -325,7 +326,7 @@ impl SessionManager {
         let next_id = current_id + 1;
         file.set_len(0)?; // Truncate
         file.seek(std::io::SeekFrom::Start(0))?;
-        write!(file, "{}\n", next_id)?;
+        writeln!(file, "{}", next_id)?;
         file.flush()?;
 
         // Unlock file
@@ -422,10 +423,11 @@ pub struct CommandResponse {
     pub success: bool,
 }
 
-// Legacy types for backwards compatibility during transition
-// These will be removed once agent.rs is updated
+// Internal types for LLM context building
+// These are used internally for building LLM request context from events
+// and for budget checking. Not part of the primary storage model.
 
-/// Message role in LLM conversation (DEPRECATED - use Event instead)
+/// Message role in LLM conversation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MessageRole {
@@ -434,7 +436,7 @@ pub enum MessageRole {
     Assistant,
 }
 
-/// A single message in the conversation history (DEPRECATED - use Event instead)
+/// A single message in the conversation history (for context building)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub role: MessageRole,
@@ -465,57 +467,6 @@ impl Message {
             content,
             timestamp: Utc::now(),
         }
-    }
-}
-
-/// Old Session type (DEPRECATED - use SessionMetadata instead)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Session {
-    pub id: SessionId,
-    pub project_dir: PathBuf,
-    pub task: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub status: SessionStatus,
-    pub total_cost: Decimal,
-    pub token_usage: TokenUsage,
-    pub step_count: usize,
-    pub llm_config: Option<LlmConfigSnapshot>,
-}
-
-/// LLM configuration snapshot (stored in session for resume)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LlmConfigSnapshot {
-    pub endpoint: String,
-    pub model: String,
-}
-
-// Stub implementations for Session to allow gradual migration
-impl Session {
-    pub fn save_metadata(&self) -> crate::session::Result<()> {
-        // Convert to SessionMetadata and save
-        let metadata = SessionMetadata {
-            id: self.id,
-            project_dir: self.project_dir.clone(),
-            task: self.task.clone(),
-            created_at: self.created_at,
-            updated_at: self.updated_at,
-            status: self.status,
-            total_cost: self.total_cost,
-            total_tokens: self.token_usage,
-            llm_call_count: 0, // Not tracked in old Session
-            command_count: 0,  // Not tracked in old Session
-        };
-        metadata.save()
-    }
-
-    pub fn save_step(
-        &self,
-        _message: &Message,
-        _screen: &ScreenState,
-    ) -> crate::session::Result<()> {
-        // Stub - will be replaced by event-based logging
-        Ok(())
     }
 }
 

@@ -23,6 +23,6 @@ pub use config::{
 pub use container::{ContainerError, ContainerHandle, ContainerManager};
 pub use session::SessionError;
 pub use types::{
-    Command, CommandResponse, Message, MessageRole, ScreenSection, ScreenState, Session, SessionId,
+    Command, CommandResponse, Message, MessageRole, ScreenSection, ScreenState, SessionId,
     SessionStatus, TokenUsage,
 };

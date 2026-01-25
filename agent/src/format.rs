@@ -104,10 +104,7 @@ fn format_event_pretty(event: &Event, include_timestamp: bool) -> String {
             reason,
         } => {
             let header = if include_timestamp {
-                format!(
-                    "=== SESSION END === ({})",
-                    format_timestamp(timestamp)
-                )
+                format!("=== SESSION END === ({})", format_timestamp(timestamp))
             } else {
                 "=== SESSION END ===".to_string()
             };
@@ -198,7 +195,6 @@ mod tests {
     use crate::llm::{CompletionResponse, FinishReason, TokenUsage as LlmTokenUsage};
     use crate::types::{SessionStatus, TokenUsage};
     use chrono::Utc;
-    use rust_decimal::Decimal;
     use rust_decimal_macros::dec;
     use std::path::PathBuf;
 

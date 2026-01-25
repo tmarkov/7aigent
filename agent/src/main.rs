@@ -4,8 +4,10 @@ use agent::{
     cli::{Cli, Commands},
     config::ConfigLoader,
     container::ContainerManager,
+    format::{format_event, format_llm_call_list, format_session_summary, DisplayMode},
     llm::openai::OpenAiCompatibleClient,
-    types::{Session, SessionId, SessionStatus},
+    llm::retry::RetryClient,
+    types::{Event, SessionId, SessionManager, SessionMetadata, SessionStatus},
     ui, Agent,
 };
 use anyhow::{Context, Result};
@@ -34,10 +36,11 @@ async fn run() -> Result<()> {
         }
         Some(Commands::Inspect {
             session_id,
-            step,
-            show_screens,
+            call,
+            raw,
+            list_calls,
         }) => {
-            handle_inspect(&project_dir, session_id, step, show_screens)?;
+            handle_inspect(&project_dir, session_id, call, raw, list_calls)?;
         }
         Some(Commands::Resume { session_id }) => {
             handle_resume(&project_dir, session_id).await?;
@@ -83,81 +86,50 @@ fn handle_init(project_dir: &Path, force: bool) -> Result<()> {
 
 /// Handle the list command - list all sessions
 fn handle_list(project_dir: &Path, status_filter: Option<String>, verbose: bool) -> Result<()> {
-    let sessions_dir = project_dir.join(".7aigent").join("sessions");
-
-    if !sessions_dir.exists() {
-        println!("No sessions found.");
-        return Ok(());
-    }
-
-    let mut sessions = Vec::new();
-
-    for entry in std::fs::read_dir(&sessions_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-
-        if path.is_dir() {
-            let session_id_str = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .context("Invalid session directory name")?;
-
-            let session_id = SessionId::parse_str(session_id_str)
-                .context("Invalid session ID in directory name")?;
-
-            match Session::load(project_dir, session_id) {
-                Ok(session) => {
-                    // Apply status filter if provided
-                    if let Some(ref filter) = status_filter {
-                        let status_matches = match filter.to_lowercase().as_str() {
-                            "active" => session.status == SessionStatus::Active,
-                            "paused" => session.status == SessionStatus::Paused,
-                            "completed" => session.status == SessionStatus::Completed,
-                            "failed" => session.status == SessionStatus::Failed,
-                            _ => {
-                                anyhow::bail!("Invalid status filter: {}", filter);
-                            }
-                        };
-
-                        if !status_matches {
-                            continue;
-                        }
-                    }
-
-                    sessions.push(session);
-                }
-                Err(e) => {
-                    eprintln!("Warning: Failed to load session {}: {}", session_id, e);
-                }
-            }
-        }
-    }
+    let session_manager = SessionManager::new(project_dir.to_path_buf());
+    let sessions = session_manager.list_sessions()?;
 
     if sessions.is_empty() {
         println!("No sessions found.");
         return Ok(());
     }
 
-    // Sort by creation time (newest first)
-    sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    // Parse status filter if provided
+    let filter_status = status_filter
+        .as_ref()
+        .and_then(|s| match s.to_lowercase().as_str() {
+            "active" => Some(SessionStatus::Active),
+            "paused" => Some(SessionStatus::Paused),
+            "completed" => Some(SessionStatus::Completed),
+            "failed" => Some(SessionStatus::Failed),
+            _ => None,
+        });
 
-    println!("Sessions:");
-    println!();
+    // Filter sessions
+    let filtered: Vec<_> = sessions
+        .iter()
+        .filter(|s| filter_status.is_none() || Some(s.status) == filter_status)
+        .collect();
 
-    for session in sessions {
+    if filtered.is_empty() {
+        println!("No sessions found with status: {:?}", filter_status);
+        return Ok(());
+    }
+
+    println!("Found {} session(s):\n", filtered.len());
+
+    for session in filtered {
         if verbose {
-            println!("Session ID: {}", session.id);
-            println!("  Task: {}", session.task);
-            println!("  Status: {:?}", session.status);
-            println!("  Created: {}", session.created_at);
-            println!("  Updated: {}", session.updated_at);
-            println!("  Steps: {}", session.step_count);
-            println!("  Total Cost: ${:.6}", session.total_cost);
-            println!();
+            print!("{}", format_session_summary(session));
+            println!("---");
         } else {
             println!(
-                "{} [{:?}] {} - ${:.4} ({} steps)",
-                session.id, session.status, session.task, session.total_cost, session.step_count
+                "[{}] {:?} - {} (${:.4}, {} LLM calls)",
+                session.id,
+                session.status,
+                session.task,
+                session.total_cost,
+                session.llm_call_count
             );
         }
     }
@@ -168,66 +140,43 @@ fn handle_list(project_dir: &Path, status_filter: Option<String>, verbose: bool)
 /// Handle the inspect command - show session details
 fn handle_inspect(
     project_dir: &Path,
-    session_id: uuid::Uuid,
-    step: Option<usize>,
-    show_screens: bool,
+    session_id: u64,
+    call: Option<usize>,
+    raw: bool,
+    list_calls: bool,
 ) -> Result<()> {
-    let session_id = SessionId::from(session_id);
-    let session = Session::load(project_dir, session_id)?;
+    let session_id = SessionId::from_u64(session_id);
+    let session = SessionMetadata::load(project_dir, session_id)?;
+    let events = session.load_events()?;
 
-    println!("Session: {}", session.id);
-    println!("Task: {}", session.task);
-    println!("Status: {:?}", session.status);
-    println!("Created: {}", session.created_at);
-    println!("Updated: {}", session.updated_at);
-    println!("Steps: {}", session.step_count);
-    println!("Total Cost: ${:.6}", session.total_cost);
-    println!(
-        "Tokens: {} prompt + {} completion = {} total",
-        session.token_usage.prompt_tokens,
-        session.token_usage.completion_tokens,
-        session.token_usage.total_tokens
-    );
-    println!();
+    if list_calls {
+        // List all LLM calls
+        println!("{}", format_session_summary(&session));
+        println!("\n=== LLM Calls ===\n");
+        print!("{}", format_llm_call_list(&events));
+    } else if let Some(call_id) = call {
+        // Show specific LLM call
+        let llm_call = events
+            .iter()
+            .find(|e| matches!(e, Event::LlmCall { call_id: id, .. } if *id == call_id));
 
-    let history = session.load_history()?;
-    let screens = session.load_screens()?;
-
-    if let Some(step_num) = step {
-        // Show specific step
-        if step_num >= history.len() {
-            anyhow::bail!(
-                "Step {} not found (only {} messages)",
-                step_num,
-                history.len()
-            );
-        }
-
-        let message = &history[step_num];
-        println!("=== Step {} ===", step_num);
-        println!("Role: {:?}", message.role);
-        println!("Time: {}", message.timestamp);
-        println!();
-        println!("{}", message.content);
-
-        if show_screens && step_num < screens.len() {
-            println!();
-            ui::display_step_progress(step_num, &screens[step_num]);
+        if let Some(event) = llm_call {
+            let mode = if raw {
+                DisplayMode::Raw
+            } else {
+                DisplayMode::Inspect
+            };
+            print!("{}", format_event(event, mode));
+        } else {
+            anyhow::bail!("LLM call {} not found", call_id);
         }
     } else {
-        // Show all history
-        println!("=== History ({} messages) ===", history.len());
-        println!();
+        // Default: show full conversation
+        println!("{}", format_session_summary(&session));
+        println!("\n=== Conversation ===\n");
 
-        for (i, message) in history.iter().enumerate() {
-            println!("[{}] {:?} at {}", i, message.role, message.timestamp);
-            println!("{}", message.content);
-            println!();
-
-            if show_screens && i < screens.len() {
-                ui::display_step_progress(i, &screens[i]);
-                println!();
-            }
+        for event in &events {
+            print!("{}", format_event(event, DisplayMode::Inspect));
         }
     }
 
@@ -235,72 +184,73 @@ fn handle_inspect(
 }
 
 /// Handle the resume command - resume a paused session
-async fn handle_resume(project_dir: &Path, session_id: uuid::Uuid) -> Result<()> {
-    let session_id = SessionId::from(session_id);
-    let session = Session::load(project_dir, session_id)?;
+async fn handle_resume(project_dir: &Path, session_id: u64) -> Result<()> {
+    let session_id = SessionId::from_u64(session_id);
+    let mut session = SessionMetadata::load(project_dir, session_id)?;
 
-    if session.status != SessionStatus::Paused && session.status != SessionStatus::Active {
-        anyhow::bail!(
-            "Cannot resume session with status {:?}. Only Paused or Active sessions can be resumed.",
-            session.status
-        );
+    if session.status == SessionStatus::Completed {
+        anyhow::bail!("Session {} is already completed", session.id);
     }
 
-    println!("Resuming session: {}", session.id);
+    if session.status == SessionStatus::Failed {
+        anyhow::bail!("Session {} has failed and cannot be resumed", session.id);
+    }
+
+    // Update status to active
+    session.status = SessionStatus::Active;
+    session.save()?;
+
+    println!("Resuming session {}", session.id);
     println!("Task: {}", session.task);
-    println!("Current cost: ${:.6}", session.total_cost);
     println!();
 
-    run_agent(project_dir, session).await
-}
-
-/// Handle starting a new task
-async fn handle_new_task(project_dir: &Path, task: &str) -> Result<()> {
-    println!("Starting new task: {}", task);
-    println!();
-
-    let session = Session::create(project_dir.to_path_buf(), task.to_string())?;
-
-    println!("Created session: {}", session.id);
-    println!();
-
-    run_agent(project_dir, session).await
-}
-
-/// Run the agent with the given session
-async fn run_agent(project_dir: &Path, session: Session) -> Result<()> {
-    // Change to project directory to load config from the right place
-    std::env::set_current_dir(project_dir).context("Failed to change to project directory")?;
-
-    // Load configuration
+    // Load config
     let config = ConfigLoader::load()?;
 
-    // Validate LLM configuration and create client
-    let validated_config = config.llm.validate()?;
-    let llm_client = OpenAiCompatibleClient::new(validated_config)?;
+    // Create LLM client
+    let llm_config = config.llm.validate()?;
+    let base_client = OpenAiCompatibleClient::new(llm_config)?;
+    let llm_client = RetryClient::new(base_client);
 
-    // Create container manager and spawn sandbox
+    // Start container
     let container_manager = ContainerManager::new()?;
-
-    println!("Spawning sandbox...");
-    let container_handle = container_manager.spawn_container(project_dir, &config.sandbox)?;
-    println!("✓ Sandbox spawned");
-    println!();
+    let container = container_manager
+        .spawn_container(project_dir, &config.sandbox)
+        .context("Failed to start container")?;
 
     // Create agent and run
-    let mut agent = Agent::new(session, config, container_handle, llm_client)?;
+    let mut agent = Agent::new(session, config, container, llm_client)?;
+    agent.run().await?;
 
-    match agent.run().await {
-        Ok(()) => {
-            ui::display_cost_summary(agent.session());
-            Ok(())
-        }
-        Err(e) => {
-            // Save session state on error
-            if let Err(save_err) = agent.session().save_metadata() {
-                eprintln!("Warning: Failed to save session on error: {}", save_err);
-            }
-            Err(e)
-        }
-    }
+    Ok(())
+}
+
+/// Handle a new task - create a new session and run agent
+async fn handle_new_task(project_dir: &Path, task: &str) -> Result<()> {
+    // Load config
+    let config = ConfigLoader::load()?;
+
+    // Create session
+    let session_manager = SessionManager::new(project_dir.to_path_buf());
+    let session = session_manager.create_session(task.to_string())?;
+
+    println!("Created session {}", session.id);
+    println!();
+
+    // Create LLM client
+    let llm_config = config.llm.validate()?;
+    let base_client = OpenAiCompatibleClient::new(llm_config)?;
+    let llm_client = RetryClient::new(base_client);
+
+    // Start container
+    let container_manager = ContainerManager::new()?;
+    let container = container_manager
+        .spawn_container(project_dir, &config.sandbox)
+        .context("Failed to start container")?;
+
+    // Create agent and run
+    let mut agent = Agent::new(session, config, container, llm_client)?;
+    agent.run().await?;
+
+    Ok(())
 }

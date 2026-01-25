@@ -7,10 +7,6 @@
 use crate::config::{Config, SandboxConfig};
 use crate::types::{Message, ScreenState};
 
-/// Maximum tokens for conversation history (approximate)
-/// Using a character-based approximation: 4 chars per token
-const MAX_HISTORY_CHARS: usize = 400_000; // ~100k tokens
-
 /// Build system prompt from configuration
 ///
 /// The system prompt includes:
@@ -95,46 +91,14 @@ pub fn build_system_prompt(config: &Config, sandbox: &SandboxConfig) -> Message 
     Message::system(prompt)
 }
 
-/// Build the complete message context for LLM
-///
-/// Returns messages in this order:
-/// 1. System prompt (always included)
-/// 2. Task description (always included)
-/// 3. Recent conversation history (truncated to fit character limit)
-/// 4. Current screen state (always included)
-pub fn build_llm_messages(
-    config: &Config,
-    sandbox: &SandboxConfig,
-    task: &str,
-    history: &[Message],
-    current_screen: &ScreenState,
-) -> Vec<Message> {
-    let mut messages = Vec::new();
-
-    // 1. System prompt (always included)
-    let system_prompt = build_system_prompt(config, sandbox);
-    messages.push(system_prompt);
-
-    // 2. Task description (always included)
-    messages.push(Message::user(task.to_string()));
-
-    // 3. Recent history (truncated to fit)
-    let truncated_history = truncate_history(history, MAX_HISTORY_CHARS);
-    messages.extend(truncated_history);
-
-    // 4. Current screen (always included)
-    let screen_message = format_screen(current_screen);
-    messages.push(screen_message);
-
-    messages
-}
-
 /// Truncate conversation history to fit within character limit
+///
+/// Public to allow event-based context building
 ///
 /// Keeps the most recent messages that fit within the character budget.
 /// Messages are kept in chronological order.
 /// Uses character count as proxy for tokens (approximately 4 chars per token).
-fn truncate_history(history: &[Message], max_chars: usize) -> Vec<Message> {
+pub fn truncate_history(history: &[Message], max_chars: usize) -> Vec<Message> {
     let mut result = Vec::new();
     let mut total_chars = 0;
 
@@ -159,7 +123,8 @@ fn truncate_history(history: &[Message], max_chars: usize) -> Vec<Message> {
 ///
 /// Converts the screen state into a text representation that shows
 /// the current state of each environment.
-fn format_screen(screen: &ScreenState) -> Message {
+/// Format screen state into a Message (public for event-based context building)
+pub fn format_screen(screen: &ScreenState) -> Message {
     let mut content = String::new();
 
     content.push_str("=== Current Screen State ===\n\n");
@@ -257,7 +222,6 @@ mod tests {
         );
 
         let screen = ScreenState {
-            step: 1,
             timestamp: Utc::now(),
             sections,
         };
@@ -293,48 +257,5 @@ mod tests {
         if truncated.len() >= 2 {
             assert!(truncated[0].timestamp <= truncated[1].timestamp);
         }
-    }
-
-    #[test]
-    fn test_build_llm_messages() {
-        let config = Config::default();
-
-        let sandbox = SandboxConfig {
-            shell_prefix: None,
-            disable_network: false,
-            sandbox_path: None,
-            files: FileAccessConfig::default(),
-            resources: ResourceConfig::default(),
-        };
-
-        let task = "Do something useful";
-        let history = vec![
-            Message::user("previous message".to_string()),
-            Message::assistant("previous response".to_string()),
-        ];
-
-        let screen = ScreenState {
-            step: 1,
-            timestamp: Utc::now(),
-            sections: HashMap::new(),
-        };
-
-        let messages = build_llm_messages(&config, &sandbox, task, &history, &screen);
-
-        // Should have: system + task + history + screen
-        assert!(messages.len() >= 4);
-
-        // First should be system
-        assert_eq!(messages[0].role, MessageRole::System);
-
-        // Second should be task (user message)
-        assert_eq!(messages[1].role, MessageRole::User);
-        assert_eq!(messages[1].content, task);
-
-        // Last should be screen (user message)
-        assert_eq!(messages[messages.len() - 1].role, MessageRole::User);
-        assert!(messages[messages.len() - 1]
-            .content
-            .contains("Current Screen State"));
     }
 }

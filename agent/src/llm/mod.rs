@@ -134,7 +134,7 @@ impl fmt::Display for FinishReason {
 }
 
 /// Response from an LLM completion.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CompletionResponse {
     /// Generated content.
     pub content: String,
@@ -147,7 +147,7 @@ pub struct CompletionResponse {
 }
 
 /// Request to the LLM.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CompletionRequest {
     /// Messages to send.
     pub messages: Vec<LlmMessage>,

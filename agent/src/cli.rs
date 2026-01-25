@@ -1,6 +1,5 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use uuid::Uuid;
 
 /// 7aigent - AI agent for software development tasks
 #[derive(Parser, Debug)]
@@ -29,7 +28,7 @@ pub enum Commands {
     /// Resume a paused session
     Resume {
         /// Session ID to resume
-        session_id: Uuid,
+        session_id: u64,
     },
 
     /// List all sessions in the project
@@ -46,15 +45,19 @@ pub enum Commands {
     /// Inspect a session's history
     Inspect {
         /// Session ID to inspect
-        session_id: Uuid,
+        session_id: u64,
 
-        /// Show only this step number (0-indexed)
-        #[arg(short, long, value_name = "N")]
-        step: Option<usize>,
+        /// Show specific LLM call by ID
+        #[arg(long, value_name = "ID")]
+        call: Option<usize>,
 
-        /// Show screen states
-        #[arg(short = 'S', long)]
-        show_screens: bool,
+        /// Show raw JSON output
+        #[arg(long)]
+        raw: bool,
+
+        /// List all LLM calls with IDs and costs
+        #[arg(long)]
+        list_calls: bool,
     },
 
     /// Initialize a new project with a .7aigent.toml config file
@@ -110,11 +113,10 @@ mod tests {
 
     #[test]
     fn test_parse_resume() {
-        let session_id = crate::types::SessionId::new();
-        let cli = Cli::parse_from(["7aigent", "resume", &session_id.to_string()]);
+        let cli = Cli::parse_from(["7aigent", "resume", "42"]);
         match cli.command {
-            Some(Commands::Resume { session_id: id }) => {
-                assert_eq!(id, session_id.as_uuid().to_owned())
+            Some(Commands::Resume { session_id }) => {
+                assert_eq!(session_id, 42)
             }
             _ => panic!("Expected Resume command"),
         }
@@ -146,42 +148,53 @@ mod tests {
 
     #[test]
     fn test_parse_inspect() {
-        let session_id = crate::types::SessionId::new();
-        let cli = Cli::parse_from(["7aigent", "inspect", &session_id.to_string()]);
+        let cli = Cli::parse_from(["7aigent", "inspect", "42"]);
         match cli.command {
             Some(Commands::Inspect {
-                session_id: id,
-                step,
-                show_screens,
+                session_id,
+                call,
+                raw,
+                list_calls,
             }) => {
-                assert_eq!(id, session_id.as_uuid().to_owned());
-                assert!(step.is_none());
-                assert!(!show_screens);
+                assert_eq!(session_id, 42);
+                assert!(call.is_none());
+                assert!(!raw);
+                assert!(!list_calls);
             }
             _ => panic!("Expected Inspect command"),
         }
     }
 
     #[test]
-    fn test_parse_inspect_with_step() {
-        let session_id = crate::types::SessionId::new();
-        let cli = Cli::parse_from([
-            "7aigent",
-            "inspect",
-            &session_id.to_string(),
-            "--step",
-            "5",
-            "--show-screens",
-        ]);
+    fn test_parse_inspect_with_call() {
+        let cli = Cli::parse_from(["7aigent", "inspect", "42", "--call", "0", "--raw"]);
         match cli.command {
             Some(Commands::Inspect {
-                session_id: id,
-                step,
-                show_screens,
+                session_id,
+                call,
+                raw,
+                list_calls,
             }) => {
-                assert_eq!(id, session_id.as_uuid().to_owned());
-                assert_eq!(step, Some(5));
-                assert!(show_screens);
+                assert_eq!(session_id, 42);
+                assert_eq!(call, Some(0));
+                assert!(raw);
+                assert!(!list_calls);
+            }
+            _ => panic!("Expected Inspect command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_inspect_list_calls() {
+        let cli = Cli::parse_from(["7aigent", "inspect", "42", "--list-calls"]);
+        match cli.command {
+            Some(Commands::Inspect {
+                session_id,
+                list_calls,
+                ..
+            }) => {
+                assert_eq!(session_id, 42);
+                assert!(list_calls);
             }
             _ => panic!("Expected Inspect command"),
         }
