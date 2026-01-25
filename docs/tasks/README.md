@@ -71,6 +71,10 @@ These tasks are for designing and implementing the agent:
 - [x] [16 - Implement sandbox container](./16-implement-sandbox-container.md) - Bubblewrap-based sandbox with integrated tests
 - [ ] [17 - End-to-end testing](./17-end-to-end-testing.md)
 
+### Context Management
+
+- [ ] [19 - Improve context management](./19-improve-context-management.md) - Enhance system message, add system environment, implement simulated initial message
+
 ### Documentation
 
 - [ ] [18 - Refactor documentation structure](./18-refactor-documentation-structure.md) - Reorganize docs for better navigation
