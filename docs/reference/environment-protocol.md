@@ -4,7 +4,7 @@ This document specifies the contract that all environments (built-in and custom)
 
 ## Type Definitions
 
-```python
+<python>
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -33,11 +33,11 @@ class ScreenSection:
     """Content to display in this environment's screen section."""
     content: str
     max_lines: int = 50
-```
+</python>
 
 ## Environment Protocol
 
-```python
+<python>
 from typing import Protocol
 
 class Environment(Protocol):
@@ -100,7 +100,7 @@ class Environment(Protocol):
         This method is OPTIONAL to implement.
         """
         ...
-```
+</python>
 
 ## Environment Loading
 
@@ -123,7 +123,7 @@ Loaded from `{project_dir}/env/*.py`:
 
 ### Finding Environment Class
 
-```python
+<python>
 import inspect
 from typing import Any
 
@@ -143,7 +143,7 @@ def find_environment_class(module: Any) -> type | None:
         if inspect.isclass(obj) and hasattr(obj, 'handle_command') and hasattr(obj, 'get_screen'):
             return obj
     return None
-```
+</python>
 
 ### Validation Rules
 
@@ -164,7 +164,7 @@ The environment class must satisfy these requirements:
 
 ### Validation Implementation
 
-```python
+<python>
 def validate_environment_class(cls: type) -> list[str]:
     """
     Validate that a class implements the Environment protocol.
@@ -224,7 +224,7 @@ def validate_environment_class(cls: type) -> list[str]:
             errors.append("shutdown must return None")
 
     return errors
-```
+</python>
 
 ## Error Handling
 
@@ -235,7 +235,7 @@ When an environment fails validation:
 
 ## Example: Simple Timer Environment
 
-```python
+<python>
 # project_dir/env/timer.py
 
 from orchestrator.core_types import CommandText, CommandResponse, ScreenSection
@@ -278,7 +278,7 @@ class TimerEnvironment:
 
     def shutdown(self) -> None:
         pass
-```
+</python>
 
 ## See Also
 

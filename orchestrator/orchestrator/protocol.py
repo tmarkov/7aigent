@@ -7,139 +7,139 @@ from orchestrator.core_types import CommandResponse, CommandText, ScreenSection
 
 class Environment(Protocol):
     """
-    Protocol that all environment modules must implement.
+        Protocol that all environment modules must implement.
 
-    Environments are stateful components that handle commands within their
-    domain (bash, python, editor, etc.). They maintain state across commands
-    and provide a screen section showing current state.
+        Environments are stateful components that handle commands within their
+        domain (bash, python, editor, etc.). They maintain state across commands
+        and provide a screen section showing current state.
 
-    ## Implementing an Environment
+        ## Implementing an Environment
 
-    To create a new environment, implement a class with these three methods:
+        To create a new environment, implement a class with these three methods:
 
-    ```python
-    from orchestrator.types import CommandText, CommandResponse, ScreenSection
+        <python>
+        from orchestrator.types import CommandText, CommandResponse, ScreenSection
 
-    class MyEnvironment:
-        def handle_command(self, cmd: CommandText) -> CommandResponse:
-            # Execute command, update state, return response
-            ...
+        class MyEnvironment:
+            def handle_command(self, cmd: CommandText) -> CommandResponse:
+                # Execute command, update state, return response
+                ...
 
-        def get_screen(self) -> ScreenSection:
-            # Return current state for display
-            ...
+            def get_screen(self) -> ScreenSection:
+                # Return current state for display
+                ...
 
-        def shutdown(self) -> None:  # Optional
-            # Clean up resources
-            ...
-    ```
+            def shutdown(self) -> None:  # Optional
+                # Clean up resources
+                ...
+    </python>
 
-    ## Built-in Environments
+        ## Built-in Environments
 
-    The orchestrator provides three built-in environments:
+        The orchestrator provides three built-in environments:
 
-    - **bash**: Execute shell commands, manage processes, file system operations
-    - **python**: Python REPL with persistent namespace for data analysis
-    - **editor**: View and edit files with pattern-based views
+        - **bash**: Execute shell commands, manage processes, file system operations
+        - **python**: Python REPL with persistent namespace for data analysis
+        - **editor**: View and edit files with pattern-based views
 
-    ## Ad-hoc Environments
+        ## Ad-hoc Environments
 
-    Projects can define custom environments in `{project_dir}/env/*.py`:
+        Projects can define custom environments in `{project_dir}/env/*.py`:
 
-    ```python
-    # project_dir/env/timer.py
+        <python>
+        # project_dir/env/timer.py
 
-    from orchestrator.types import CommandText, CommandResponse, ScreenSection
-    import time
+        from orchestrator.types import CommandText, CommandResponse, ScreenSection
+        import time
 
-    class TimerEnvironment:
-        def __init__(self):
-            self._start_time = None
-
-        def handle_command(self, cmd: CommandText) -> CommandResponse:
-            if cmd.value == "start":
-                self._start_time = time.time()
-                return CommandResponse("Timer started", success=True)
-            elif cmd.value == "stop":
-                if self._start_time is None:
-                    return CommandResponse("Timer not running", success=False)
-                elapsed = time.time() - self._start_time
+        class TimerEnvironment:
+            def __init__(self):
                 self._start_time = None
-                return CommandResponse(f"Elapsed: {elapsed:.2f}s", success=True)
-            else:
-                return CommandResponse(f"Unknown command: {cmd.value}", success=False)
 
-        def get_screen(self) -> ScreenSection:
-            if self._start_time is not None:
-                elapsed = time.time() - self._start_time
-                status = f"Running: {elapsed:.2f}s"
-            else:
-                status = "Stopped"
-            return ScreenSection(content=f"Timer: {status}")
-    ```
+            def handle_command(self, cmd: CommandText) -> CommandResponse:
+                if cmd.value == "start":
+                    self._start_time = time.time()
+                    return CommandResponse("Timer started", success=True)
+                elif cmd.value == "stop":
+                    if self._start_time is None:
+                        return CommandResponse("Timer not running", success=False)
+                    elapsed = time.time() - self._start_time
+                    self._start_time = None
+                    return CommandResponse(f"Elapsed: {elapsed:.2f}s", success=True)
+                else:
+                    return CommandResponse(f"Unknown command: {cmd.value}", success=False)
 
-    ## Design Principles
+            def get_screen(self) -> ScreenSection:
+                if self._start_time is not None:
+                    elapsed = time.time() - self._start_time
+                    status = f"Running: {elapsed:.2f}s"
+                else:
+                    status = "Stopped"
+                return ScreenSection(content=f"Timer: {status}")
+    </python>
 
-    **Synchronous execution**: Commands block until complete. This simplifies
-    implementation and matches the sequential nature of agent interaction.
-    Long-running tasks can use environment-specific mechanisms (bash background
-    jobs, python threads) if needed.
+        ## Design Principles
 
-    **Minimal screen content before use**: Environments should return minimal
-    screen content (just name/description) until the first command is executed.
-    This avoids cluttering the screen with information about unused environments.
+        **Synchronous execution**: Commands block until complete. This simplifies
+        implementation and matches the sequential nature of agent interaction.
+        Long-running tasks can use environment-specific mechanisms (bash background
+        jobs, python threads) if needed.
 
-    **File-based output for large data**: Environments should write large outputs
-    (plots, profiling data, logs) to files in the project directory rather than
-    including them in command responses or screen sections.
+        **Minimal screen content before use**: Environments should return minimal
+        screen content (just name/description) until the first command is executed.
+        This avoids cluttering the screen with information about unused environments.
 
-    **Explicit state management**: Environments maintain their own state. There
-    is no automatic rollback or transaction support. The agent should use
-    explicit mechanisms (git commits, checkpoints) for state management.
+        **File-based output for large data**: Environments should write large outputs
+        (plots, profiling data, logs) to files in the project directory rather than
+        including them in command responses or screen sections.
 
-    ## Error Handling
+        **Explicit state management**: Environments maintain their own state. There
+        is no automatic rollback or transaction support. The agent should use
+        explicit mechanisms (git commits, checkpoints) for state management.
 
-    Environments should catch exceptions and return failed responses rather than
-    letting exceptions propagate:
+        ## Error Handling
 
-    ```python
-    def handle_command(self, cmd: CommandText) -> CommandResponse:
-        try:
-            # Execute command
-            result = self._execute(cmd.value)
-            return CommandResponse(result, success=True)
-        except Exception as e:
-            return CommandResponse(f"Error: {e}", success=False)
-    ```
+        Environments should catch exceptions and return failed responses rather than
+        letting exceptions propagate:
 
-    If get_screen() raises an exception, the orchestrator will show an error
-    in that environment's screen section but continue operating.
+        <python>
+        def handle_command(self, cmd: CommandText) -> CommandResponse:
+            try:
+                # Execute command
+                result = self._execute(cmd.value)
+                return CommandResponse(result, success=True)
+            except Exception as e:
+                return CommandResponse(f"Error: {e}", success=False)
+    </python>
 
-    ## Performance Considerations
+        If get_screen() raises an exception, the orchestrator will show an error
+        in that environment's screen section but continue operating.
 
-    `get_screen()` is called after every command (from any environment), so it
-    must be fast:
+        ## Performance Considerations
 
-    - Don't do expensive computation in get_screen()
-    - Cache computed state from handle_command() if needed
-    - Return quickly with current state
+        `get_screen()` is called after every command (from any environment), so it
+        must be fast:
 
-    ## Interactive Programs
+        - Don't do expensive computation in get_screen()
+        - Cache computed state from handle_command() if needed
+        - Return quickly with current state
 
-    For wrapping interactive programs (gdb, database CLIs, etc.), use the
-    `InteractiveEnvironment` base class which handles common patterns:
+        ## Interactive Programs
 
-    ```python
-    from orchestrator.interactive import InteractiveEnvironment
+        For wrapping interactive programs (gdb, database CLIs, etc.), use the
+        `InteractiveEnvironment` base class which handles common patterns:
 
-    class GdbEnvironment(InteractiveEnvironment):
-        command = "gdb"
-        prompt = r"\\(gdb\\) "
-        description = "GDB debugger"
-    ```
+        <python>
+        from orchestrator.interactive import InteractiveEnvironment
 
-    See the orchestrator documentation for details on the InteractiveEnvironment
-    base class.
+        class GdbEnvironment(InteractiveEnvironment):
+            command = "gdb"
+            prompt = r"\\(gdb\\) "
+            description = "GDB debugger"
+    </python>
+
+        See the orchestrator documentation for details on the InteractiveEnvironment
+        base class.
     """
 
     def handle_command(self, cmd: CommandText) -> CommandResponse:

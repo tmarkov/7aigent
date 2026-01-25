@@ -183,9 +183,9 @@ allowed_domains = [
 **V1 - Manual limits:**
 Resource limits are not enforced by the agent. Use systemd-run wrapper:
 
-```bash
+<bash>
 systemd-run --user --scope -p MemoryMax=4G 7aigent "task"
-```
+</bash>
 
 **Configuration (documented for V2):**
 
@@ -355,9 +355,9 @@ Agent validates configuration on startup:
 
 Create default project configuration:
 
-```bash
+<bash>
 7aigent --init
-```
+</bash>
 
 Creates `.7aigent.toml` with commented examples.
 
@@ -376,10 +376,10 @@ Agent reads API key from `$OPENAI_API_KEY`.
 **Custom environment variables:**
 Not directly supported in TOML. Use shell:
 
-```bash
+<bash>
 export CUSTOM_ENDPOINT="https://api.custom.com/v1"
 # Then edit config manually to use this value
-```
+</bash>
 
 ## See Also
 

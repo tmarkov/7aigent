@@ -11,9 +11,9 @@
 
 ## Command format
 
-```python
+<python>
 python code (can be multi-line)
-```
+</python>
 
 ## Response format
 
@@ -69,7 +69,7 @@ Variables (by recent use):
 
 ## Variable display logic
 
-```python
+<python>
 def get_type_name(obj) -> str:
     """Get simple type name for display."""
     obj_type = type(obj)
@@ -92,7 +92,7 @@ def get_type_name(obj) -> str:
     # For everything else, use type name directly
     else:
         return type_name
-```
+</python>
 
 ## Usage tracking
 
@@ -104,7 +104,7 @@ def get_type_name(obj) -> str:
 
 **Usage tracking algorithm**:
 
-```python
+<python>
 # After each command:
 # 1. Find all variables mentioned in command
 matches = []
@@ -116,7 +116,7 @@ for var_name in current_namespace:
 ordered_vars = matches + [v for v in ordered_vars if v not in matches]
 
 # 3. Display first 100 from ordered_vars on screen
-```
+</python>
 
 ## Screen variable filtering
 

@@ -4,7 +4,7 @@ All environments (built-in and ad-hoc) must implement this protocol.
 
 ## Type Definitions
 
-```python
+<python>
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -33,11 +33,11 @@ class ScreenSection:
     """Content to display in this environment's screen section."""
     content: str
     max_lines: int = 50
-```
+</python>
 
 ## Environment Protocol
 
-```python
+<python>
 from typing import Protocol
 
 class Environment(Protocol):
@@ -100,7 +100,7 @@ class Environment(Protocol):
         This method is OPTIONAL to implement.
         """
         ...
-```
+</python>
 
 ## Environment Loading and Validation
 
@@ -119,7 +119,7 @@ class Environment(Protocol):
 
 **Validation implementation**:
 
-```python
+<python>
 import inspect
 from typing import Any
 
@@ -206,7 +206,7 @@ def validate_environment_class(cls: type) -> list[str]:
             errors.append("shutdown must return None")
 
     return errors
-```
+</python>
 
 **Error handling for failed validation**:
 

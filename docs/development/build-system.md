@@ -30,7 +30,7 @@ For this LLM-driven project, automation is critical. Nix ensures that if the bui
 
 ### Building Packages
 
-```bash
+<bash>
 # Build the agent (Rust)
 nix build .#agent
 
@@ -39,7 +39,7 @@ nix build .#orchestrator
 
 # Build everything
 nix flake check
-```
+</bash>
 
 Each build runs:
 
@@ -60,7 +60,7 @@ Each build runs:
 
 The development shell provides all tools needed for development:
 
-```bash
+<bash>
 # Enter development shell
 nix develop
 
@@ -70,18 +70,18 @@ nix develop
 # - Python tools (black, isort, ruff)
 # - Build dependencies
 # - Pre-commit hooks
-```
+</bash>
 
 With direnv:
 
-```bash
+<bash>
 # One-time setup
 echo "use flake" > .envrc
 direnv allow
 
 # Shell activates automatically when entering directory
 cd 7aigent  # Development environment loaded
-```
+</bash>
 
 ### Why Not Run Tools Directly?
 
@@ -89,7 +89,7 @@ cd 7aigent  # Development environment loaded
 
 Running tools directly bypasses the build system:
 
-```bash
+<bash>
 # DON'T DO THIS
 cargo test        # Might pass locally
 pytest           # But skip formatting checks
@@ -98,7 +98,7 @@ git commit       # Commit fails in CI
 # DO THIS
 nix build .#agent         # Runs ALL checks
 nix build .#orchestrator  # Guaranteed correctness
-```
+</bash>
 
 The build system ensures:
 - No step is forgotten
@@ -110,9 +110,9 @@ The build system ensures:
 
 ### What Happens During a Build
 
-```bash
+<bash>
 nix build .#agent
-```
+</bash>
 
 1. **Dependency resolution**: Fetch exact versions of all dependencies
 2. **Build environment**: Create isolated build environment with tools
@@ -130,7 +130,7 @@ If any step fails, the build fails. No partial results.
 
 This is critical to understand:
 
-```bash
+<bash>
 # Create new file
 echo "print('hello')" > new_module.py
 
@@ -142,7 +142,7 @@ git add new_module.py
 
 # Now build sees it
 nix build .#orchestrator  # File exists in build
-```
+</bash>
 
 This prevents common issues:
 - Tests pass locally but fail in CI (untracked file)
@@ -155,7 +155,7 @@ This prevents common issues:
 
 When adding new modules, verify the build sees them:
 
-```bash
+<bash>
 # Create test file that imports new module
 cat > tests/test_new_module.py << 'EOF'
 from package.new_module import NewClass  # Will fail - doesn't exist yet
@@ -171,7 +171,7 @@ git add tests/test_new_module.py
 nix build .#orchestrator 2>&1 | grep "ModuleNotFoundError"
 
 # If build succeeds, test not in build - investigate!
-```
+</bash>
 
 See [Contributing Guide](contributing.md) for the full verification workflow.
 
@@ -185,10 +185,10 @@ See [Contributing Guide](contributing.md) for the full verification workflow.
 
 **Solution**:
 
-```bash
+<bash>
 git add tests/test_new_module.py
 nix build .#orchestrator
-```
+</bash>
 
 ### Issue: Build Fails with Import Error
 
@@ -198,10 +198,10 @@ nix build .#orchestrator
 
 **Solution**:
 
-```bash
+<bash>
 git add package/new_module.py
 nix build .#orchestrator
-```
+</bash>
 
 ### Issue: Format Check Fails
 
@@ -209,7 +209,7 @@ nix build .#orchestrator
 
 **Solution**: Run formatters in development shell:
 
-```bash
+<bash>
 nix develop
 
 # Python
@@ -222,7 +222,7 @@ cargo fmt
 # Verify
 nix build .#orchestrator
 nix build .#agent
-```
+</bash>
 
 ### Issue: Tests Pass Locally, Fail in Build
 
@@ -273,16 +273,16 @@ tokio = { version = "1.0", features = ["full"] }
 
 Then rebuild:
 
-```bash
+<bash>
 nix build .#agent         # Fetches new dependencies
 nix build .#orchestrator  # Fetches new dependencies
-```
+</bash>
 
 ## Development Workflow
 
 ### Recommended Workflow
 
-```bash
+<bash>
 # 1. Enter development shell
 nix develop
 
@@ -304,7 +304,7 @@ nix build .#orchestrator
 nix build .#orchestrator
 nix build .#agent
 nix flake check
-```
+</bash>
 
 ### Build Frequency
 
@@ -321,30 +321,30 @@ Don't wait until "done" to build. Catching issues early saves time.
 
 ### Checking Specific Derivations
 
-```bash
+<bash>
 # List all checks
 nix flake show
 
 # Run specific check
 nix build .#checks.x86_64-linux.agent-tests
 nix build .#checks.x86_64-linux.orchestrator-tests
-```
+</bash>
 
 ### Clean Builds
 
 Nix builds are pure, but you can force rebuild:
 
-```bash
+<bash>
 # Clear result symlink
 rm -f result
 
 # Rebuild
 nix build .#agent --rebuild
-```
+</bash>
 
 ### Debugging Build Failures
 
-```bash
+<bash>
 # Verbose output
 nix build .#agent -L
 
@@ -354,7 +354,7 @@ nix build .#agent --keep-failed
 # Interactive debugging
 nix develop .#agent
 cargo test  # Run tests in dev shell
-```
+</bash>
 
 ## Success Criteria
 

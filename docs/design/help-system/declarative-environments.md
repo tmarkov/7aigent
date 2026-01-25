@@ -23,7 +23,7 @@ Don't use when:
 
 ## Command Decorator
 
-```python
+<python>
 def command(signature: str, description: str, example: str):
     """
     Decorator for declarative environment commands.
@@ -50,11 +50,11 @@ def command(signature: str, description: str, example: str):
         }
         return func
     return decorator
-```
+</python>
 
 ## Base Class API
 
-```python
+<python>
 class DeclarativeEnvironment:
     """
     Base class for environments with structured command sets.
@@ -135,7 +135,8 @@ class DeclarativeEnvironment:
             else:
                 # LONG help: signature, description, example
                 env_name = self.__class__.__name__.replace('Environment', '').lower()
-                example_formatted = f"    ```{env_name}\n"
+                example_formatted = f"    
+</python>{env_name}\n"
                 for line in example.split('\n'):
                     example_formatted += f"    {line}\n"
                 example_formatted += "    ```"
@@ -161,7 +162,7 @@ class DeclarativeEnvironment:
 
 ## Example: Timer Environment
 
-```python
+<python>
 from orchestrator.declarative import DeclarativeEnvironment, command
 import time
 
@@ -210,7 +211,7 @@ class TimerEnvironment(DeclarativeEnvironment):
             current = time.time() - self._start_time
             return f"Timer: Running ({current:.2f}s)"
         return f"Timer: Stopped ({self._elapsed:.2f}s)"
-```
+</python>
 
 ### Screen Output Before Any Commands
 
@@ -275,12 +276,12 @@ Commands:
 
 `DeclarativeEnvironment` implements the standard `Environment` protocol:
 
-```python
+<python>
 class Environment(Protocol):
     def handle_command(self, cmd: CommandText) -> CommandResponse: ...
     def get_screen(self) -> ScreenSection: ...
     def shutdown(self) -> None: ...  # Optional
-```
+</python>
 
 All orchestrator features work with `DeclarativeEnvironment` subclasses automatically.
 

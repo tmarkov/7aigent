@@ -53,18 +53,18 @@ shell_prefix = "nix develop --command"
 
 ### Example Session
 
-```python
+<python>
 # Agent uses Python environment
 >>> import numpy as np  # Works! Python started in devshell
 >>> arr = np.array([1, 2, 3])
-```
+</python>
 
-```bash
+<bash>
 # Agent controls bash directly
 $ nix develop  # Agent can enter devshell
 (devshell) $ cargo build
 (devshell) $ exit
-```
+</bash>
 
 ### Alternative Shell Wrappers
 
@@ -162,7 +162,7 @@ fn build_sandbox(config: &Config) -> Result<PathBuf> {
 
 For V1, this could be simplified by just rebuilding the sandbox with a user-provided package list:
 
-```bash
+<bash>
 # User runs this once when they add dependencies
 nix build --impure --expr '
   let
@@ -177,7 +177,7 @@ nix build --impure --expr '
 
 # This builds a custom agent with custom sandbox
 # Result link is used by agent
-```
+</bash>
 
 Then `.7aigent.toml` just points to the result:
 

@@ -430,7 +430,7 @@ def test_initial_screen_shows_long_help_for_all_commands(editor):
     assert "view <file> /<start>/ /<end>/ [label]" in content
     assert "View a section of a file using regex patterns" in content
     assert "Example:" in content
-    assert "```editor" in content
+    assert "<editor>" in content
 
     # Should show LONG help for edit (includes example)
     assert "edit <file> <start>-<end>" in content
@@ -529,7 +529,7 @@ def test_progressive_disclosure_all_commands_used(
 
     # Should NOT include any examples
     assert "Example:" not in content
-    assert "```editor" not in content
+    assert "<editor>" not in content
 
 
 def test_screen_includes_state_and_commands(editor, sample_file):

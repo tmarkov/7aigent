@@ -4,13 +4,13 @@
 
 ## Quick Start
 
-```bash
+<bash>
 # Build the agent
 nix build .#agent
 
 # Run the agent
 ./result/bin/7aigent "your task here"
-```
+</bash>
 
 ## Customizing the Environment
 
@@ -50,25 +50,25 @@ See [docs/design/sandbox/](./docs/design/sandbox/) for details.
 
 This project uses Nix flakes for reproducible development environments.
 
-```bash
+<bash>
 # Enter development shell
 nix develop
 
 # Or use direnv for automatic loading
 direnv allow
-```
+</bash>
 
 ### Pre-commit Hooks
 
-```bash
+<bash>
 pre-commit install
-```
+</bash>
 
 Hooks run formatters and linters for Rust and Python code.
 
 ### Building
 
-```bash
+<bash>
 # Build the agent (Rust)
 nix build .#agent
 
@@ -78,7 +78,7 @@ nix build .#orchestrator
 
 # Run all checks (formatting, linting, tests)
 nix flake check
-```
+</bash>
 
 ## Contributing
 

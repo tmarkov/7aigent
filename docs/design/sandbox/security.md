@@ -31,12 +31,12 @@ Bubblewrap doesn't directly support resource limits, but we can layer cgroups.
 
 **V2 approach**: Use systemd-run to spawn with cgroups:
 
-```bash
+<bash>
 systemd-run --user --scope \
   -p MemoryMax=4G \
   -p CPUQuota=200% \
   7aigent-sandbox /workspace [args...]
-```
+</bash>
 
 This would wrap the bubblewrap invocation in a cgroup.
 

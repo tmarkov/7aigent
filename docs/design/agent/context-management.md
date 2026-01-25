@@ -39,13 +39,13 @@ This document describes how the agent manages conversation history, screen state
 ```
 
 **Inspection command**:
-```bash
+<bash>
 # Show screen at step 5
 7aigent --inspect <session-id> --step 5
 
 # Show full LLM context at step 5 (system + history + screen)
 7aigent --inspect <session-id> --step 5 --full-context
-```
+</bash>
 
 ## Context Truncation Strategy
 
@@ -98,13 +98,13 @@ fn build_llm_messages(
 - User responsibility to avoid conflicts (e.g., both modifying same file)
 
 **Example**:
-```bash
+<bash>
 # Terminal 1: Feature work
 7aigent "Add dark mode toggle"
 
 # Terminal 2: Hotfix (different session)
 7aigent "Fix crash on invalid input"
-```
+</bash>
 
 ## Session Persistence
 

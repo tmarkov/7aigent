@@ -186,13 +186,13 @@ class DeclarativeEnvironment:
                 # Indent multi-line descriptions
                 desc_indented = desc.replace("\n", "\n    ")
 
-                # Wrap example in markdown code fence with environment name
+                # Wrap example in environment tags
                 env_name = self.__class__.__name__.replace("Environment", "").lower()
                 example_lines = example.split("\n")
-                example_formatted = f"    ```{env_name}\n"
+                example_formatted = f"    <{env_name}>\n"
                 for line in example_lines:
                     example_formatted += f"    {line}\n"
-                example_formatted += "    ```"
+                example_formatted += f"    </{env_name}>"
 
                 commands_help.append(
                     f"  {sig}\n    {desc_indented}\n    Example:\n{example_formatted}"

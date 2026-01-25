@@ -41,7 +41,7 @@ Implement the `DeclarativeEnvironment` base class that enables environments with
 **Situation**: Developer creates a timer environment using DeclarativeEnvironment
 
 **Code**:
-```python
+<python>
 from orchestrator.declarative import DeclarativeEnvironment, command
 
 class TimerEnvironment(DeclarativeEnvironment):
@@ -62,7 +62,7 @@ class TimerEnvironment(DeclarativeEnvironment):
 
     def get_state_display(self) -> str:
         return "Timer: Running" if self._start_time else "Timer: Stopped"
-```
+</python>
 
 **Success criteria**: Timer environment works with automatic help generation, command routing, and usage tracking
 
@@ -158,7 +158,7 @@ Editor environment successfully refactored to:
 
 ## Example Decorator Usage
 
-```python
+<python>
 @command(
     signature="view <file> /<start>/ /<end>/ [label]",
     description="View a section of a file using regex patterns to define boundaries.\nPatterns are Python regex. Multiple matches can be navigated with next_match/prev_match.",
@@ -168,6 +168,6 @@ def view(self, filepath: str, start_pattern: str, end_pattern: str, label: str =
     """View command implementation"""
     # Implementation unchanged
     ...
-```
+</python>
 
 The decorator stores metadata, DeclarativeEnvironment generates help automatically.

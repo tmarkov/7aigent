@@ -1,6 +1,6 @@
 //! Command parser for extracting commands from LLM responses.
 //!
-//! This module parses fenced code blocks from LLM responses to extract
+//! This module parses XML-style environment tags from LLM responses to extract
 //! environment-specific commands.
 
 use crate::types::Command;
@@ -16,38 +16,44 @@ pub enum ParseError {
 
 pub type Result<T> = std::result::Result<T, ParseError>;
 
-/// Get the regex pattern for matching fenced code blocks
+/// Get the regex pattern for matching environment tags
 ///
-/// Pattern matches: ```env\ncommand```
+/// Pattern matches: <env>command</env>
 /// Captures: (env, command)
-fn code_block_regex() -> &'static Regex {
+/// Note: Closing tag must be alone on its own line
+fn environment_tag_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
-        // Match fenced code blocks: ```env\ncommand```
+        // Match environment tags: <env>command</env>
         // Group 1: environment name (word characters)
         // Group 2: command content (any characters including newlines)
-        Regex::new(r"```(\w+)\n([\s\S]*?)```").expect("Failed to compile regex")
+        // Note: We match the closing tag separately without backreference
+        // since rust regex doesn't support backreferences
+        Regex::new(r"<(\w+)>\n?([\s\S]*?)\n?</\w+>").expect("Failed to compile regex")
     })
 }
 
 /// Parse commands from LLM response
 ///
-/// Extracts all fenced code blocks from the response and converts them
-/// to Command objects. Each code block should have the format:
+/// Extracts all environment tags from the response and converts them
+/// to Command objects. Each tag should have the format:
 ///
-/// ```env
+/// <env>
 /// command text
-/// ```
+/// </env>
 ///
 /// Where `env` is the environment name (bash, python, editor) and
 /// `command text` is the command to execute.
+///
+/// The closing tag should be alone on its own line to avoid ambiguity.
+/// Content inside tags is treated as raw text - no escaping required.
 ///
 /// # Example
 ///
 /// ```
 /// use agent::parser::parse_commands;
 ///
-/// let response = "I'll list the files:\n\n```bash\nls -la\n```\n";
+/// let response = "I'll list the files:\n\n<bash>\nls -la\n</bash>\n";
 ///
 /// let commands = parse_commands(response).unwrap();
 /// assert_eq!(commands.len(), 1);
@@ -56,12 +62,12 @@ fn code_block_regex() -> &'static Regex {
 /// ```
 pub fn parse_commands(response: &str) -> Result<Vec<Command>> {
     let mut commands = Vec::new();
-    let re = code_block_regex();
+    let re = environment_tag_regex();
 
     for cap in re.captures_iter(response) {
         let env = cap[1].to_string();
-        // Trim trailing newline if present (the closing ``` is on a new line)
-        let command = cap[2].trim_end_matches('\n').to_string();
+        // Trim leading/trailing newlines from the command content
+        let command = cap[2].trim().to_string();
 
         commands.push(Command { env, command });
     }
@@ -78,9 +84,9 @@ mod tests {
         let response = r#"
 I'll list the files:
 
-```bash
+<bash>
 ls -la
-```
+</bash>
 "#;
 
         let commands = parse_commands(response).unwrap();
@@ -94,22 +100,22 @@ ls -la
         let response = r#"
 Let me check the files and then analyze them:
 
-```bash
+<bash>
 ls -la
-```
+</bash>
 
 Now let's check Python version:
 
-```python
+<python>
 import sys
 print(sys.version)
-```
+</python>
 
 And view a file:
 
-```editor
+<editor>
 view src/main.py 1-50
-```
+</editor>
 "#;
 
         let commands = parse_commands(response).unwrap();
@@ -128,12 +134,12 @@ view src/main.py 1-50
     #[test]
     fn test_parse_multiline_command() {
         let response = r#"
-```python
+<python>
 def hello():
     print("Hello, world!")
 
 hello()
-```
+</python>
 "#;
 
         let commands = parse_commands(response).unwrap();
@@ -156,8 +162,8 @@ hello()
     #[test]
     fn test_parse_command_with_empty_body() {
         let response = r#"
-```bash
-```
+<bash>
+</bash>
 "#;
 
         let commands = parse_commands(response).unwrap();
@@ -171,16 +177,16 @@ hello()
         let response = r#"
 I'll analyze the code first:
 
-```bash
+<bash>
 cat src/main.py
-```
+</bash>
 
-Some regular code formatting like `inline code` should be ignored.
+Some regular markdown like ```inline code``` should be ignored.
 
-```python
+<python>
 x = 42
 print(x)
-```
+</python>
 
 Done!
 "#;
@@ -192,29 +198,29 @@ Done!
     }
 
     #[test]
-    fn test_parse_command_with_backticks_in_content() {
+    fn test_parse_command_with_special_chars() {
         let response = r#"
-```bash
-echo "Use \`backticks\` for inline code"
-```
+<bash>
+echo "Use <brackets> and & symbols"
+</bash>
 "#;
 
         let commands = parse_commands(response).unwrap();
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command,
-            r#"echo "Use \`backticks\` for inline code""#
+            r#"echo "Use <brackets> and & symbols""#
         );
     }
 
     #[test]
     fn test_parse_command_preserves_whitespace() {
         let response = r#"
-```python
+<python>
 def foo():
     if True:
         print("indented")
-```
+</python>
 "#;
 
         let commands = parse_commands(response).unwrap();
@@ -228,21 +234,21 @@ def foo():
     #[test]
     fn test_parse_various_env_names() {
         let response = r#"
-```bash
+<bash>
 ls
-```
+</bash>
 
-```python3
+<python3>
 print()
-```
+</python3>
 
-```sh
+<sh>
 pwd
-```
+</sh>
 
-```editor
+<editor>
 view file
-```
+</editor>
 "#;
 
         let commands = parse_commands(response).unwrap();
@@ -251,5 +257,20 @@ view file
         assert_eq!(commands[1].env, "python3");
         assert_eq!(commands[2].env, "sh");
         assert_eq!(commands[3].env, "editor");
+    }
+
+    #[test]
+    fn test_parse_python_with_less_than() {
+        let response = r#"
+<python>
+if 3 < 4:
+    print("Hello world")
+</python>
+"#;
+
+        let commands = parse_commands(response).unwrap();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].env, "python");
+        assert_eq!(commands[0].command, "if 3 < 4:\n    print(\"Hello world\")");
     }
 }

@@ -20,7 +20,7 @@ See [docs/reference/coding-style.md](docs/reference/coding-style.md) for detaile
 
 All code verification (formatting, linting, testing) is integrated into the Nix build:
 
-```bash
+<bash>
 # Build the agent (Rust) with all checks
 nix build .#agent
 # Runs: rustfmt check, clippy, cargo test
@@ -31,7 +31,7 @@ nix build .#orchestrator
 
 # Development shell with all tools
 nix develop
-```
+</bash>
 
 **Important**: Don't run formatters and linters directly during implementation. Instead:
 - Make your changes
@@ -393,7 +393,7 @@ Only implement after design is solid.
 5. **Verify build will see new code (choose one approach):**
 
    **Option A - Import Test (recommended for new modules):**
-   ```bash
+   <bash>
    # Create test file that imports new module
    cat > tests/test_new_module.py << 'EOF'
    from package.new_module import NewClass  # Will fail - doesn't exist yet
@@ -408,10 +408,11 @@ Only implement after design is solid.
 
    # If build succeeds, STOP - test file not in build!
    # If build fails with ImportError - GOOD, proceed to step 4
-   ```
+   
+</bash>
 
    **Option B - Test Count Verification:**
-   ```bash
+   <bash>
    # Note current test count
    BEFORE=$(nix build .#package 2>&1 | grep -oP '\d+(?= passed)' | tail -1)
 
@@ -423,10 +424,11 @@ Only implement after design is solid.
    AFTER=$(nix build .#package 2>&1 | grep -oP '\d+(?= passed|failed)' | head -1)
 
    # If AFTER <= BEFORE, STOP - test not in build!
-   ```
+   
+</bash>
 
    **Option C - Grep Test Output:**
-   ```bash
+   <bash>
    # Create test file
    # (write test file here)
 
@@ -435,10 +437,11 @@ Only implement after design is solid.
    nix build .#package 2>&1 | grep -q "test_new_module.py"
 
    # If not found, STOP - test not in build!
-   ```
+   
+</bash>
 
 4. **Create minimal module to fix import:**
-   ```bash
+   <bash>
    # Create skeleton module
    cat > package/new_module.py << 'EOF'
    """New module."""
@@ -452,7 +455,8 @@ Only implement after design is solid.
 
    # Build should now pass (or fail on different issue)
    nix build .#package
-   ```
+   
+</bash>
 
 5. **Implement incrementally:**
    - Write code
@@ -468,7 +472,7 @@ Only implement after design is solid.
 8. Update docs if implementation reveals issues
 
 9. **Final verification:**
-   ```bash
+   <bash>
    # Clean build
    nix build .#package
 
@@ -478,7 +482,8 @@ Only implement after design is solid.
    # All checks must pass:
    # - black, isort, ruff (formatters/linters)
    # - pytest (all tests including new ones)
-   ```
+   
+</bash>
 
 **Why this process:**
 - Catches ALL "new code not in build" issues (git, config, import paths)

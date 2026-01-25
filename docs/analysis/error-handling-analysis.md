@@ -49,12 +49,12 @@ This document analyzes error handling in the orchestrator-agent communication pr
 **Trigger:** LLM uses non-existent environment (e.g., `text`, `javascript`)
 
 **Current Behavior:**
-```python
+<python>
 raise UnknownEnvironmentError(
     f"Unknown environment: {env_name.value!r}. "
     f"Available environments: {available}"
 )
-```
+</python>
 - Caught in `main.py:65-68`
 - Sends error response via `send_error_response()`
 - Agent receives error and terminates
@@ -170,17 +170,17 @@ Most parse errors indicate bugs in the agent's command generation logic:
 **Change:** Return failed CommandResponse instead of raising exception
 
 **Before:** (`executor.py:54-60`)
-```python
+<python>
 if env_name not in environments:
     available = ", ".join(name.value for name in environments.keys())
     raise UnknownEnvironmentError(
         f"Unknown environment: {env_name.value!r}. "
         f"Available environments: {available}"
     )
-```
+</python>
 
 **After:**
-```python
+<python>
 if env_name not in environments:
     available = ", ".join(name.value for name in environments.keys())
     return CommandResponse(
@@ -188,7 +188,7 @@ if env_name not in environments:
                f"Available environments: {available}",
         success=False
     )
-```
+</python>
 
 **Impact:**
 - LLM receives error as user message
@@ -259,9 +259,9 @@ Unknown environment: 'text'. Available environments: bash, python, editor
 === ASSISTANT ===
 Sorry, let me use the correct environment.
 
-```bash
+<bash>
 cat file.txt
-```
+</bash>
 
 === ORCHESTRATOR ===
 [file contents]

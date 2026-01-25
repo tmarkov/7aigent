@@ -14,7 +14,7 @@ See [docs/design/orchestrator/](../docs/design/orchestrator/) for complete archi
 
 This project uses Nix for reproducible builds with integrated checks:
 
-```bash
+<bash>
 # Build with all checks (formatting, linting, tests)
 nix build .#orchestrator
 
@@ -23,4 +23,4 @@ nix develop
 
 # Run orchestrator directly (for manual testing)
 python -m orchestrator
-```
+</bash>

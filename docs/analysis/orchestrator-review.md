@@ -160,7 +160,7 @@ The DeclarativeEnvironment base class provides an elegant solution to the progre
 **Test Coverage**: 33 tests in test_declarative.py verify progressive disclosure behavior across various scenarios.
 
 **Example from Editor**:
-```python
+<python>
 @command(
     signature="view <file> /<start>/ /<end>/ [label]",
     description="View a section of a file using regex patterns...",
@@ -168,7 +168,7 @@ The DeclarativeEnvironment base class provides an elegant solution to the progre
 )
 def _handle_view(self, cmd: str) -> CommandResponse:
     ...
-```
+</python>
 
 This automatically generates help text that transitions from LONG to SHORT on first use. Elegant!
 
@@ -199,13 +199,13 @@ All frozen dataclasses with proper validation in `__post_init__`.
 - Prevents accidental mutation
 
 **Minor Issue**: Callable type hints could be more specific (declarative.py:33-39):
-```python
+<python>
 # Current
 def decorator(func: Callable) -> Callable:
 
 # Better
 def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
-```
+</python>
 
 ### 3.2 Error Handling
 
@@ -224,7 +224,7 @@ def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
 - Shutdown sequence handles cleanup failures gracefully
 
 **Example** (executor.py:68-71):
-```python
+<python>
 except Exception:
     # Environment raised unhandled exception - catch and report
     tb = traceback.format_exc()
@@ -232,7 +232,7 @@ except Exception:
         output=f"Environment error in {env_name.value}:\n{tb}",
         success=False,
     )
-```
+</python>
 
 ### 3.3 Documentation
 
@@ -268,7 +268,7 @@ except Exception:
 **Example-Based Tests**: Comprehensive coverage of specific scenarios
 
 **Missing**: Property-based tests recommended in reference/coding-style.md:
-```python
+<python>
 # Would be good to add:
 from hypothesis import given, strategies as st
 
@@ -276,7 +276,7 @@ from hypothesis import given, strategies as st
 def test_valid_environment_names(name: str):
     env_name = EnvironmentName(name)
     assert env_name.value == name
-```
+</python>
 
 **Test Organization**: Well-organized with clear test names and good separation of concerns.
 
@@ -348,7 +348,7 @@ This design is correct and intentional.
 **File**: `orchestrator/environments/python.py:133`
 **Category**: Code Quality / Robustness
 
-```python
+<python>
 def _get_namespace_variables(self) -> dict[str, str]:
     # ... send command to get variables dict ...
     self._process.expect_exact(self.PROMPT_MARKER)
@@ -358,7 +358,7 @@ def _get_namespace_variables(self) -> dict[str, str]:
         # Use eval to parse the dict representation
         # This is safe because we control the Python process output
         var_dict = eval(output)  # ⚠️ DANGEROUS
-```
+</python>
 
 **Current approach**: Uses `eval()` to parse dictionary output from spawned Python process.
 
@@ -374,7 +374,7 @@ def _get_namespace_variables(self) -> dict[str, str]:
 - ✅ Defense in depth - safer against bugs/corruption
 
 **Recommended improvement**:
-```python
+<python>
 import ast
 
 def _get_namespace_variables(self) -> dict[str, str]:
@@ -386,14 +386,14 @@ def _get_namespace_variables(self) -> dict[str, str]:
         return {k: self._get_type_name(v) for k, v in var_dict.items()}
     except (ValueError, SyntaxError):
         return {}
-```
+</python>
 
 #### 5.2 Add Path Validation in Editor (API Clarity)
 
 **File**: `orchestrator/environments/editor.py:398-644`
 **Category**: Code Quality / API Design
 
-```python
+<python>
 def _handle_view(self, cmd: str) -> CommandResponse:
     parsed = self._parse_view_command(cmd)
     filepath = Path(parsed["filepath"])  # No validation
@@ -401,7 +401,7 @@ def _handle_view(self, cmd: str) -> CommandResponse:
     full_path = self._project_dir / filepath
     if not full_path.exists():
         return CommandResponse(output=f"File not found: {filepath}", success=False)
-```
+</python>
 
 **Current approach**: Editor accepts any file path, no restriction to project directory.
 
@@ -417,7 +417,7 @@ def _handle_view(self, cmd: str) -> CommandResponse:
 - ✅ Matches user expectations - editor = project scope
 
 **Optional improvement** (not required for security):
-```python
+<python>
 def _validate_filepath(self, filepath: Path) -> bool:
     """Ensure filepath stays within project_dir."""
     try:
@@ -438,7 +438,7 @@ def _handle_view(self, cmd: str) -> CommandResponse:
         )
 
     # ... rest of implementation
-```
+</python>
 
 **Note**: If added, apply to all file operations (view, edit, create, search) for consistency.
 
@@ -471,7 +471,7 @@ These are good practices that improve robustness but don't address security conc
 **File**: `orchestrator/environments/editor.py:815-856`
 **Severity**: Major
 
-```python
+<python>
 def get_state_display(self) -> str:
     for view in self._views:
         result = self._generate_view_content(view)  # Generated once
@@ -482,7 +482,7 @@ def get_state_display(self) -> str:
         v for v in self._views
         if self._generate_view_content(v) is not None  # Generated AGAIN
     ]
-```
+</python>
 
 **Issue**: Each view is generated **twice** during every screen update:
 - Reading file twice
@@ -492,7 +492,7 @@ def get_state_display(self) -> str:
 **Impact**: Performance degradation with multiple views, wasted I/O and CPU
 
 **Fix**:
-```python
+<python>
 def get_state_display(self) -> str:
     if not self._views:
         return "Views:\n  (no views)"
@@ -515,7 +515,7 @@ def get_state_display(self) -> str:
 
     self._views = valid_views  # Update once
     return "\n".join(screen_lines)
-```
+</python>
 
 ---
 
@@ -535,10 +535,11 @@ def get_state_display(self) -> str:
 ### 7.2 Code Style
 
 1. **Magic numbers not extracted**:
-   ```python
+   <python>
    # bash.py:65, python.py:64
    maxread=65536  # Should be shared constant
-   ```
+   
+</python>
 
 2. **Inconsistent string formatting**:
    - Mix of f-strings, .format(), concatenation

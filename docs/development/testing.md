@@ -18,7 +18,7 @@ This project emphasizes thorough testing to ensure correctness in an LLM-driven 
 
 ### Quick Test Runs
 
-```bash
+<bash>
 # Build agent with tests (runs cargo test)
 nix build .#agent
 
@@ -27,13 +27,13 @@ nix build .#orchestrator
 
 # Run all checks including tests
 nix flake check
-```
+</bash>
 
 ### Development Testing
 
 Within the development shell, you can run tests directly:
 
-```bash
+<bash>
 # Enter development shell
 nix develop
 
@@ -48,17 +48,17 @@ cargo test
 cargo test --package agent                     # Single package
 cargo test test_llm_client                     # By name
 cargo test -- --nocapture                      # Show stdout
-```
+</bash>
 
 ### Test Coverage
 
-```bash
+<bash>
 # Python coverage
 pytest --cov=orchestrator --cov-report=html
 
 # Rust coverage (requires additional tools)
 cargo tarpaulin --out Html
-```
+</bash>
 
 ## Writing Tests
 
@@ -66,7 +66,7 @@ cargo tarpaulin --out Html
 
 Use [Hypothesis](https://hypothesis.readthedocs.io/) for public API testing:
 
-```python
+<python>
 from hypothesis import given, strategies as st
 import pytest
 
@@ -89,13 +89,13 @@ def test_valid_identifiers_accepted(identifier: str):
 def test_invalid_identifiers_rejected(invalid: str):
     with pytest.raises(ValueError):
         EnvironmentName(invalid)
-```
+</python>
 
 ### Python: Example Tests
 
 Use specific examples for complex scenarios and edge cases:
 
-```python
+<python>
 class TestBashEnvironment:
     """Test bash environment with specific examples."""
 
@@ -123,7 +123,7 @@ class TestBashEnvironment:
         response = env.handle_command(CommandText("echo $TEST_VAR"))
 
         assert "value" in response.output
-```
+</python>
 
 ### Rust: Property-Based Testing
 
@@ -205,7 +205,7 @@ orchestrator/
 
 Group related tests in classes:
 
-```python
+<python>
 class TestEnvironmentValidation:
     """Test environment module validation."""
 
@@ -220,7 +220,7 @@ class TestEnvironmentValidation:
     def test_complete_valid_environment(self):
         """Complete valid environment should pass validation."""
         ...
-```
+</python>
 
 ### Rust Test Structure
 
@@ -294,7 +294,7 @@ Test component interactions:
 
 ### Example of Good Test
 
-```python
+<python>
 def test_bash_environment_preserves_working_directory():
     """Working directory should persist between commands."""
     env = BashEnvironment()
@@ -305,22 +305,22 @@ def test_bash_environment_preserves_working_directory():
     # Verify persistence
     response = env.handle_command(CommandText("pwd"))
     assert "/tmp" in response.output
-```
+</python>
 
 ### Example of Bad Test
 
-```python
+<python>
 def test_bash():  # Unclear what this tests
     env = BashEnvironment()
     env.handle_command(CommandText("cd /tmp"))
     assert True  # Weak assertion
-```
+</python>
 
 ## Fixtures and Test Utilities
 
 ### Python Fixtures
 
-```python
+<python>
 import pytest
 
 @pytest.fixture
@@ -340,13 +340,13 @@ def test_with_fixtures(bash_env, temp_workspace):
     bash_env.handle_command(CommandText(f"cd {temp_workspace}"))
     response = bash_env.handle_command(CommandText("python test.py"))
     assert "hello" in response.output
-```
+</python>
 
 ## Debugging Tests
 
 ### Python Debugging
 
-```bash
+<bash>
 # Run with verbose output
 pytest -v
 
@@ -358,11 +358,11 @@ pytest --pdb
 
 # Run single test with output
 pytest -xvs orchestrator/tests/test_bash.py::test_command_execution
-```
+</bash>
 
 ### Rust Debugging
 
-```bash
+<bash>
 # Show stdout
 cargo test -- --nocapture
 
@@ -371,7 +371,7 @@ cargo test test_name -- --nocapture
 
 # Show backtraces
 RUST_BACKTRACE=1 cargo test
-```
+</bash>
 
 ## Coverage Expectations
 

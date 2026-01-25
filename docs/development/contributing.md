@@ -12,7 +12,7 @@ A practical guide for contributing to the 7aigent project.
 
 ### Initial Setup
 
-```bash
+<bash>
 # Clone the repository
 git clone https://github.com/yourusername/7aigent.git
 cd 7aigent
@@ -23,7 +23,7 @@ nix develop
 # Optional: Use direnv for automatic shell activation
 echo "use flake" > .envrc
 direnv allow
-```
+</bash>
 
 The development shell provides:
 - Rust toolchain (rustc, cargo, rustfmt, clippy)
@@ -35,12 +35,12 @@ The development shell provides:
 
 Install pre-commit hooks to run formatters and linters automatically:
 
-```bash
+<bash>
 pre-commit install
 
 # Run manually on all files
 pre-commit run --all-files
-```
+</bash>
 
 Hooks run:
 - **Python**: black, isort, ruff
@@ -54,22 +54,22 @@ Hooks run:
 
 Browse [docs/tasks/](../tasks/) to see active and planned work:
 
-```bash
+<bash>
 # View task index
 cat docs/tasks/README.md
 
 # Review a specific task
 cat docs/tasks/implement-bash-environment.md
-```
+</bash>
 
 ### 2. Define New Tasks
 
 When proposing new work, create a task file:
 
-```bash
+<bash>
 # Create task file
 vim docs/tasks/fix-memory-leak.md
-```
+</bash>
 
 Task structure:
 1. **Problem**: 2-3 sentences describing what's wrong or missing
@@ -98,7 +98,7 @@ Create design documents in `docs/design/` with concrete examples and trade-off e
 
 Follow these steps strictly to avoid build issues:
 
-```bash
+<bash>
 # 1. Always use nix build, not cargo/pytest directly
 nix build .#agent      # For Rust changes
 nix build .#orchestrator  # For Python changes
@@ -108,7 +108,7 @@ git add path/to/new/file.py
 
 # 3. Build after EVERY change to catch issues early
 nix build .#orchestrator
-```
+</bash>
 
 See [Testing Guide](testing.md) for test requirements and [Build System](build-system.md) for details on how Nix builds work.
 
@@ -116,14 +116,14 @@ See [Testing Guide](testing.md) for test requirements and [Build System](build-s
 
 Before submitting:
 
-```bash
+<bash>
 # Clean build with all checks
 nix build .#agent        # Runs rustfmt, clippy, cargo test
 nix build .#orchestrator # Runs black, isort, ruff, pytest
 
 # Run full flake checks
 nix flake check
-```
+</bash>
 
 All checks must pass:
 - Code formatting (rustfmt, black, isort)
@@ -161,7 +161,7 @@ Follow [Coding Style Guide](../reference/coding-style.md) strictly:
 
 Key principles:
 
-```python
+<python>
 # Python: Use semantic types, not primitives
 @dataclass(frozen=True)
 class EnvironmentName:
@@ -171,7 +171,7 @@ class EnvironmentName:
 pub struct ValidatedConfig {
     api_key: String,
 }
-```
+</python>
 
 ## Documentation Standards
 

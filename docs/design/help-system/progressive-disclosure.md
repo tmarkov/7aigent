@@ -38,37 +38,41 @@ Commands:
     View a section of a file using regex patterns to define boundaries.
     Patterns are Python regex. Multiple matches can be navigated with next_match/prev_match.
     Example:
-      ```editor
+      <editor>
       view src/main.py /^def main/ /^if __name__/
-      ```
+      
+</editor>
 
   edit <file> <start>-<end>
     Replace lines with new content. Lines must be visible in a view.
     Content is provided on subsequent lines after the command.
     Example:
-      ```editor
+      <editor>
       edit src/main.py 45-50
       def process(verbose=False):
           if not verbose:
               return
-      ```
+      
+</editor>
 
   search "<pattern>" <glob>
     Find all occurrences of pattern in files matching glob.
     Returns filepath:line_number for each match.
     Example:
-      ```editor
+      <editor>
       search "TODO" *.py
-      ```
+      
+</editor>
 
   create <file>
     Create a new file with initial content.
     Content is provided on subsequent lines after the command.
     Example:
-      ```editor
+      <editor>
       create new_file.py
       # New module
-      ```
+      
+</editor>
 
   close <id> - Close a view
   next_match <id> - Show next pattern match for a view
@@ -95,29 +99,32 @@ Commands:
     Replace lines with new content. Lines must be visible in a view.
     Content is provided on subsequent lines after the command.
     Example:
-      ```editor
+      <editor>
       edit src/main.py 45-50
       def process(verbose=False):
           if not verbose:
               return
-      ```
+      
+</editor>
 
   search "<pattern>" <glob>
     Find all occurrences of pattern in files matching glob.
     Returns filepath:line_number for each match.
     Example:
-      ```editor
+      <editor>
       search "TODO" *.py
-      ```
+      
+</editor>
 
   create <file>
     Create a new file with initial content.
     Content is provided on subsequent lines after the command.
     Example:
-      ```editor
+      <editor>
       create new_file.py
       # New module
-      ```
+      
+</editor>
 
   close <id> - Close a view
   next_match <id> - Show next pattern match for a view
@@ -149,10 +156,11 @@ Commands:
     Create a new file with initial content.
     Content is provided on subsequent lines after the command.
     Example:
-      ```editor
+      <editor>
       create new_file.py
       # New module
-      ```
+      
+</editor>
 
   close <id> - Close a view
   next_match <id> - Show next pattern match for a view
@@ -199,10 +207,10 @@ Error recovery help appears in **response output**, not on screen.
 ### Example: Edit Without View
 
 **Agent command**:
-```editor
+<editor>
 edit src/main.py 45-50
 new content
-```
+</editor>
 
 **Response** (success=False):
 ```
@@ -254,21 +262,22 @@ Commands:
 ### Decision: Example Format
 
 **Authors provide raw command text**:
-```python
+<python>
 @command(
     signature="edit <file> <start>-<end>",
     description="Replace lines...",
     example="edit src/main.py 45-50\n    new code"  # Raw
 )
-```
+</python>
 
 **Framework wraps in markdown**:
 ```
     Example:
-      ```editor
+      <editor>
       edit src/main.py 45-50
           new code
-      ```
+      
+</editor>
 ```
 
 **Rationale**:
@@ -280,7 +289,7 @@ Commands:
 
 The progressive disclosure logic is implemented in `DeclarativeEnvironment.get_screen()`:
 
-```python
+<python>
 for cmd_name in sorted(self._commands.keys()):
     method, metadata = self._commands[cmd_name]
     sig = metadata['signature']
@@ -294,12 +303,12 @@ for cmd_name in sorted(self._commands.keys()):
     else:
         # LONG: Unused command
         commands_help.append(format_long_help(sig, desc, example))
-```
+</python>
 
 Usage tracking happens in `handle_command()`:
-```python
+<python>
 self._command_usage.add(cmd_name)
-```
+</python>
 
 ## Related Documents
 

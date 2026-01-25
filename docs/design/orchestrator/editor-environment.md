@@ -12,7 +12,7 @@
 
 ## Command format
 
-```editor
+<editor>
 view <filepath> /<start_pattern>/ /<end_pattern>/ [<label>]
 edit <filepath> <start_line>-<end_line>
 <new content on subsequent lines>
@@ -22,7 +22,7 @@ create <filepath>
 close <view_id>
 next_match <view_id>
 prev_match <view_id>
-```
+</editor>
 
 **Multi-line command parsing**: For `edit` and `create` commands, the first line contains the command and parameters. All subsequent lines are treated as content to write.
 

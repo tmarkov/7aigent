@@ -160,12 +160,12 @@ Implement the bubblewrap-based sandbox system designed in `docs/design/sandbox/`
 - [x] Test 8: Verify screen command returns current state
 
 **Running tests**:
-```bash
+<bash>
 # Tests automatically run during sandbox build
 nix build .#sandbox
 
 # Build output shows: "Running sandbox integration tests..." followed by pytest results
-```
+</bash>
 
 **Test structure**:
 - `sandbox/tests/__init__.py` - Test package marker

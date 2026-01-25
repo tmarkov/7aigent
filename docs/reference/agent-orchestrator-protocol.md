@@ -284,7 +284,7 @@ Environments should show relevant state:
 
 ### Reading Messages
 
-```python
+<python>
 import json
 import sys
 
@@ -294,11 +294,11 @@ def read_message() -> dict | None:
     if not line:  # EOF
         return None
     return json.loads(line)
-```
+</python>
 
 ### Sending Messages
 
-```python
+<python>
 def send_response(response: CommandResponse, screen: Screen) -> None:
     """Send response to stdout."""
     message = {
@@ -318,7 +318,7 @@ def send_response(response: CommandResponse, screen: Screen) -> None:
     json.dump(message, sys.stdout)
     sys.stdout.write('\n')
     sys.stdout.flush()
-```
+</python>
 
 ### Shutdown
 

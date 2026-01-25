@@ -8,7 +8,7 @@ The orchestrator is the main process inside the container. It manages environmen
 
 The orchestrator runs a simple request-response loop:
 
-```python
+<python>
 def main():
     """Main orchestrator entry point."""
     # Load environments
@@ -32,13 +32,13 @@ def main():
 
     # Cleanup
     shutdown_all_environments(environments)
-```
+</python>
 
 ### Environment Loading
 
 The orchestrator loads both built-in and custom environments:
 
-```python
+<python>
 def load_all_environments(project_dir: Path) -> dict[str, Environment]:
     """Load built-in and ad-hoc environments."""
     environments = {}
@@ -62,7 +62,7 @@ def load_all_environments(project_dir: Path) -> dict[str, Environment]:
                 environments[name] = env_class()
 
     return environments
-```
+</python>
 
 See [Environment Contract](../../reference/environment-protocol.md) for validation details.
 
@@ -70,7 +70,7 @@ See [Environment Contract](../../reference/environment-protocol.md) for validati
 
 Commands are routed to the appropriate environment:
 
-```python
+<python>
 def execute_command(
     cmd: OrchestratorCommand,
     environments: dict[str, Environment]
@@ -94,13 +94,13 @@ def execute_command(
             output=f"Environment error: {traceback.format_exc()}",
             success=False
         )
-```
+</python>
 
 ### Screen Collection
 
 The "screen" shows current state of all environments:
 
-```python
+<python>
 def collect_screen_updates(environments: dict[str, Environment]) -> dict[str, ScreenSection]:
     """Collect screen updates from all environments."""
     screen = {}
@@ -116,7 +116,7 @@ def collect_screen_updates(environments: dict[str, Environment]) -> dict[str, Sc
             )
 
     return screen
-```
+</python>
 
 ## Module Structure
 

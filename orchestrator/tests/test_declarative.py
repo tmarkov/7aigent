@@ -174,7 +174,7 @@ def test_get_screen_initial_state():
     assert "increment" in content
     assert "Increment the counter by one." in content
     assert "Example:" in content
-    assert "```simple" in content
+    assert "<simple>" in content
 
     # Should include LONG help for reset (unused)
     assert "reset" in content
@@ -222,7 +222,7 @@ def test_get_screen_all_commands_used():
 
     # Should NOT include examples
     assert "Example:" not in content
-    assert "```simple" not in content
+    assert "<simple>" not in content
 
 
 def test_get_screen_uses_class_docstring_when_no_get_state_display():
@@ -244,7 +244,7 @@ def test_get_screen_environment_name_in_code_fence():
     content = screen.content
 
     # Should use "timer" (from TimerEnvironment)
-    assert "```timer" in content
+    assert "<timer>" in content
 
 
 def test_multiple_environments_separate_usage_tracking():
@@ -262,7 +262,7 @@ def test_multiple_environments_separate_usage_tracking():
     # env2 should still show LONG help for increment
     screen2 = env2.get_screen()
     assert "Example:" in screen2.content
-    assert "```simple" in screen2.content
+    assert "<simple>" in screen2.content
 
 
 def test_shutdown_default_implementation():

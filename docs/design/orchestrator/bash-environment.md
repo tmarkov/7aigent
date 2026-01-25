@@ -11,9 +11,9 @@
 
 ## Command format
 
-```bash
+<bash>
 any bash command
-```
+</bash>
 
 ## Response format
 

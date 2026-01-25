@@ -18,7 +18,7 @@ This document defines the coding conventions and style guidelines for the 7aigen
 
 Define new types for each semantically different use case using dataclasses:
 
-```python
+<python>
 from dataclasses import dataclass
 
 # Good: Semantic types with validation
@@ -41,13 +41,13 @@ def execute_command(env: str, cmd: str) -> str:
 # Good: Clear semantics
 def execute_command(env: EnvironmentName, cmd: CommandText) -> CommandResponse:
     ...
-```
+</python>
 
 #### Immutability
 
 **Default to immutable data structures:**
 
-```python
+<python>
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 import types
@@ -72,14 +72,14 @@ class ScreenState:
 # Use Sequence instead of list for immutable collections
 def process_commands(commands: Sequence[CommandText]) -> None:
     ...
-```
+</python>
 
 **Exceptions to immutability:**
 - Environment classes are stateful and mutable by design
 - Internal buffers and caches where performance is critical
 - Mark mutable classes clearly in documentation
 
-```python
+<python>
 class BashEnvironment:
     """
     Stateful environment managing a bash process.
@@ -90,11 +90,11 @@ class BashEnvironment:
     def __init__(self):
         self._process = None
         self._current_directory = Path.cwd()
-```
+</python>
 
 #### Type Hints Requirements
 
-```python
+<python>
 from typing import Protocol, runtime_checkable
 
 # All function signatures must have complete type hints
@@ -117,7 +117,7 @@ T = TypeVar('T')
 class Result(Generic[T]):
     value: T | None
     error: str | None
-```
+</python>
 
 ### Testing Strategy
 
@@ -125,7 +125,7 @@ class Result(Generic[T]):
 
 **Use Hypothesis for property-based testing of public APIs:**
 
-```python
+<python>
 from hypothesis import given, strategies as st
 
 @dataclass(frozen=True)
@@ -147,11 +147,11 @@ def test_valid_identifiers_accepted(identifier: str):
 def test_invalid_identifiers_rejected(invalid: str):
     with pytest.raises(ValueError):
         EnvironmentName(invalid)
-```
+</python>
 
 **Use specific examples for corner cases and complex scenarios:**
 
-```python
+<python>
 class TestEnvironmentValidation:
     """Test environment module validation with specific examples"""
 
@@ -184,7 +184,7 @@ class TestEnvironmentValidation:
 
         errors = validate_environment(module)
         assert errors == []
-```
+</python>
 
 #### Testing Guidelines
 
@@ -198,7 +198,7 @@ class TestEnvironmentValidation:
 
 #### Explicit Over Implicit
 
-```python
+<python>
 # No wildcard imports
 # Bad:
 from typing import *
@@ -226,11 +226,11 @@ class ExtendedModule:
 
     def new_method(self):
         ...
-```
+</python>
 
 #### Error Handling
 
-```python
+<python>
 # Define custom exception classes
 class EnvironmentError(Exception):
     """Base exception for environment-related errors"""
@@ -270,11 +270,11 @@ def load_environment(name: EnvironmentName) -> Environment:
         ImportError: If module has import errors
     """
     ...
-```
+</python>
 
 #### Documentation
 
-```python
+<python>
 def process_command(
     env: EnvironmentName,
     cmd: CommandText
@@ -306,7 +306,7 @@ def process_command(
         'hello\\n'
     """
     ...
-```
+</python>
 
 **Documentation requirements:**
 - All public functions and classes must have docstrings
@@ -316,7 +316,7 @@ def process_command(
 
 #### Module Structure
 
-```python
+<python>
 # Standard import order (enforced by isort):
 # 1. Standard library imports
 import types
@@ -346,7 +346,7 @@ class EnvironmentName:
 @dataclass(frozen=True)
 class CommandText:
     ...
-```
+</python>
 
 ### Tooling
 

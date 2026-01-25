@@ -13,13 +13,13 @@ The agent sends commands to the orchestrator, which executes them and returns re
 
 ## Quick Start
 
-```bash
+<bash>
 # Build the agent
 nix build .#agent
 
 # Run the agent
 ./result/bin/7aigent "your task here"
-```
+</bash>
 
 ## How It Works
 

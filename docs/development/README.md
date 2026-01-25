@@ -13,17 +13,17 @@ Resources for contributors to the 7aigent project.
 
 ### Development Environment
 
-```bash
+<bash>
 # Enter development shell (has all tools)
 nix develop
 
 # Or use direnv for automatic activation
 direnv allow
-```
+</bash>
 
 ### Building and Testing
 
-```bash
+<bash>
 # Build agent (runs rustfmt, clippy, cargo test)
 nix build .#agent
 
@@ -32,17 +32,17 @@ nix build .#orchestrator
 
 # Run all checks
 nix flake check
-```
+</bash>
 
 ### Pre-commit Hooks
 
-```bash
+<bash>
 # Install hooks (formatters and linters)
 pre-commit install
 
 # Run manually
 pre-commit run --all-files
-```
+</bash>
 
 ## Project Philosophy
 
