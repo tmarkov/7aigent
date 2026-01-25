@@ -1,7 +1,7 @@
 //! Session error types for 7aigent.
 //!
 //! Sessions are now self-contained and handle their own persistence.
-//! See `types::Session` for session creation, loading, and saving.
+//! See `types::SessionMetadata` for session creation, loading, and saving.
 
 use crate::types::SessionId;
 use thiserror::Error;

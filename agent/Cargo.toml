@@ -37,6 +37,9 @@ regex = "1.11"
 walkdir = "2.5"
 ignore = "0.4"
 
+# File locking for session ID allocation
+fs2 = "0.4"
+
 [dev-dependencies]
 # Testing
 tempfile = "3.14"

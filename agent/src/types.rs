@@ -1,37 +1,30 @@
 //! Core type definitions for the 7aigent agent.
 
 use chrono::{DateTime, Utc};
+use fs2::FileExt;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
-use uuid::Uuid;
+use std::fs::OpenOptions;
+use std::io::{BufRead, BufReader, Seek, Write};
+use std::path::{Path, PathBuf};
 
-/// Unique identifier for a session (strong newtype)
+use crate::llm::{CompletionRequest, CompletionResponse};
+
+/// Unique identifier for a session (sequential u64)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct SessionId(Uuid);
+pub struct SessionId(u64);
 
 impl SessionId {
-    /// Create a new random session ID
-    pub fn new() -> Self {
-        Self(Uuid::new_v4())
+    /// Create a session ID from a u64
+    pub fn from_u64(id: u64) -> Self {
+        Self(id)
     }
 
-    /// Get the underlying UUID
-    pub fn as_uuid(&self) -> &Uuid {
-        &self.0
-    }
-
-    /// Parse from a string
-    pub fn parse_str(s: &str) -> Result<Self, uuid::Error> {
-        Uuid::parse_str(s).map(SessionId)
-    }
-}
-
-impl Default for SessionId {
-    fn default() -> Self {
-        Self::new()
+    /// Get the underlying u64
+    pub fn as_u64(&self) -> u64 {
+        self.0
     }
 }
 
@@ -41,23 +34,11 @@ impl std::fmt::Display for SessionId {
     }
 }
 
-impl From<Uuid> for SessionId {
-    fn from(uuid: Uuid) -> Self {
-        SessionId(uuid)
-    }
-}
-
-impl From<SessionId> for Uuid {
-    fn from(id: SessionId) -> Self {
-        id.0
-    }
-}
-
 impl std::str::FromStr for SessionId {
-    type Err = uuid::Error;
+    type Err = std::num::ParseIntError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Uuid::parse_str(s).map(SessionId)
+        Ok(SessionId(s.parse()?))
     }
 }
 
@@ -75,9 +56,25 @@ pub enum SessionStatus {
     Failed,
 }
 
-/// Complete session state (persisted to disk)
+/// Token usage statistics
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct TokenUsage {
+    pub prompt_tokens: usize,
+    pub completion_tokens: usize,
+    pub total_tokens: usize,
+}
+
+impl std::ops::AddAssign for TokenUsage {
+    fn add_assign(&mut self, rhs: Self) {
+        self.prompt_tokens += rhs.prompt_tokens;
+        self.completion_tokens += rhs.completion_tokens;
+        self.total_tokens += rhs.total_tokens;
+    }
+}
+
+/// Session metadata (persisted to session.json)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Session {
+pub struct SessionMetadata {
     /// Unique session ID
     pub id: SessionId,
 
@@ -100,80 +97,40 @@ pub struct Session {
     pub total_cost: Decimal,
 
     /// Token usage statistics
-    pub token_usage: TokenUsage,
+    pub total_tokens: TokenUsage,
 
-    /// Number of steps completed
-    pub step_count: usize,
+    /// Number of LLM calls made
+    pub llm_call_count: usize,
 
-    /// LLM configuration snapshot (for resume, recorded on first LLM call)
-    pub llm_config: Option<LlmConfigSnapshot>,
+    /// Number of commands executed
+    pub command_count: usize,
 }
 
-/// LLM configuration snapshot (stored in session for resume)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LlmConfigSnapshot {
-    pub endpoint: String,
-    pub model: String,
-}
-
-impl Session {
-    /// Create a new session
-    pub fn create(project_dir: PathBuf, task: String) -> crate::session::Result<Self> {
-        use crate::session::SessionError;
-
-        let session_id = SessionId::new();
-        let session_dir = project_dir
+impl SessionMetadata {
+    /// Get the session directory path
+    pub fn session_dir(&self) -> PathBuf {
+        self.project_dir
             .join(".7aigent")
             .join("sessions")
-            .join(session_id.to_string());
-
-        // Check if session already exists
-        if session_dir.exists() {
-            return Err(SessionError::AlreadyExists(session_id));
-        }
-
-        // Create session directory
-        std::fs::create_dir_all(&session_dir)?;
-
-        let now = Utc::now();
-        let session = Session {
-            id: session_id,
-            project_dir: project_dir.clone(),
-            task,
-            created_at: now,
-            updated_at: now,
-            status: SessionStatus::Active,
-            total_cost: Decimal::ZERO,
-            token_usage: Default::default(),
-            step_count: 0,
-            llm_config: None,
-        };
-
-        // Save initial metadata and create empty files
-        session.save_metadata()?;
-        std::fs::File::create(session_dir.join("history.jsonl"))?;
-        std::fs::File::create(session_dir.join("screens.jsonl"))?;
-
-        // Initialize cost tracking
-        let cost_data = serde_json::json!({
-            "total": session.total_cost,
-            "token_usage": session.token_usage,
-            "per_step": []
-        });
-        let mut cost_file =
-            std::io::BufWriter::new(std::fs::File::create(session_dir.join("cost.json"))?);
-        serde_json::to_writer_pretty(&mut cost_file, &cost_data)?;
-        use std::io::Write;
-        cost_file.flush()?;
-
-        Ok(session)
+            .join(self.id.to_string())
     }
 
-    /// Load an existing session by ID
-    pub fn load(
-        project_dir: &std::path::Path,
-        session_id: SessionId,
-    ) -> crate::session::Result<Self> {
+    /// Save metadata to session.json
+    pub fn save(&self) -> crate::session::Result<()> {
+        let session_dir = self.session_dir();
+        std::fs::create_dir_all(&session_dir)?;
+
+        let metadata_path = session_dir.join("session.json");
+        let file = std::fs::File::create(metadata_path)?;
+        let mut writer = std::io::BufWriter::new(file);
+        serde_json::to_writer_pretty(&mut writer, self)?;
+        writer.flush()?;
+
+        Ok(())
+    }
+
+    /// Load metadata from session.json
+    pub fn load(project_dir: &Path, session_id: SessionId) -> crate::session::Result<Self> {
         use crate::session::SessionError;
 
         let session_dir = project_dir
@@ -185,147 +142,290 @@ impl Session {
             return Err(SessionError::NotFound(session_id));
         }
 
-        let metadata_path = session_dir.join("metadata.json");
-        let metadata_file = std::fs::File::open(metadata_path)?;
-        let session: Session = serde_json::from_reader(metadata_file)?;
+        let metadata_path = session_dir.join("session.json");
+        let file = std::fs::File::open(metadata_path)?;
+        let session: SessionMetadata = serde_json::from_reader(file)?;
 
         Ok(session)
     }
 
-    /// Get the session directory path
-    fn session_dir(&self) -> PathBuf {
-        self.project_dir
+    /// Append an event to the events.jsonl file
+    pub fn append_event(&mut self, event: &Event) -> crate::session::Result<()> {
+        let session_dir = self.session_dir();
+        let events_path = session_dir.join("events.jsonl");
+
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(events_path)?;
+
+        serde_json::to_writer(&mut file, event)?;
+        file.write_all(b"\n")?;
+        file.flush()?;
+
+        // Update metadata counters
+        self.updated_at = Utc::now();
+        match event {
+            Event::LlmCall { response, .. } => {
+                self.llm_call_count += 1;
+                self.total_cost += response.cost;
+                self.total_tokens.prompt_tokens += response.usage.prompt_tokens as usize;
+                self.total_tokens.completion_tokens += response.usage.completion_tokens as usize;
+                self.total_tokens.total_tokens += response.usage.total_tokens as usize;
+            }
+            Event::CommandExecution { .. } => {
+                self.command_count += 1;
+            }
+            Event::SessionEnd { status, .. } => {
+                self.status = *status;
+            }
+            _ => {}
+        }
+
+        // Save updated metadata
+        self.save()?;
+
+        Ok(())
+    }
+
+    /// Load all events from events.jsonl
+    pub fn load_events(&self) -> crate::session::Result<Vec<Event>> {
+        let session_dir = self.session_dir();
+        let events_path = session_dir.join("events.jsonl");
+
+        if !events_path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let file = std::fs::File::open(events_path)?;
+        let reader = BufReader::new(file);
+        let mut events = Vec::new();
+
+        for line in reader.lines() {
+            let line = line?;
+            if !line.trim().is_empty() {
+                let event: Event = serde_json::from_str(&line)?;
+                events.push(event);
+            }
+        }
+
+        Ok(events)
+    }
+}
+
+/// Purpose of an LLM call
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LlmCallPurpose {
+    /// Finding overview file during initialization
+    Initialization,
+    /// Regular agent step in main loop
+    MainLoop,
+}
+
+/// Screen state at a specific point in time
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScreenState {
+    /// When this screen was captured
+    pub timestamp: DateTime<Utc>,
+
+    /// Screen sections by environment name
+    pub sections: HashMap<String, ScreenSection>,
+}
+
+/// Content for one environment's screen section
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScreenSection {
+    pub content: String,
+    pub max_lines: usize,
+}
+
+/// Events that occur during a session
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Event {
+    SystemPrompt {
+        timestamp: DateTime<Utc>,
+        content: String,
+    },
+    TaskMessage {
+        timestamp: DateTime<Utc>,
+        content: String,
+    },
+    LlmCall {
+        timestamp: DateTime<Utc>,
+        call_id: usize,
+        purpose: LlmCallPurpose,
+        request: CompletionRequest,
+        response: CompletionResponse,
+    },
+    CommandExecution {
+        timestamp: DateTime<Utc>,
+        environment: String,
+        command: String,
+        output: String,
+        success: bool,
+        screen: ScreenState,
+    },
+    SessionEnd {
+        timestamp: DateTime<Utc>,
+        status: SessionStatus,
+        reason: Option<String>,
+    },
+}
+
+impl Event {
+    pub fn timestamp(&self) -> DateTime<Utc> {
+        match self {
+            Event::SystemPrompt { timestamp, .. } => *timestamp,
+            Event::TaskMessage { timestamp, .. } => *timestamp,
+            Event::LlmCall { timestamp, .. } => *timestamp,
+            Event::CommandExecution { timestamp, .. } => *timestamp,
+            Event::SessionEnd { timestamp, .. } => *timestamp,
+        }
+    }
+}
+
+/// Session manager for allocating sequential IDs
+pub struct SessionManager {
+    project_dir: PathBuf,
+}
+
+impl SessionManager {
+    pub fn new(project_dir: PathBuf) -> Self {
+        Self { project_dir }
+    }
+
+    /// Allocate a new sequential session ID
+    pub fn allocate_id(&self) -> crate::session::Result<SessionId> {
+        let base_dir = self.project_dir.join(".7aigent");
+        std::fs::create_dir_all(&base_dir)?;
+
+        let counter_path = base_dir.join("next_session_id");
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&counter_path)?;
+
+        // Lock file exclusively
+        file.lock_exclusive()?;
+
+        // Read current ID or default to 1
+        let current_id = if file.metadata()?.len() == 0 {
+            1u64
+        } else {
+            let mut contents = String::new();
+            use std::io::Read;
+            file.read_to_string(&mut contents)?;
+            contents.trim().parse().unwrap_or(1)
+        };
+
+        // Write next ID
+        let next_id = current_id + 1;
+        file.set_len(0)?; // Truncate
+        file.seek(std::io::SeekFrom::Start(0))?;
+        write!(file, "{}\n", next_id)?;
+        file.flush()?;
+
+        // Unlock file
+        file.unlock()?;
+
+        Ok(SessionId(current_id))
+    }
+
+    /// Create a new session with allocated ID
+    pub fn create_session(&self, task: String) -> crate::session::Result<SessionMetadata> {
+        let session_id = self.allocate_id()?;
+        let session_dir = self
+            .project_dir
             .join(".7aigent")
             .join("sessions")
-            .join(self.id.to_string())
+            .join(session_id.to_string());
+
+        // Create session directory
+        std::fs::create_dir_all(&session_dir)?;
+
+        let now = Utc::now();
+        let metadata = SessionMetadata {
+            id: session_id,
+            project_dir: self.project_dir.clone(),
+            task,
+            created_at: now,
+            updated_at: now,
+            status: SessionStatus::Active,
+            total_cost: Decimal::ZERO,
+            total_tokens: Default::default(),
+            llm_call_count: 0,
+            command_count: 0,
+        };
+
+        // Save initial metadata and create empty events file
+        metadata.save()?;
+        std::fs::File::create(session_dir.join("events.jsonl"))?;
+
+        Ok(metadata)
     }
 
-    /// Save session metadata
-    pub fn save_metadata(&self) -> crate::session::Result<()> {
-        let session_dir = self.session_dir();
-        let metadata_path = session_dir.join("metadata.json");
+    /// List all sessions in the project
+    pub fn list_sessions(&self) -> crate::session::Result<Vec<SessionMetadata>> {
+        let sessions_dir = self.project_dir.join(".7aigent").join("sessions");
 
-        let mut file = std::io::BufWriter::new(std::fs::File::create(metadata_path)?);
-        serde_json::to_writer_pretty(&mut file, self)?;
-        use std::io::Write;
-        file.flush()?;
-
-        Ok(())
-    }
-
-    /// Save a complete step (message, screen, and cost update)
-    pub fn save_step(&self, message: &Message, screen: &ScreenState) -> crate::session::Result<()> {
-        let session_dir = self.session_dir();
-
-        // Append message to history
-        let history_path = session_dir.join("history.jsonl");
-        let mut history_file = std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(history_path)?;
-        serde_json::to_writer(&mut history_file, message)?;
-        use std::io::Write;
-        writeln!(history_file)?;
-
-        // Append screen to screens
-        let screens_path = session_dir.join("screens.jsonl");
-        let mut screens_file = std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(screens_path)?;
-        serde_json::to_writer(&mut screens_file, screen)?;
-        writeln!(screens_file)?;
-
-        // Update metadata (contains updated cost, step_count, etc.)
-        self.save_metadata()?;
-
-        // Update cost tracking
-        let cost_path = session_dir.join("cost.json");
-        let cost_file = std::fs::File::open(&cost_path)?;
-        let mut cost_data: serde_json::Value = serde_json::from_reader(cost_file)?;
-
-        cost_data["total"] = serde_json::json!(self.total_cost);
-        cost_data["token_usage"] = serde_json::to_value(self.token_usage)?;
-
-        let mut file = std::io::BufWriter::new(std::fs::File::create(cost_path)?);
-        serde_json::to_writer_pretty(&mut file, &cost_data)?;
-        file.flush()?;
-
-        Ok(())
-    }
-
-    /// Record LLM configuration (called on first LLM use)
-    pub fn record_llm_config(&mut self, snapshot: LlmConfigSnapshot) -> crate::session::Result<()> {
-        self.llm_config = Some(snapshot);
-        self.save_metadata()
-    }
-
-    /// Load conversation history for this session
-    pub fn load_history(&self) -> crate::session::Result<Vec<Message>> {
-        let history_path = self.session_dir().join("history.jsonl");
-
-        if !history_path.exists() {
+        if !sessions_dir.exists() {
             return Ok(Vec::new());
         }
 
-        let file = std::fs::File::open(history_path)?;
-        let reader = std::io::BufReader::new(file);
-        let mut messages = Vec::new();
+        let mut sessions = Vec::new();
 
-        use std::io::BufRead;
-        for line in reader.lines() {
-            let line = line?;
-            if !line.trim().is_empty() {
-                let message: Message = serde_json::from_str(&line)?;
-                messages.push(message);
+        for entry in std::fs::read_dir(sessions_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+
+            if path.is_dir() {
+                // Try to parse directory name as session ID
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    if let Ok(session_id) = name.parse::<u64>() {
+                        if let Ok(session) =
+                            SessionMetadata::load(&self.project_dir, SessionId(session_id))
+                        {
+                            sessions.push(session);
+                        }
+                    }
+                }
             }
         }
 
-        Ok(messages)
-    }
+        // Sort by ID (which is creation order)
+        sessions.sort_by_key(|s| s.id.0);
 
-    /// Load screen states for this session
-    pub fn load_screens(&self) -> crate::session::Result<Vec<ScreenState>> {
-        let screens_path = self.session_dir().join("screens.jsonl");
-
-        if !screens_path.exists() {
-            return Ok(Vec::new());
-        }
-
-        let file = std::fs::File::open(screens_path)?;
-        let reader = std::io::BufReader::new(file);
-        let mut screens = Vec::new();
-
-        use std::io::BufRead;
-        for line in reader.lines() {
-            let line = line?;
-            if !line.trim().is_empty() {
-                let screen: ScreenState = serde_json::from_str(&line)?;
-                screens.push(screen);
-            }
-        }
-
-        Ok(screens)
+        Ok(sessions)
     }
 }
 
-/// Token usage statistics
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
-pub struct TokenUsage {
-    pub prompt_tokens: usize,
-    pub completion_tokens: usize,
-    pub total_tokens: usize,
+/// Command to execute in orchestrator
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Command {
+    /// Environment name (bash, python, editor, etc.)
+    pub env: String,
+
+    /// Command text to execute
+    pub command: String,
 }
 
-impl std::ops::AddAssign for TokenUsage {
-    fn add_assign(&mut self, rhs: Self) {
-        self.prompt_tokens += rhs.prompt_tokens;
-        self.completion_tokens += rhs.completion_tokens;
-        self.total_tokens += rhs.total_tokens;
-    }
+/// Response from executing a command
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandResponse {
+    /// Command output
+    pub output: String,
+
+    /// Whether command succeeded
+    pub success: bool,
 }
 
-/// Message role in LLM conversation
+// Legacy types for backwards compatibility during transition
+// These will be removed once agent.rs is updated
+
+/// Message role in LLM conversation (DEPRECATED - use Event instead)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MessageRole {
@@ -334,7 +434,7 @@ pub enum MessageRole {
     Assistant,
 }
 
-/// A single message in the conversation history
+/// A single message in the conversation history (DEPRECATED - use Event instead)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub role: MessageRole,
@@ -368,49 +468,72 @@ impl Message {
     }
 }
 
-/// Screen state at a specific step
+/// Old Session type (DEPRECATED - use SessionMetadata instead)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScreenState {
-    /// Step number
-    pub step: usize,
-
-    /// When this screen was captured
-    pub timestamp: DateTime<Utc>,
-
-    /// Screen sections by environment name
-    pub sections: HashMap<String, ScreenSection>,
+pub struct Session {
+    pub id: SessionId,
+    pub project_dir: PathBuf,
+    pub task: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub status: SessionStatus,
+    pub total_cost: Decimal,
+    pub token_usage: TokenUsage,
+    pub step_count: usize,
+    pub llm_config: Option<LlmConfigSnapshot>,
 }
 
-/// Content for one environment's screen section
+/// LLM configuration snapshot (stored in session for resume)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScreenSection {
-    pub content: String,
-    pub max_lines: usize,
+pub struct LlmConfigSnapshot {
+    pub endpoint: String,
+    pub model: String,
 }
 
-/// Command to execute in orchestrator
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Command {
-    /// Environment name (bash, python, editor, etc.)
-    pub env: String,
+// Stub implementations for Session to allow gradual migration
+impl Session {
+    pub fn save_metadata(&self) -> crate::session::Result<()> {
+        // Convert to SessionMetadata and save
+        let metadata = SessionMetadata {
+            id: self.id,
+            project_dir: self.project_dir.clone(),
+            task: self.task.clone(),
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            status: self.status,
+            total_cost: self.total_cost,
+            total_tokens: self.token_usage,
+            llm_call_count: 0, // Not tracked in old Session
+            command_count: 0,  // Not tracked in old Session
+        };
+        metadata.save()
+    }
 
-    /// Command text to execute
-    pub command: String,
-}
-
-/// Response from executing a command
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommandResponse {
-    /// Command output
-    pub output: String,
-
-    /// Whether command succeeded
-    pub success: bool,
+    pub fn save_step(
+        &self,
+        _message: &Message,
+        _screen: &ScreenState,
+    ) -> crate::session::Result<()> {
+        // Stub - will be replaced by event-based logging
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_session_id_display() {
+        let id = SessionId(42);
+        assert_eq!(id.to_string(), "42");
+    }
+
+    #[test]
+    fn test_session_id_parse() {
+        let id: SessionId = "123".parse().unwrap();
+        assert_eq!(id.as_u64(), 123);
+    }
 
     #[test]
     fn test_token_usage_add_assign() {
@@ -434,42 +557,12 @@ mod tests {
     }
 
     #[test]
-    fn test_message_creation() {
-        let msg = Message::system("Test system message".to_string());
-        assert_eq!(msg.role, MessageRole::System);
-        assert_eq!(msg.content, "Test system message");
-
-        let msg = Message::user("Test user message".to_string());
-        assert_eq!(msg.role, MessageRole::User);
-
-        let msg = Message::assistant("Test assistant message".to_string());
-        assert_eq!(msg.role, MessageRole::Assistant);
-    }
-
-    #[test]
-    fn test_session_serialization() {
-        let session = Session {
-            id: SessionId::new(),
-            project_dir: PathBuf::from("/test/project"),
-            task: "Test task".to_string(),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-            status: SessionStatus::Active,
-            total_cost: Decimal::new(123, 2), // $1.23
-            token_usage: TokenUsage::default(),
-            step_count: 5,
-            llm_config: Some(LlmConfigSnapshot {
-                endpoint: "https://api.openai.com/v1".to_string(),
-                model: "gpt-4".to_string(),
-            }),
+    fn test_event_timestamp() {
+        let now = Utc::now();
+        let event = Event::SystemPrompt {
+            timestamp: now,
+            content: "test".to_string(),
         };
-
-        // Test that it can be serialized and deserialized
-        let json = serde_json::to_string(&session).unwrap();
-        let deserialized: Session = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(session.id, deserialized.id);
-        assert_eq!(session.task, deserialized.task);
-        assert_eq!(session.status, deserialized.status);
+        assert_eq!(event.timestamp(), now);
     }
 }
