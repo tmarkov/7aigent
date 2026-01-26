@@ -78,3 +78,8 @@ These tasks are for designing and implementing the agent:
 ### Documentation
 
 - [ ] [18 - Refactor documentation structure](./18-refactor-documentation-structure.md) - Reorganize docs for better navigation
+
+### Testing
+
+- [x] [20 - Rework testing strategy](./20-rework-testing-strategy.md) - Replace superficial tests with substantive requirement-based tests
+- [ ] [21 - Fix orchestrator error handling](./21-fix-orchestrator-error-handling.md) - Return success: false for actual failures instead of always true
