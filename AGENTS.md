@@ -571,6 +571,33 @@ Only implement after design is solid.
 
 **How to avoid**: When you find contradictions, dig deeper. They often reveal fundamental design issues.
 
+### Pitfall: Bypassing Existing Abstractions
+
+**Symptom**: When adding new functionality, you hardcode special-case logic instead of using the general-purpose abstractions already in the codebase.
+
+**Also known as**: "Not eating your own dog food"
+
+**Example**: We had a general command processing pipeline (parse commands from text → execute each command → save events). When adding a simulated initial message, we hardcoded specific `send_command()` calls instead of using the existing `parse_commands()` function and execution loop.
+
+**Why this is problematic**:
+- **Duplication**: The same logic exists in multiple places
+- **Inconsistency**: The parallel code paths can diverge over time
+- **Maintenance burden**: Bug fixes and improvements need to be applied in multiple places
+- **Missed benefits**: Improvements to the general abstraction don't benefit the special case
+- **False complexity**: Suggests the special case genuinely needs different treatment when it doesn't
+
+**How to avoid**:
+1. **Before implementing**: Ask "Is there already an abstraction that handles this?"
+2. **If yes**: Use it! The abstraction exists for a reason.
+3. **If it doesn't quite fit**: First try to extend the abstraction to handle the new case
+4. **Only bypass if**: The new case is genuinely a different problem domain
+
+**Related principles**:
+- **DRY (Don't Repeat Yourself)**: Avoid duplicating logic
+- **Dog-fooding**: Use your own abstractions to validate they work
+- **Single Responsibility**: Each piece of logic should live in one place
+- **Principle of Least Surprise**: Similar things should work similarly
+
 ---
 
 ## When You're Stuck
