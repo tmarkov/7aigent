@@ -247,36 +247,43 @@ impl<C: LlmClient> Agent<C> {
                 println!("{}", simulated_content);
                 println!();
 
-                // Execute the editor view command
-                println!("  [1] Executing editor command...");
-                self.container
-                    .send_command("editor", &format!("view {}", overview_file))
-                    .context("Failed to send initial view command")?;
+                // Parse commands from simulated message (same as regular LLM responses)
+                let commands = parse_commands(&simulated_content)
+                    .context("Failed to parse simulated message")?;
 
-                let (cmd_response, mut screen_state) = self
-                    .container
-                    .receive_response()
-                    .context("Failed to receive initial view response")?;
+                // Execute each command (same as main loop)
+                for (idx, cmd) in commands.iter().enumerate() {
+                    println!("  [{}] Executing {} command...", idx + 1, cmd.env);
 
-                // Print command output
-                println!();
-                println!("=== ORCHESTRATOR (editor) ===");
-                println!("{}", cmd_response.output);
-                println!();
+                    self.container
+                        .send_command(&cmd.env, &cmd.command)
+                        .context("Failed to send command to orchestrator")?;
 
-                // Update screen timestamp
-                screen_state.timestamp = Utc::now();
+                    let (cmd_response, mut screen_state) = self
+                        .container
+                        .receive_response()
+                        .context("Failed to receive response from orchestrator")?;
 
-                // Create and emit command execution event
-                let cmd_event = Event::CommandExecution {
-                    timestamp: Utc::now(),
-                    environment: "editor".to_string(),
-                    command: format!("view {}", overview_file),
-                    output: cmd_response.output,
-                    success: cmd_response.success,
-                    screen: screen_state,
-                };
-                self.session.append_event(&cmd_event)?;
+                    // Print command output
+                    println!();
+                    println!("=== ORCHESTRATOR ({}) ===", cmd.env);
+                    println!("{}", cmd_response.output);
+                    println!();
+
+                    // Update screen timestamp
+                    screen_state.timestamp = Utc::now();
+
+                    // Create and emit command execution event
+                    let cmd_event = Event::CommandExecution {
+                        timestamp: Utc::now(),
+                        environment: cmd.env.clone(),
+                        command: cmd.command.clone(),
+                        output: cmd_response.output,
+                        success: cmd_response.success,
+                        screen: screen_state,
+                    };
+                    self.session.append_event(&cmd_event)?;
+                }
 
                 println!("[Initialization] Complete. Starting main loop...");
                 println!();
@@ -515,12 +522,31 @@ impl<C: LlmClient> Agent<C> {
     /// Generate a simulated initial assistant message that views the overview file.
     ///
     /// This creates the appearance that the LLM has already taken a first step
-    /// by viewing a relevant overview file.
+    /// by viewing a relevant overview file. The message demonstrates proper LLM
+    /// behavior: reasoning about the situation, explaining the plan, and using
+    /// proper tool formatting.
+    ///
+    /// The approach varies based on file type:
+    /// - Markdown files (.md): Search for headings, then view by sections
+    /// - Other text files: View paragraphs (blank line to blank line)
+    /// - Empty string (no file): Fallback to ls command
     fn generate_simulated_message(file_path: &str) -> String {
-        format!(
-            "I can see the project structure and git status on screen. Let me start by viewing the overview documentation.\n\n```editor\nview {}\n```",
-            file_path
-        )
+        if file_path.is_empty() {
+            // Case 3: No overview file - use ls as fallback
+            "I can see the project structure and git status on screen. Since there's no obvious overview documentation file, let me list the directory contents to understand what we're working with:\n\n<bash>\nls -alh\n</bash>".to_string()
+        } else if file_path.ends_with(".md") {
+            // Case 1: Markdown file - search for headings and view by sections
+            format!(
+                "I can see the project structure and git status on screen. To understand what we're working with and address the task effectively, I should start by examining the overview documentation.\n\nLet me first find the structure of the markdown file by searching for section headers:\n\n<editor>\nsearch \"^#\\s\" {}\n</editor>\n\nNow let me view the sections to understand the content:\n\n<editor>\nview {} /^#\\s/ /^#\\s/\n</editor>",
+                file_path, file_path
+            )
+        } else {
+            // Case 2: Other text file - view by paragraphs (empty line to empty line)
+            format!(
+                "I can see the project structure and git status on screen. To understand what we're working with and address the task effectively, I should start by examining the overview documentation.\n\nLet me view the file content by paragraphs:\n\n<editor>\nview {} /^$|^/ /^$/\n</editor>",
+                file_path
+            )
+        }
     }
 }
 
@@ -654,15 +680,81 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_simulated_message() {
+    fn test_generate_simulated_message_markdown() {
         let message = Agent::<MockLlmClient>::generate_simulated_message("README.md");
 
+        // Should mention the file twice (once in search, once in view)
         assert!(message.contains("README.md"), "Should mention the file");
+
+        // Should contain two editor commands for markdown
         assert!(
-            message.contains("```editor"),
-            "Should contain editor code block"
+            message.matches("<editor>").count() == 2,
+            "Should contain two editor tags"
         );
-        assert!(message.contains("view"), "Should use view command");
+
+        // Should contain search command
+        assert!(message.contains("search"), "Should contain search command");
+        assert!(
+            message.contains("^#\\s"),
+            "Should search for section headers"
+        );
+
+        // Should contain view command
+        assert!(message.contains("view"), "Should contain view command");
+        assert!(
+            message.contains("/^#\\s/ /^#\\s/"),
+            "Should use section header patterns for view"
+        );
+
+        assert!(
+            message.contains("markdown file"),
+            "Should mention markdown file"
+        );
+    }
+
+    #[test]
+    fn test_generate_simulated_message_text() {
+        let message = Agent::<MockLlmClient>::generate_simulated_message("LICENSE");
+
+        // Should mention the file
+        assert!(message.contains("LICENSE"), "Should mention the file");
+
+        // Should contain one editor command for text files
+        assert!(
+            message.matches("<editor>").count() == 1,
+            "Should contain one editor tag"
+        );
+
+        // Should contain view command with paragraph patterns
+        assert!(message.contains("view"), "Should contain view command");
+        assert!(
+            message.contains("/^$|^/ /^$/"),
+            "Should use paragraph patterns for view"
+        );
+
+        assert!(
+            message.contains("paragraphs"),
+            "Should mention viewing by paragraphs"
+        );
+    }
+
+    #[test]
+    fn test_generate_simulated_message_no_file() {
+        let message = Agent::<MockLlmClient>::generate_simulated_message("");
+
+        // Should contain bash command
+        assert!(
+            message.matches("<bash>").count() == 1,
+            "Should contain one bash tag"
+        );
+
+        // Should contain ls command
+        assert!(message.contains("ls -alh"), "Should contain ls command");
+
+        assert!(
+            message.contains("no obvious overview"),
+            "Should mention lack of overview file"
+        );
     }
 
     #[test]
