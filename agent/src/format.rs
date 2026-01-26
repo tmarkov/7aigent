@@ -19,19 +19,24 @@ pub enum DisplayMode {
 
 /// Format an event for display
 pub fn format_event(event: &Event, mode: DisplayMode) -> String {
+    format_event_with_context(event, mode, false)
+}
+
+/// Format an event for display with optional context (prompt messages)
+pub fn format_event_with_context(event: &Event, mode: DisplayMode, show_context: bool) -> String {
     match mode {
         DisplayMode::Raw => {
             // Raw JSON output
             serde_json::to_string_pretty(event).unwrap_or_else(|e| format!("Error: {}", e))
         }
         DisplayMode::Runtime | DisplayMode::Inspect => {
-            format_event_pretty(event, mode == DisplayMode::Inspect)
+            format_event_pretty(event, mode == DisplayMode::Inspect, show_context)
         }
     }
 }
 
 /// Format an event in pretty (human-readable) mode
-fn format_event_pretty(event: &Event, include_timestamp: bool) -> String {
+fn format_event_pretty(event: &Event, include_timestamp: bool, show_context: bool) -> String {
     match event {
         Event::SystemPrompt { timestamp, content } => {
             let header = if include_timestamp {
@@ -53,8 +58,8 @@ fn format_event_pretty(event: &Event, include_timestamp: bool) -> String {
             timestamp,
             call_id,
             purpose,
+            request,
             response,
-            ..
         } => {
             let purpose_str = match purpose {
                 LlmCallPurpose::Initialization => " (Initialization)",
@@ -76,10 +81,41 @@ fn format_event_pretty(event: &Event, include_timestamp: bool) -> String {
                 )
             };
 
-            format!(
-                "{}\n\n=== ASSISTANT ===\n{}\n",
-                call_header, response.content
-            )
+            if show_context {
+                // Format with context (prompt messages)
+                let mut output = format!("{}\n\n", call_header);
+
+                // Add model info
+                output.push_str("=== MODEL INFO ===\n");
+                output.push_str(&format!("Model: {}\n", request.model));
+                if let Some(max_tokens) = request.max_tokens {
+                    output.push_str(&format!("Max tokens: {}\n", max_tokens));
+                }
+                if let Some(temperature) = request.temperature {
+                    output.push_str(&format!("Temperature: {}\n", temperature));
+                }
+
+                // Add prompt messages
+                output.push_str(&format!(
+                    "\n=== PROMPT ({} messages) ===\n",
+                    request.messages.len()
+                ));
+                for (idx, msg) in request.messages.iter().enumerate() {
+                    output.push_str(&format!("\n[{}] {} ---\n", idx, msg.role.to_uppercase()));
+                    output.push_str(&msg.content);
+                    output.push('\n');
+                }
+
+                // Add response
+                output.push_str(&format!("\n=== RESPONSE ===\n{}\n", response.content));
+                output
+            } else {
+                // Default: just show assistant response
+                format!(
+                    "{}\n\n=== ASSISTANT ===\n{}\n",
+                    call_header, response.content
+                )
+            }
         }
         Event::CommandExecution {
             timestamp,

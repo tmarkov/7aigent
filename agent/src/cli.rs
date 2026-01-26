@@ -58,6 +58,10 @@ pub enum Commands {
         /// List all LLM calls with IDs and costs
         #[arg(long)]
         list_calls: bool,
+
+        /// Show full context (prompt messages) for LLM calls
+        #[arg(long)]
+        context: bool,
     },
 
     /// Initialize a new project with a .7aigent.toml config file
@@ -155,11 +159,13 @@ mod tests {
                 call,
                 raw,
                 list_calls,
+                context,
             }) => {
                 assert_eq!(session_id, 42);
                 assert!(call.is_none());
                 assert!(!raw);
                 assert!(!list_calls);
+                assert!(!context);
             }
             _ => panic!("Expected Inspect command"),
         }
@@ -174,11 +180,13 @@ mod tests {
                 call,
                 raw,
                 list_calls,
+                context,
             }) => {
                 assert_eq!(session_id, 42);
                 assert_eq!(call, Some(0));
                 assert!(raw);
                 assert!(!list_calls);
+                assert!(!context);
             }
             _ => panic!("Expected Inspect command"),
         }
@@ -195,6 +203,24 @@ mod tests {
             }) => {
                 assert_eq!(session_id, 42);
                 assert!(list_calls);
+            }
+            _ => panic!("Expected Inspect command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_inspect_with_context() {
+        let cli = Cli::parse_from(["7aigent", "inspect", "42", "--call", "0", "--context"]);
+        match cli.command {
+            Some(Commands::Inspect {
+                session_id,
+                call,
+                context,
+                ..
+            }) => {
+                assert_eq!(session_id, 42);
+                assert_eq!(call, Some(0));
+                assert!(context);
             }
             _ => panic!("Expected Inspect command"),
         }

@@ -4,7 +4,9 @@ use agent::{
     cli::{Cli, Commands},
     config::ConfigLoader,
     container::ContainerManager,
-    format::{format_event, format_llm_call_list, format_session_summary, DisplayMode},
+    format::{
+        format_event_with_context, format_llm_call_list, format_session_summary, DisplayMode,
+    },
     llm::openai::OpenAiCompatibleClient,
     llm::retry::RetryClient,
     types::{Event, SessionId, SessionManager, SessionMetadata, SessionStatus},
@@ -39,8 +41,9 @@ async fn run() -> Result<()> {
             call,
             raw,
             list_calls,
+            context,
         }) => {
-            handle_inspect(&project_dir, session_id, call, raw, list_calls)?;
+            handle_inspect(&project_dir, session_id, call, raw, list_calls, context)?;
         }
         Some(Commands::Resume { session_id }) => {
             handle_resume(&project_dir, session_id).await?;
@@ -144,6 +147,7 @@ fn handle_inspect(
     call: Option<usize>,
     raw: bool,
     list_calls: bool,
+    context: bool,
 ) -> Result<()> {
     let session_id = SessionId::from_u64(session_id);
     let session = SessionMetadata::load(project_dir, session_id)?;
@@ -166,7 +170,7 @@ fn handle_inspect(
             } else {
                 DisplayMode::Inspect
             };
-            print!("{}", format_event(event, mode));
+            print!("{}", format_event_with_context(event, mode, context));
         } else {
             anyhow::bail!("LLM call {} not found", call_id);
         }
@@ -176,7 +180,10 @@ fn handle_inspect(
         println!("\n=== Conversation ===\n");
 
         for event in &events {
-            print!("{}", format_event(event, DisplayMode::Inspect));
+            print!(
+                "{}",
+                format_event_with_context(event, DisplayMode::Inspect, context)
+            );
         }
     }
 
