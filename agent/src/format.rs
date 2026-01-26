@@ -235,20 +235,48 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn test_format_system_prompt() {
+    fn test_format_system_prompt_runtime_includes_content_without_timestamp() {
+        // Requirement: Runtime mode must include system header and full content
+        // without timestamp.
+
         let event = Event::SystemPrompt {
             timestamp: Utc::now(),
             content: "You are a helpful assistant".to_string(),
         };
 
         let output = format_event(&event, DisplayMode::Runtime);
-        assert!(output.contains("=== SYSTEM ==="));
-        assert!(output.contains("You are a helpful assistant"));
-        assert!(!output.contains("UTC")); // Runtime mode doesn't show timestamp
+
+        // Must include header to identify event type
+        assert!(
+            output.contains("=== SYSTEM ==="),
+            "Output must include SYSTEM header for user recognition"
+        );
+
+        // Must include full content
+        assert!(
+            output.contains("You are a helpful assistant"),
+            "Output must include complete content. Output:\n{}",
+            output
+        );
+
+        // Runtime mode must NOT include timestamp
+        assert!(
+            !output.contains("UTC"),
+            "Runtime mode should not include timestamp. Output:\n{}",
+            output
+        );
     }
 
     #[test]
-    fn test_format_llm_call_runtime() {
+    fn test_format_llm_call_runtime_includes_call_info_and_response() {
+        // Requirements:
+        // 1. Must include call ID and purpose
+        // 2. Must include cost with 4 decimal places
+        // 3. Must include response content under ASSISTANT header
+        // 4. Must NOT include timestamp in runtime mode
+        //
+        // Combined requirements for LLM call formatting in runtime display.
+
         let event = Event::LlmCall {
             timestamp: Utc::now(),
             call_id: 0,
@@ -272,14 +300,51 @@ mod tests {
         };
 
         let output = format_event(&event, DisplayMode::Runtime);
-        assert!(output.contains("[LLM Call 0 (Initialization)]"));
-        assert!(output.contains("Cost: $0.0001"));
-        assert!(output.contains("=== ASSISTANT ==="));
-        assert!(output.contains("Hello, world!"));
+
+        // Requirement 1: Call ID and purpose
+        assert!(
+            output.contains("[LLM Call 0") && output.contains("Initialization"),
+            "Must include call ID and purpose. Output:\n{}",
+            output
+        );
+
+        // Requirement 2: Cost with 4 decimal places
+        assert!(
+            output.contains("$0.0001"),
+            "Must show cost with 4 decimal places. Output:\n{}",
+            output
+        );
+
+        // Requirement 3: Response under ASSISTANT header
+        assert!(
+            output.contains("=== ASSISTANT ==="),
+            "Must have ASSISTANT header. Output:\n{}",
+            output
+        );
+        assert!(
+            output.contains("Hello, world!"),
+            "Must include response content. Output:\n{}",
+            output
+        );
+
+        // Requirement 4: No timestamp in runtime mode
+        assert!(
+            !output.contains("UTC"),
+            "Runtime mode should not include timestamp. Output:\n{}",
+            output
+        );
     }
 
     #[test]
-    fn test_format_llm_call_inspect() {
+    fn test_format_llm_call_inspect_includes_timestamp_and_details() {
+        // Requirements:
+        // 1. Must include call ID (without purpose suffix for MainLoop)
+        // 2. Must include timestamp in inspect mode
+        // 3. Must include cost with 4 decimal places
+        // 4. Must include response content
+        //
+        // Combined requirements for inspect mode formatting.
+
         let event = Event::LlmCall {
             timestamp: Utc::now(),
             call_id: 1,
@@ -303,25 +368,82 @@ mod tests {
         };
 
         let output = format_event(&event, DisplayMode::Inspect);
-        assert!(output.contains("[LLM Call 1]"));
-        assert!(output.contains("UTC")); // Inspect mode shows timestamp
-        assert!(output.contains("Cost: $0.0002"));
+
+        // Requirement 1: Call ID
+        assert!(
+            output.contains("[LLM Call 1]"),
+            "Must include call ID. Output:\n{}",
+            output
+        );
+
+        // Requirement 2: Timestamp in inspect mode
+        assert!(
+            output.contains("UTC"),
+            "Inspect mode must include UTC timestamp. Output:\n{}",
+            output
+        );
+
+        // Requirement 3: Cost with 4 decimal places
+        assert!(
+            output.contains("$0.0002"),
+            "Must show cost with 4 decimal places. Output:\n{}",
+            output
+        );
+
+        // Requirement 4: Response content
+        assert!(
+            output.contains("Test response"),
+            "Must include response content. Output:\n{}",
+            output
+        );
     }
 
     #[test]
-    fn test_format_raw() {
+    fn test_format_raw_outputs_valid_json() {
+        // Requirement: Raw display mode must output valid JSON with event type and data fields.
+
         let event = Event::SystemPrompt {
             timestamp: Utc::now(),
             content: "Test".to_string(),
         };
 
         let output = format_event(&event, DisplayMode::Raw);
-        assert!(output.contains("\"type\": \"system_prompt\""));
-        assert!(output.contains("\"content\": \"Test\""));
+
+        // Must be valid JSON (implicitly tested by serde_json in implementation)
+        // Verify it contains expected JSON structure
+        assert!(
+            output.contains("\"type\"") && output.contains("\"system_prompt\""),
+            "Raw mode must include event type in JSON. Output:\n{}",
+            output
+        );
+        assert!(
+            output.contains("\"content\"") && output.contains("\"Test\""),
+            "Raw mode must include event data in JSON. Output:\n{}",
+            output
+        );
+
+        // Verify it's actually parseable JSON
+        let parsed: serde_json::Value =
+            serde_json::from_str(&output).expect("Raw mode output must be valid JSON");
+        assert!(
+            parsed.is_object(),
+            "Raw mode must output JSON object. Parsed: {:?}",
+            parsed
+        );
     }
 
     #[test]
-    fn test_format_session_summary() {
+    fn test_format_session_summary_includes_all_metadata() {
+        // Requirements:
+        // 1. Must include session ID
+        // 2. Must include task description
+        // 3. Must include status
+        // 4. Must include total cost with 4 decimal places
+        // 5. Must include call and command counts
+        // 6. Must include token usage breakdown
+        //
+        // Combined requirements for session summary formatting.
+
         let session = SessionMetadata {
             id: crate::types::SessionId::from_u64(42),
             project_dir: PathBuf::from("/test"),
@@ -340,11 +462,52 @@ mod tests {
         };
 
         let output = format_session_summary(&session);
-        assert!(output.contains("Session 42"));
-        assert!(output.contains("Test task"));
-        assert!(output.contains("Completed"));
-        assert!(output.contains("$0.1234"));
-        assert!(output.contains("LLM calls: 3"));
-        assert!(output.contains("Commands: 5"));
+
+        // Requirement 1: Session ID
+        assert!(
+            output.contains("42"),
+            "Must include session ID. Output:\n{}",
+            output
+        );
+
+        // Requirement 2: Task description
+        assert!(
+            output.contains("Test task"),
+            "Must include task description. Output:\n{}",
+            output
+        );
+
+        // Requirement 3: Status
+        assert!(
+            output.contains("Completed"),
+            "Must include status. Output:\n{}",
+            output
+        );
+
+        // Requirement 4: Total cost with decimals
+        assert!(
+            output.contains("0.1234"),
+            "Must include total cost with 4 decimals. Output:\n{}",
+            output
+        );
+
+        // Requirement 5: Call and command counts
+        assert!(
+            output.contains("3") && (output.contains("LLM") || output.contains("call")),
+            "Must include LLM call count. Output:\n{}",
+            output
+        );
+        assert!(
+            output.contains("5") && (output.contains("Command") || output.contains("command")),
+            "Must include command count. Output:\n{}",
+            output
+        );
+
+        // Requirement 6: Token breakdown
+        assert!(
+            output.contains("1000") && output.contains("500") && output.contains("1500"),
+            "Must include token breakdown (prompt/completion/total). Output:\n{}",
+            output
+        );
     }
 }

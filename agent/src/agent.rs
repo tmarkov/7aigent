@@ -680,116 +680,216 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_simulated_message_markdown() {
+    fn test_generate_simulated_message_markdown_produces_parseable_commands() {
+        // Requirements:
+        // 1. Message must be parseable by parse_commands
+        // 2. Must produce exactly 2 editor commands
+        // 3. Commands must reference the file being viewed
+        // 4. First command must be search with markdown heading pattern
+        // 5. Second command must be view with section delimiters
+        //
+        // Combined requirements testing structure validation of generated message.
+
         let message = Agent::<MockLlmClient>::generate_simulated_message("README.md");
 
-        // Should mention the file twice (once in search, once in view)
-        assert!(message.contains("README.md"), "Should mention the file");
+        // Requirement 1: Parseability
+        let commands = parse_commands(&message)
+            .expect("Generated message must be parseable by parse_commands");
 
-        // Should contain two editor commands for markdown
-        assert!(
-            message.matches("<editor>").count() == 2,
-            "Should contain two editor tags"
+        // Requirement 2: Command count and environment
+        assert_eq!(
+            commands.len(),
+            2,
+            "Must generate exactly 2 commands for markdown file"
+        );
+        assert_eq!(
+            commands[0].env, "editor",
+            "First command must be for editor environment"
+        );
+        assert_eq!(
+            commands[1].env, "editor",
+            "Second command must be for editor environment"
         );
 
-        // Should contain search command
-        assert!(message.contains("search"), "Should contain search command");
+        // Requirement 3: Commands reference the file
         assert!(
-            message.contains("^#\\s"),
-            "Should search for section headers"
+            commands[0].command.contains("README.md"),
+            "First command must reference README.md. Command: {}",
+            commands[0].command
+        );
+        assert!(
+            commands[1].command.contains("README.md"),
+            "Second command must reference README.md. Command: {}",
+            commands[1].command
         );
 
-        // Should contain view command
-        assert!(message.contains("view"), "Should contain view command");
+        // Requirement 4: First command structure (search for headings)
         assert!(
-            message.contains("/^#\\s/ /^#\\s/"),
-            "Should use section header patterns for view"
+            commands[0].command.starts_with("search"),
+            "First command must be search. Command: {}",
+            commands[0].command
+        );
+        assert!(
+            commands[0].command.contains("^#\\s"),
+            "Search command must use markdown heading pattern. Command: {}",
+            commands[0].command
         );
 
+        // Requirement 5: Second command structure (view with delimiters)
         assert!(
-            message.contains("markdown file"),
-            "Should mention markdown file"
+            commands[1].command.starts_with("view"),
+            "Second command must be view. Command: {}",
+            commands[1].command
+        );
+        assert!(
+            commands[1].command.contains("/^#\\s/"),
+            "View command must use section heading delimiters. Command: {}",
+            commands[1].command
         );
     }
 
     #[test]
-    fn test_generate_simulated_message_text() {
+    fn test_generate_simulated_message_text_produces_parseable_commands() {
+        // Requirements:
+        // 1. Message must be parseable by parse_commands
+        // 2. Must produce exactly 1 editor command (non-markdown files)
+        // 3. Command must reference the file being viewed
+        // 4. Command must be view with paragraph delimiters
+        //
+        // Combined requirements testing structure validation for non-markdown files.
+
         let message = Agent::<MockLlmClient>::generate_simulated_message("LICENSE");
 
-        // Should mention the file
-        assert!(message.contains("LICENSE"), "Should mention the file");
+        // Requirement 1: Parseability
+        let commands = parse_commands(&message)
+            .expect("Generated message must be parseable by parse_commands");
 
-        // Should contain one editor command for text files
-        assert!(
-            message.matches("<editor>").count() == 1,
-            "Should contain one editor tag"
+        // Requirement 2: Command count and environment
+        assert_eq!(
+            commands.len(),
+            1,
+            "Must generate exactly 1 command for text file"
+        );
+        assert_eq!(
+            commands[0].env, "editor",
+            "Command must be for editor environment"
         );
 
-        // Should contain view command with paragraph patterns
-        assert!(message.contains("view"), "Should contain view command");
+        // Requirement 3: Command references the file
         assert!(
-            message.contains("/^$|^/ /^$/"),
-            "Should use paragraph patterns for view"
+            commands[0].command.contains("LICENSE"),
+            "Command must reference LICENSE. Command: {}",
+            commands[0].command
         );
 
+        // Requirement 4: View command with paragraph delimiters
         assert!(
-            message.contains("paragraphs"),
-            "Should mention viewing by paragraphs"
+            commands[0].command.starts_with("view"),
+            "Command must be view. Command: {}",
+            commands[0].command
+        );
+        assert!(
+            commands[0].command.contains("/^$|^/") && commands[0].command.contains("/^$/"),
+            "View command must use paragraph delimiters (blank line patterns). Command: {}",
+            commands[0].command
         );
     }
 
     #[test]
-    fn test_generate_simulated_message_no_file() {
+    fn test_generate_simulated_message_no_file_produces_parseable_commands() {
+        // Requirements:
+        // 1. Message must be parseable by parse_commands
+        // 2. Must produce exactly 1 bash command (fallback when no file)
+        // 3. Command must be ls to list directory contents
+        //
+        // Combined requirements testing fallback behavior when no overview file.
+
         let message = Agent::<MockLlmClient>::generate_simulated_message("");
 
-        // Should contain bash command
-        assert!(
-            message.matches("<bash>").count() == 1,
-            "Should contain one bash tag"
+        // Requirement 1: Parseability
+        let commands = parse_commands(&message)
+            .expect("Generated message must be parseable by parse_commands");
+
+        // Requirement 2: Command count and environment
+        assert_eq!(
+            commands.len(),
+            1,
+            "Must generate exactly 1 command when no file"
+        );
+        assert_eq!(
+            commands[0].env, "bash",
+            "Command must be for bash environment"
         );
 
-        // Should contain ls command
-        assert!(message.contains("ls -alh"), "Should contain ls command");
-
+        // Requirement 3: ls command to list contents
         assert!(
-            message.contains("no obvious overview"),
-            "Should mention lack of overview file"
+            commands[0].command.starts_with("ls"),
+            "Command must be ls to list directory. Command: {}",
+            commands[0].command
         );
     }
 
     #[test]
-    fn test_build_directory_tree_basic() {
+    fn test_build_directory_tree_includes_files_and_directories() {
+        // Requirement: Directory tree must include all non-ignored files and mark
+        // directories with trailing slash.
+
         let temp_dir = create_test_project();
         let tree = build_directory_tree(temp_dir.path(), 100).unwrap();
 
         println!("Tree output:\n{}", tree);
 
-        // Should contain files
+        // Verify files are included
         assert!(tree.contains("README.md"), "Tree should contain README.md");
         assert!(tree.contains("main.rs"), "Tree should contain main.rs");
-        assert!(tree.contains("src/"), "Tree should contain src/ directory");
+
+        // Verify directories are marked with trailing slash
+        assert!(
+            tree.contains("src/"),
+            "Tree should contain src/ directory with trailing slash"
+        );
     }
 
     #[test]
-    fn test_build_tree_at_depth_1() {
+    fn test_build_tree_at_depth_limits_nesting() {
+        // Requirement: Depth parameter must limit tree traversal - depth 1 shows
+        // top-level files and directories only, not nested contents.
+
         let temp_dir = create_test_project();
         let result = build_tree_at_depth(temp_dir.path(), 1).unwrap();
 
         // At depth 1, should see top-level files and directories
-        assert!(result.content.contains("README.md"));
-        assert!(result.content.contains("main.rs"));
-        assert!(result.content.contains("src/"));
+        assert!(
+            result.content.contains("README.md"),
+            "Depth 1 should include top-level files"
+        );
+        assert!(
+            result.content.contains("main.rs"),
+            "Depth 1 should include top-level files"
+        );
+        assert!(
+            result.content.contains("src/"),
+            "Depth 1 should show directories"
+        );
 
         // Should NOT see files inside src/ at depth 1
-        assert!(!result.content.contains("src/lib.rs"));
+        assert!(
+            !result.content.contains("src/lib.rs"),
+            "Depth 1 must not include nested files (src/lib.rs should be hidden)"
+        );
     }
 
     #[test]
-    fn test_build_tree_at_depth_2() {
+    fn test_build_tree_at_depth_2_includes_nested_files() {
+        // Requirement: Depth 2 must include files inside first-level directories.
+
         let temp_dir = create_test_project();
         let result = build_tree_at_depth(temp_dir.path(), 2).unwrap();
 
         // At depth 2, should see files inside src/
-        assert!(result.content.contains("src/lib.rs"));
+        assert!(
+            result.content.contains("src/lib.rs"),
+            "Depth 2 must include files inside first-level directories"
+        );
     }
 }

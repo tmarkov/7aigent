@@ -475,19 +475,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_session_id_display() {
+    fn test_session_id_displays_as_number() {
+        // Requirement: SessionId Display trait must format as decimal number.
+
         let id = SessionId(42);
         assert_eq!(id.to_string(), "42");
     }
 
     #[test]
-    fn test_session_id_parse() {
+    fn test_session_id_parses_from_decimal_string() {
+        // Requirement: SessionId must parse from decimal number string.
+
         let id: SessionId = "123".parse().unwrap();
         assert_eq!(id.as_u64(), 123);
     }
 
     #[test]
-    fn test_token_usage_add_assign() {
+    fn test_token_usage_add_assign_sums_all_fields() {
+        // Requirement: TokenUsage += must correctly sum all three token count fields.
+
         let mut usage1 = TokenUsage {
             prompt_tokens: 100,
             completion_tokens: 50,
@@ -508,7 +514,9 @@ mod tests {
     }
 
     #[test]
-    fn test_event_timestamp() {
+    fn test_event_timestamp_accessor_returns_event_timestamp() {
+        // Requirement: Event::timestamp() must return the timestamp field from the event.
+
         let now = Utc::now();
         let event = Event::SystemPrompt {
             timestamp: now,

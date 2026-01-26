@@ -236,7 +236,10 @@ mod tests {
     }
 
     #[test]
-    fn test_truncate_history() {
+    fn test_truncate_history_keeps_most_recent_under_limit() {
+        // Requirement: truncate_history must keep most recent messages in
+        // chronological order under character limit.
+
         let messages = vec![
             Message::user("message 1 with some content".to_string()),
             Message::assistant("response 1 with some content".to_string()),
@@ -250,12 +253,18 @@ mod tests {
         let truncated = truncate_history(&messages, max_chars);
 
         // Should keep only the most recent messages
-        assert!(truncated.len() < messages.len());
-        assert!(!truncated.is_empty());
+        assert!(
+            truncated.len() < messages.len(),
+            "Must truncate when over limit"
+        );
+        assert!(!truncated.is_empty(), "Must keep at least some messages");
 
         // Should maintain chronological order
         if truncated.len() >= 2 {
-            assert!(truncated[0].timestamp <= truncated[1].timestamp);
+            assert!(
+                truncated[0].timestamp <= truncated[1].timestamp,
+                "Must maintain chronological order after truncation"
+            );
         }
     }
 }

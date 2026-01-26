@@ -80,7 +80,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_single_command() {
+    fn test_parse_commands_extracts_single_command() {
+        // Requirement: Parser must extract environment and command from single tag.
+
         let response = r#"
 I'll list the files:
 
@@ -96,7 +98,9 @@ ls -la
     }
 
     #[test]
-    fn test_parse_multiple_commands() {
+    fn test_parse_commands_extracts_multiple_commands_in_order() {
+        // Requirement: Parser must extract all commands in order from multiple tags.
+
         let response = r#"
 Let me check the files and then analyze them:
 
@@ -132,7 +136,9 @@ view src/main.py 1-50
     }
 
     #[test]
-    fn test_parse_multiline_command() {
+    fn test_parse_commands_preserves_multiline_content() {
+        // Requirement: Parser must preserve newlines and whitespace in command content.
+
         let response = r#"
 <python>
 def hello():
@@ -152,7 +158,9 @@ hello()
     }
 
     #[test]
-    fn test_parse_no_commands() {
+    fn test_parse_commands_returns_empty_for_no_tags() {
+        // Requirement: Parser must return empty list when response contains no environment tags.
+
         let response = "The task is complete! I've successfully added authentication.";
 
         let commands = parse_commands(response).unwrap();
@@ -160,7 +168,9 @@ hello()
     }
 
     #[test]
-    fn test_parse_command_with_empty_body() {
+    fn test_parse_commands_handles_empty_command_content() {
+        // Requirement: Parser must handle tags with empty body (return empty string, not error).
+
         let response = r#"
 <bash>
 </bash>
@@ -173,7 +183,9 @@ hello()
     }
 
     #[test]
-    fn test_parse_mixed_content() {
+    fn test_parse_commands_ignores_markdown_code_blocks() {
+        // Requirement: Parser must extract only environment tags, ignoring markdown code blocks.
+
         let response = r#"
 I'll analyze the code first:
 
@@ -198,7 +210,9 @@ Done!
     }
 
     #[test]
-    fn test_parse_command_with_special_chars() {
+    fn test_parse_commands_preserves_special_characters() {
+        // Requirement: Parser must preserve special characters (<, >, &) in command content.
+
         let response = r#"
 <bash>
 echo "Use <brackets> and & symbols"
@@ -214,7 +228,9 @@ echo "Use <brackets> and & symbols"
     }
 
     #[test]
-    fn test_parse_command_preserves_whitespace() {
+    fn test_parse_commands_preserves_exact_indentation() {
+        // Requirement: Parser must preserve exact indentation for code blocks.
+
         let response = r#"
 <python>
 def foo():
@@ -232,7 +248,10 @@ def foo():
     }
 
     #[test]
-    fn test_parse_various_env_names() {
+    fn test_parse_commands_extracts_various_environment_names() {
+        // Requirement: Parser must handle any word-character environment name
+        // (bash, python3, sh, editor, etc.).
+
         let response = r#"
 <bash>
 ls
@@ -260,7 +279,10 @@ view file
     }
 
     #[test]
-    fn test_parse_python_with_less_than() {
+    fn test_parse_commands_handles_less_than_in_content() {
+        // Requirement: Parser must handle < character in command content
+        // without breaking tag matching.
+
         let response = r#"
 <python>
 if 3 < 4:

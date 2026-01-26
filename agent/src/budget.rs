@@ -95,7 +95,9 @@ mod tests {
     }
 
     #[test]
-    fn test_budget_ok_no_limits() {
+    fn test_check_budget_returns_ok_when_no_limits_set() {
+        // Requirement: check_budget must return Ok when no limits configured.
+
         let current_cost = Decimal::new(100, 2); // $1.00
         let budget = create_test_budget(None, None, Decimal::new(80, 2));
         let estimated = Decimal::new(50, 2); // $0.50
@@ -105,7 +107,9 @@ mod tests {
     }
 
     #[test]
-    fn test_budget_ok_under_limits() {
+    fn test_check_budget_returns_ok_when_under_all_limits() {
+        // Requirement: check_budget must return Ok when under both per-call and session limits.
+
         let current_cost = Decimal::new(100, 2); // $1.00
         let budget = create_test_budget(
             Some(Decimal::new(500, 2)), // $5.00 session limit
@@ -119,7 +123,10 @@ mod tests {
     }
 
     #[test]
-    fn test_budget_exceeds_per_call_limit() {
+    fn test_check_budget_detects_per_call_limit_exceeded() {
+        // Requirement: check_budget must return ExceedsPerCall when
+        // estimated cost > per-call limit.
+
         let current_cost = Decimal::new(100, 2); // $1.00
         let budget = create_test_budget(
             Some(Decimal::new(500, 2)), // $5.00 session limit
@@ -139,7 +146,10 @@ mod tests {
     }
 
     #[test]
-    fn test_budget_exceeds_session_limit() {
+    fn test_check_budget_detects_session_limit_exceeded() {
+        // Requirement: check_budget must return ExceedsSession when
+        // current + estimated > session limit.
+
         let current_cost = Decimal::new(450, 2); // $4.50
         let budget = create_test_budget(
             Some(Decimal::new(500, 2)), // $5.00 session limit
@@ -160,7 +170,9 @@ mod tests {
     }
 
     #[test]
-    fn test_budget_warning_threshold() {
+    fn test_check_budget_warns_when_crossing_threshold() {
+        // Requirement: check_budget must warn when projected total crosses warn threshold.
+
         let current_cost = Decimal::new(350, 2); // $3.50
         let budget = create_test_budget(
             Some(Decimal::new(500, 2)), // $5.00 session limit
@@ -180,8 +192,9 @@ mod tests {
     }
 
     #[test]
-    fn test_budget_warning_only_when_crossing_threshold() {
-        // Already past threshold - should not warn again
+    fn test_check_budget_skips_warning_when_already_past_threshold() {
+        // Requirement: check_budget must NOT warn again if already past threshold (warn once).
+
         let current_cost = Decimal::new(450, 2); // $4.50 > $4.00 threshold
         let budget = create_test_budget(
             Some(Decimal::new(500, 2)), // $5.00 session limit
@@ -195,7 +208,9 @@ mod tests {
     }
 
     #[test]
-    fn test_budget_warning_exact_threshold() {
+    fn test_check_budget_skips_warning_at_exact_threshold() {
+        // Requirement: check_budget must NOT warn at exact threshold (only when exceeding).
+
         let current_cost = Decimal::new(375, 2); // $3.75
         let budget = create_test_budget(
             Some(Decimal::new(500, 2)), // $5.00 session limit
@@ -210,8 +225,9 @@ mod tests {
     }
 
     #[test]
-    fn test_budget_per_call_takes_priority() {
-        // Both limits would be exceeded, per-call should be checked first
+    fn test_check_budget_checks_per_call_limit_before_session() {
+        // Requirement: check_budget must check per-call limit first when both would be exceeded.
+
         let current_cost = Decimal::new(450, 2); // $4.50
         let budget = create_test_budget(
             Some(Decimal::new(500, 2)), // $5.00 session limit
