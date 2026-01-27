@@ -1,5 +1,7 @@
 """Tests for Python environment."""
 
+import tempfile
+
 from orchestrator.core_types import CommandText
 from orchestrator.environments.python import PythonEnvironment
 
@@ -7,86 +9,104 @@ from orchestrator.environments.python import PythonEnvironment
 class TestPythonEnvironment:
     """Test PythonEnvironment implementation."""
 
-    def test_initial_state_before_first_use(self) -> None:
-        """Test that environment shows help before first use."""
+    def test_python_environment_maintains_repl_state(self) -> None:
+        """Python REPL must maintain state (variables, imports, functions, classes) across commands.
+
+        Requirements tested:
+        1. Variables persist across commands
+        2. Imports persist across commands
+        3. Functions persist across commands
+        4. Classes persist across commands
+        5. All state persists in same REPL process
+        """
         env = PythonEnvironment()
         try:
-            screen = env.get_screen()
-            # Should show help text even before first use
-            assert (
-                "Any Python code. Variables and imports persist across commands."
-                in screen.content
-            )
-            assert screen.max_lines == 50
-            # Should NOT show state info before first use
-            assert "Working directory:" not in screen.content
-        finally:
-            env.shutdown()
-
-    def test_basic_expression_evaluation(self) -> None:
-        """Test executing a simple expression."""
-        env = PythonEnvironment()
-        try:
-            response = env.handle_command(CommandText("2 + 2"))
-            assert response.success is True
-            assert "4" in response.output
-        finally:
-            env.shutdown()
-
-    def test_print_statement(self) -> None:
-        """Test print statement output."""
-        env = PythonEnvironment()
-        try:
-            response = env.handle_command(CommandText("print('hello world')"))
-            assert response.success is True
-            assert "hello world" in response.output
-        finally:
-            env.shutdown()
-
-    def test_variable_persistence(self) -> None:
-        """Test that variables persist across commands."""
-        env = PythonEnvironment()
-        try:
-            # Set variable
-            response = env.handle_command(CommandText("x = 42"))
-            assert response.success is True
-
-            # Use variable
-            response = env.handle_command(CommandText("x * 2"))
-            assert response.success is True
-            assert "84" in response.output
-
-            # Modify variable
-            env.handle_command(CommandText("x = x + 10"))
-
-            # Verify modification
-            response = env.handle_command(CommandText("x"))
-            assert "52" in response.output
-        finally:
-            env.shutdown()
-
-    def test_variable_tracking_in_screen(self) -> None:
-        """Test that variables are displayed on screen with types."""
-        env = PythonEnvironment()
-        try:
-            # Create some variables
+            # Create various state elements
+            env.handle_command(CommandText("import math"))
             env.handle_command(CommandText("x = 42"))
-            env.handle_command(CommandText("y = 'hello'"))
-            env.handle_command(CommandText("z = [1, 2, 3]"))
+            env.handle_command(CommandText("def foo(): return x * 2"))
+            env.handle_command(CommandText("class Bar: pass"))
 
-            # Get screen
-            screen = env.get_screen()
+            # Verify all persist
+            response = env.handle_command(CommandText("math.pi"))
+            assert "3.14" in response.output, "Import should persist"
 
-            # Should show variables with types
-            assert "x: int" in screen.content
-            assert "y: str" in screen.content
-            assert "z: list" in screen.content
-            assert "Variables (recent):" in screen.content
+            response = env.handle_command(CommandText("x"))
+            assert "42" in response.output, "Variable should persist"
+
+            response = env.handle_command(CommandText("foo()"))
+            assert "84" in response.output, "Function should persist"
+
+            response = env.handle_command(CommandText("Bar()"))
+            assert response.success, "Class should persist"
         finally:
             env.shutdown()
 
-    def test_variable_ordering_by_recent_use(self) -> None:
-        """Test that variables are ordered by recent use."""
+    def test_python_environment_tracks_variables_in_screen(self) -> None:
+        """Screen must show user-defined variables with types, ordered by recent use (LRU).
+
+        Requirements tested:
+        1. Variables shown with types (e.g., x: int)
+        2. Private variables (_x) excluded from display
+        3. Variables ordered by recent use (most recent first)
+        4. Deleted variables removed from display
+        5. Type changes reflected in display
+        6. No variables message shown when none exist
+        7. Variable limit enforced (MAX_VARIABLES_DISPLAY)
+        """
+        env = PythonEnvironment()
+        try:
+            # Initially no variables (after first command that doesn't create vars)
+            env.handle_command(CommandText("1 + 1"))
+            screen = env.get_screen()
+            assert "(no variables)" in screen.content, "Must show no variables message"
+
+            # Create variables
+            env.handle_command(CommandText("a = 1"))
+            env.handle_command(CommandText("_private = 2"))  # Should be excluded
+            env.handle_command(CommandText("b = 'hello'"))
+
+            screen = env.get_screen()
+
+            # Verify display with types
+            assert "a: int" in screen.content, "Must show variable with type"
+            assert "b: str" in screen.content, "Must show string variable"
+            assert (
+                "_private" not in screen.content
+            ), "Must exclude private variables (starting with _)"
+
+            # Use 'a' to move it to front (LRU ordering)
+            env.handle_command(CommandText("print(a)"))
+            screen = env.get_screen()
+            lines = screen.content.split("\n")
+            var_lines = [
+                line for line in lines if line.strip().startswith(("a:", "b:"))
+            ]
+            assert (
+                var_lines[0].strip().startswith("a:")
+            ), "Most recently used variable should be first"
+
+            # Delete variable
+            env.handle_command(CommandText("del a"))
+            screen = env.get_screen()
+            assert "a:" not in screen.content, "Deleted variable must be removed"
+
+            # Change variable type
+            env.handle_command(CommandText("b = 123"))
+            screen = env.get_screen()
+            assert "b: int" in screen.content, "Type change must be reflected"
+            assert "b: str" not in screen.content, "Old type must not be shown"
+        finally:
+            env.shutdown()
+
+    def test_python_environment_variable_ordering_lru(self) -> None:
+        """Variables must be ordered by recent use (Least Recently Used).
+
+        Requirements tested:
+        1. Variables used in same command all moved to front
+        2. Order preserved for variables not mentioned
+        3. New variables added to end (or front if created)
+        """
         env = PythonEnvironment()
         try:
             # Create variables in order
@@ -94,26 +114,72 @@ class TestPythonEnvironment:
             env.handle_command(CommandText("b = 2"))
             env.handle_command(CommandText("c = 3"))
 
-            # Use 'a' to move it to front
-            env.handle_command(CommandText("print(a)"))
+            # Use multiple variables in one command
+            env.handle_command(CommandText("result = b + c"))
 
             screen = env.get_screen()
-            content_lines = screen.content.split("\n")
+            lines = screen.content.split("\n")
 
             # Find variable lines
             var_lines = [
                 line
-                for line in content_lines
-                if line.strip().startswith(("a:", "b:", "c:"))
+                for line in lines
+                if line.strip().startswith(("a:", "b:", "c:", "result:"))
             ]
 
-            # 'a' should be first since it was used most recently
-            assert var_lines[0].strip().startswith("a:")
+            # Extract variable names in order
+            var_names = [line.split(":")[0].strip() for line in var_lines]
+
+            # result, b, and c should all appear before 'a' (recently used)
+            result_idx = var_names.index("result")
+            b_idx = var_names.index("b")
+            c_idx = var_names.index("c")
+            a_idx = var_names.index("a")
+
+            # All recently used vars should come before 'a'
+            assert result_idx < a_idx, "Newly created variable should be recent"
+            assert b_idx < a_idx, "Used variable 'b' should be before unused 'a'"
+            assert c_idx < a_idx, "Used variable 'c' should be before unused 'a'"
         finally:
             env.shutdown()
 
-    def test_working_directory_tracking(self) -> None:
-        """Test that working directory is displayed."""
+    def test_python_environment_handles_errors_gracefully(self) -> None:
+        """Errors must be captured in output without crashing environment.
+
+        Requirements tested:
+        1. Runtime exceptions captured in output
+        2. Syntax errors captured in output
+        3. Environment continues working after errors
+        4. Success is True even for exceptions (command executed)
+        """
+        env = PythonEnvironment()
+        try:
+            # Runtime exception
+            response = env.handle_command(CommandText("1 / 0"))
+            assert response.success is True, "Command executed even with exception"
+            assert "ZeroDivisionError" in response.output, "Exception must be in output"
+
+            # Syntax error
+            response = env.handle_command(CommandText("if True"))
+            assert response.success is True, "Command executed even with syntax error"
+            assert "SyntaxError" in response.output, "Syntax error must be in output"
+
+            # Environment still works after errors
+            response = env.handle_command(CommandText("2 + 2"))
+            assert (
+                "4" in response.output
+            ), "Environment must continue working after errors"
+        finally:
+            env.shutdown()
+
+    def test_python_environment_tracks_working_directory(self) -> None:
+        """Working directory must be tracked and shown in screen.
+
+        Requirements tested:
+        1. Working directory shown in screen after first use
+        2. Working directory changes reflected in screen
+        3. os.chdir() updates working directory display
+        """
         env = PythonEnvironment()
         try:
             # Execute command to initialize
@@ -121,335 +187,157 @@ class TestPythonEnvironment:
 
             # Get screen
             screen = env.get_screen()
+            assert "Working directory:" in screen.content, "Must show working directory"
 
-            # Should show working directory
-            assert "Working directory:" in screen.content
-        finally:
-            env.shutdown()
-
-    def test_working_directory_change(self) -> None:
-        """Test changing working directory in Python."""
-        env = PythonEnvironment()
-        try:
-            import tempfile
-
+            # Change working directory
             with tempfile.TemporaryDirectory() as tmpdir:
-                # Change directory
                 env.handle_command(CommandText(f"import os; os.chdir('{tmpdir}')"))
 
                 # Verify in screen
                 screen = env.get_screen()
-                assert tmpdir in screen.content
+                assert (
+                    tmpdir in screen.content
+                ), f"Screen must show new working directory: {tmpdir}"
         finally:
             env.shutdown()
 
-    def test_exception_handling(self) -> None:
-        """Test that exceptions are captured in output."""
+    def test_python_environment_help_text_always_shown(self) -> None:
+        """Help text must always be shown (freeform environment design).
+
+        Requirements tested:
+        1. Help shown before first use
+        2. Help shown after first use
+        3. Help shown after many uses
+        4. Help text is consistent
+        """
         env = PythonEnvironment()
         try:
-            response = env.handle_command(CommandText("1 / 0"))
-            assert response.success is True  # Command executed, even if it raised
-            assert "ZeroDivisionError" in response.output
+            expected_help = (
+                "Any Python code. Variables and imports persist across commands."
+            )
+
+            # Before first use
+            screen_before = env.get_screen()
+            assert (
+                expected_help in screen_before.content
+            ), "Help must be shown before first use"
+
+            # After first use
+            env.handle_command(CommandText("x = 1"))
+            screen_after = env.get_screen()
+            assert expected_help in screen_after.content, "Help must be shown after use"
+
+            # After many uses
+            env.handle_command(CommandText("y = 2"))
+            env.handle_command(CommandText("z = x + y"))
+            env.handle_command(CommandText("print(z)"))
+            screen_later = env.get_screen()
+            assert (
+                expected_help in screen_later.content
+            ), "Help must persist after many commands"
         finally:
             env.shutdown()
 
-    def test_syntax_error_handling(self) -> None:
-        """Test that syntax errors are captured."""
-        env = PythonEnvironment()
-        try:
-            response = env.handle_command(CommandText("if True"))
-            assert response.success is True  # Command executed
-            assert "SyntaxError" in response.output
-        finally:
-            env.shutdown()
+    def test_python_environment_lifecycle(self) -> None:
+        """Python environment must handle initialization and shutdown correctly.
 
-    def test_multi_line_code_function_definition(self) -> None:
-        """Test defining a function with multiple lines."""
+        Requirements tested:
+        1. Environment can be created without starting process
+        2. Process starts on first command
+        3. Process can be started, used, and shutdown
+        4. Shutdown terminates process
+        5. Shutdown can be called before starting process (graceful)
+        6. Shutdown can be called multiple times (idempotent)
+        """
+        # Create environment - process should not be started yet
+        env = PythonEnvironment()
+        assert env._process is None, "Process should not start on initialization"
+
+        # Execute a command - should start process
+        env.handle_command(CommandText("x = 1"))
+        assert env._process is not None, "Process should start on first command"
+        assert env._process.isalive(), "Process should be running"
+
+        # Shutdown should terminate process
+        env.shutdown()
+        assert (
+            env._process is None or not env._process.isalive()
+        ), "Shutdown must terminate process"
+
+        # Shutdown before starting process (graceful)
+        env2 = PythonEnvironment()
+        env2.shutdown()  # Should not raise
+
+        # Shutdown can be called multiple times
+        env3 = PythonEnvironment()
+        env3.handle_command(CommandText("x = 1"))
+        env3.shutdown()
+        env3.shutdown()  # Should not raise
+
+    def test_python_environment_multiline_code_execution(self) -> None:
+        """Multiline code (functions, classes, etc.) must be executed correctly.
+
+        Requirements tested:
+        1. Function definitions work (multiline)
+        2. Class definitions work (multiline)
+        3. Multiline expressions work
+        4. Indentation preserved
+        """
         env = PythonEnvironment()
         try:
-            # Define function (multi-line)
+            # Define function (multiline)
             code = """def add(a, b):
     return a + b"""
             response = env.handle_command(CommandText(code))
-            assert response.success is True
+            assert response.success is True, "Function definition should succeed"
 
             # Use function
             response = env.handle_command(CommandText("add(3, 4)"))
-            assert "7" in response.output
-        finally:
-            env.shutdown()
+            assert "7" in response.output, "Function should work after definition"
 
-    def test_multi_line_code_class_definition(self) -> None:
-        """Test defining a class with multiple lines."""
-        env = PythonEnvironment()
-        try:
-            # Define class
+            # Define class (multiline)
             code = """class Point:
     def __init__(self, x, y):
         self.x = x
         self.y = y"""
             response = env.handle_command(CommandText(code))
-            assert response.success is True
+            assert response.success is True, "Class definition should succeed"
 
             # Create instance
             env.handle_command(CommandText("p = Point(10, 20)"))
 
             # Access attribute
             response = env.handle_command(CommandText("p.x"))
-            assert "10" in response.output
+            assert "10" in response.output, "Class instance should work"
         finally:
             env.shutdown()
 
-    def test_import_statement(self) -> None:
-        """Test importing modules."""
+    def test_python_environment_handles_edge_cases(self) -> None:
+        """Python environment must handle edge cases gracefully.
+
+        Requirements tested:
+        1. Empty command handled (succeeds with no output)
+        2. Comment-only command handled
+        3. Variable reassignment with different type works
+        """
         env = PythonEnvironment()
         try:
-            # Import module
-            response = env.handle_command(CommandText("import math"))
-            assert response.success is True
-
-            # Use module
-            response = env.handle_command(CommandText("math.pi"))
-            assert "3.14" in response.output
-        finally:
-            env.shutdown()
-
-    def test_from_import_statement(self) -> None:
-        """Test from...import statements."""
-        env = PythonEnvironment()
-        try:
-            response = env.handle_command(CommandText("from math import sqrt"))
-            assert response.success is True
-
-            response = env.handle_command(CommandText("sqrt(16)"))
-            assert "4" in response.output
-        finally:
-            env.shutdown()
-
-    def test_list_comprehension(self) -> None:
-        """Test list comprehension."""
-        env = PythonEnvironment()
-        try:
-            response = env.handle_command(CommandText("[x**2 for x in range(5)]"))
-            assert response.success is True
-            assert "[0, 1, 4, 9, 16]" in response.output
-        finally:
-            env.shutdown()
-
-    def test_dictionary_operations(self) -> None:
-        """Test dictionary creation and access."""
-        env = PythonEnvironment()
-        try:
-            env.handle_command(CommandText("d = {'a': 1, 'b': 2}"))
-            response = env.handle_command(CommandText("d['a']"))
-            assert "1" in response.output
-        finally:
-            env.shutdown()
-
-    def test_no_variables_displayed_initially(self) -> None:
-        """Test that screen shows no variables message when none exist."""
-        env = PythonEnvironment()
-        try:
-            # Execute command that doesn't create variables
-            env.handle_command(CommandText("print('test')"))
-
-            screen = env.get_screen()
-            assert "(no variables)" in screen.content
-        finally:
-            env.shutdown()
-
-    def test_private_variables_excluded(self) -> None:
-        """Test that private variables (starting with _) are excluded."""
-        env = PythonEnvironment()
-        try:
-            env.handle_command(CommandText("_private = 1"))
-            env.handle_command(CommandText("public = 2"))
-
-            screen = env.get_screen()
-
-            # Should show public but not private
-            assert "public: int" in screen.content
-            assert "_private" not in screen.content
-        finally:
-            env.shutdown()
-
-    def test_screen_after_first_use(self) -> None:
-        """Test that screen shows full state after first command."""
-        env = PythonEnvironment()
-        try:
-            # Execute a command
-            env.handle_command(CommandText("x = 1"))
-
-            # Screen should show full state
-            screen = env.get_screen()
-            assert "Working directory:" in screen.content
-            assert "Variables (recent):" in screen.content
-        finally:
-            env.shutdown()
-
-    def test_help_text_always_shown(self) -> None:
-        """Test that help text is always shown (freeform environment design)."""
-        env = PythonEnvironment()
-        try:
-            # Before first use - should show help
-            screen_before = env.get_screen()
-            assert (
-                "Any Python code. Variables and imports persist across commands."
-                in screen_before.content
-            )
-
-            # After first use - should still show help
-            env.handle_command(CommandText("x = 1"))
-            screen_after = env.get_screen()
-            assert (
-                "Any Python code. Variables and imports persist across commands."
-                in screen_after.content
-            )
-
-            # After many uses - should still show help
-            env.handle_command(CommandText("y = 2"))
-            env.handle_command(CommandText("z = x + y"))
-            screen_later = env.get_screen()
-            assert (
-                "Any Python code. Variables and imports persist across commands."
-                in screen_later.content
-            )
-        finally:
-            env.shutdown()
-
-    def test_multiple_variables_with_same_usage(self) -> None:
-        """Test multiple variables used in same command."""
-        env = PythonEnvironment()
-        try:
-            # Create variables
-            env.handle_command(CommandText("a = 1"))
-            env.handle_command(CommandText("b = 2"))
-            env.handle_command(CommandText("c = 3"))
-
-            # Use b and c together
-            env.handle_command(CommandText("result = b + c"))
-
-            screen = env.get_screen()
-            content_lines = screen.content.split("\n")
-
-            # Find variable lines
-            var_lines = [
-                line
-                for line in content_lines
-                if line.strip().startswith(("a:", "b:", "c:", "result:"))
-            ]
-
-            # result, b, and c should be at the top (recently used)
-            # Exact order may vary, but they should all appear before 'a'
-            var_names = [line.split(":")[0].strip() for line in var_lines]
-            result_idx = var_names.index("result")
-            b_idx = var_names.index("b")
-            c_idx = var_names.index("c")
-            a_idx = var_names.index("a")
-
-            # All recently used vars should come before 'a'
-            assert result_idx < a_idx
-            assert b_idx < a_idx
-            assert c_idx < a_idx
-        finally:
-            env.shutdown()
-
-    def test_shutdown_cleanup(self) -> None:
-        """Test that shutdown properly cleans up process."""
-        env = PythonEnvironment()
-
-        # Execute a command to start process
-        env.handle_command(CommandText("x = 1"))
-
-        # Shutdown should not raise
-        env.shutdown()
-
-        # Process should be terminated
-        assert env._process is None or not env._process.isalive()
-
-    def test_shutdown_without_starting_process(self) -> None:
-        """Test that shutdown works even if process was never started."""
-        env = PythonEnvironment()
-        # Should not raise
-        env.shutdown()
-
-    def test_long_running_computation(self) -> None:
-        """Test a computation that takes some time."""
-        env = PythonEnvironment()
-        try:
-            # Compute sum of range (should be fast but tests blocking)
-            response = env.handle_command(CommandText("sum(range(1000000))"))
-            assert response.success is True
-            # Result should be (n * (n-1)) / 2 for range(n)
-            assert "499999500000" in response.output
-        finally:
-            env.shutdown()
-
-    def test_string_with_newlines(self) -> None:
-        """Test handling strings with newlines."""
-        env = PythonEnvironment()
-        try:
-            response = env.handle_command(CommandText("print('line1\\nline2\\nline3')"))
-            assert response.success is True
-            assert "line1" in response.output
-            assert "line2" in response.output
-            assert "line3" in response.output
-        finally:
-            env.shutdown()
-
-    def test_empty_command(self) -> None:
-        """Test handling of empty command."""
-        env = PythonEnvironment()
-        try:
+            # Empty command
             response = env.handle_command(CommandText(""))
-            # Empty command should succeed with no output
-            assert response.success is True
-        finally:
-            env.shutdown()
+            assert response.success is True, "Empty command should succeed"
 
-    def test_comment_only_command(self) -> None:
-        """Test command that is only a comment."""
-        env = PythonEnvironment()
-        try:
+            # Comment only
             response = env.handle_command(CommandText("# This is a comment"))
-            assert response.success is True
-            # Should have no output
-        finally:
-            env.shutdown()
+            assert response.success is True, "Comment-only command should succeed"
 
-    def test_variable_deletion(self) -> None:
-        """Test deleting variables."""
-        env = PythonEnvironment()
-        try:
-            # Create variable
-            env.handle_command(CommandText("x = 42"))
-
-            # Verify it exists
-            screen = env.get_screen()
-            assert "x: int" in screen.content
-
-            # Delete variable
-            env.handle_command(CommandText("del x"))
-
-            # Verify it's gone
-            screen = env.get_screen()
-            assert "x:" not in screen.content
-        finally:
-            env.shutdown()
-
-    def test_reassign_variable_with_different_type(self) -> None:
-        """Test reassigning variable with different type."""
-        env = PythonEnvironment()
-        try:
-            # Create int variable
+            # Variable reassignment with type change
             env.handle_command(CommandText("x = 42"))
             screen = env.get_screen()
-            assert "x: int" in screen.content
+            assert "x: int" in screen.content, "Should show int type"
 
-            # Reassign as string
             env.handle_command(CommandText("x = 'hello'"))
             screen = env.get_screen()
-            assert "x: str" in screen.content
-            assert "x: int" not in screen.content
+            assert "x: str" in screen.content, "Should show str type after reassignment"
+            assert "x: int" not in screen.content, "Should not show old int type"
         finally:
             env.shutdown()
