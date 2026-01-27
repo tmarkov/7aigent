@@ -152,10 +152,13 @@ class PythonEnvironment:
             # Use ast.literal_eval to safely parse the dict representation
             # More robust than eval() - only parses Python literals
             var_dict = ast.literal_eval(output)
+            # Verify it's actually a dict (could be a string if error occurred)
+            if not isinstance(var_dict, dict):
+                return {}
             # Convert type strings to simple names
             return {k: self._get_type_name(v) for k, v in var_dict.items()}
-        except (ValueError, SyntaxError):
-            # If parsing fails, return empty dict
+        except (ValueError, SyntaxError, AttributeError):
+            # If parsing fails or unexpected type, return empty dict
             return {}
 
     def _update_variable_ordering(
@@ -226,13 +229,30 @@ class PythonEnvironment:
             # Send command
             command = cmd.value
 
-            # For multi-line code, we need to send an extra newline to complete it
-            # Check if this looks like multi-line code (contains newline)
-            if "\n" in command:
-                # Multi-line: send command + blank line to complete
+            # For multi-line code or compound statements, we need an extra newline
+            # to tell Python REPL the block is complete
+            # Check if:
+            # 1. Contains newline (explicitly multi-line), OR
+            # 2. Is a complete single-line compound statement (def...:, class...:, etc.)
+            is_multiline = "\n" in command
+            # Check for complete compound statement (must have colon to be syntactically complete)
+            stripped = command.lstrip()
+            is_compound = (
+                (stripped.startswith(("def ", "class ")) and ":" in command)
+                or (
+                    stripped.startswith(
+                        ("if ", "for ", "while ", "with ", "elif ", "else:")
+                    )
+                    and command.rstrip().endswith(":")
+                )
+                or stripped.startswith(("try:", "except", "finally:"))
+            )
+
+            if is_multiline or is_compound:
+                # Multi-line or compound: send command + blank line to complete
                 self._process.send(command + "\n\n")
             else:
-                # Single line: just send with newline
+                # Simple single line: just send with newline
                 self._process.send(command + "\n")
 
             # Wait for prompt marker (with reasonable timeout)
