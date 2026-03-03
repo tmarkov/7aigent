@@ -59,6 +59,126 @@ Run before commits via pre-commit hook. Can be slower.
 
 **Run via**: Pre-commit hook (enforced)
 
+## Test Timeouts
+
+**Critical for tests that spawn subprocesses: All tests must have timeout protection to prevent hanging the test suite.**
+
+### Why Timeouts Matter
+
+Tests that interact with subprocesses (bash shells, Python REPLs, etc.) can hang indefinitely if:
+- Process enters infinite loop
+- Deadlock in communication (e.g., `readline()` waits forever)
+- Process doesn't respond to termination signals
+
+**Without timeouts**: One hanging test blocks all subsequent tests and CI pipelines indefinitely.
+
+**With timeouts**: Tests fail quickly with clear error messages.
+
+### Defense-in-Depth Strategy
+
+Use **two layers** of timeout protection:
+
+#### 1. Test-Level Timeouts (Python)
+
+**Purpose**: Fast detection with precise error reporting - identifies which specific test hung.
+
+**Implementation**: Import and use the `timeout` decorator from `orchestrator/tests/__init__.py` on all tests that spawn subprocesses.
+
+```python
+from . import timeout
+
+class TestBashEnvironment:
+    @timeout(10)
+    def test_bash_environment_maintains_state(self):
+        """Test must complete within 10 seconds."""
+        env = BashEnvironment()
+        # ... test code
+```
+
+**Guideline**: Set timeout to ~2-3x expected runtime. Most subprocess tests should complete in 1-3 seconds, so 10 seconds is generous.
+
+**Location**: Decorator is defined in `orchestrator/tests/__init__.py`. **Always import it, never copy the implementation.**
+
+**Limitation**: Unix-only (uses SIGALRM). Not needed for Rust tests (see Nix-level below).
+
+#### 2. Nix-Level Timeouts (Build System)
+
+**Purpose**: Safety net that catches everything - forgotten decorators, Rust tests, integration tests.
+
+**Implementation**: Configured in Nix derivations:
+
+```nix
+# agent/default.nix (Rust tests)
+checkPhase = ''
+  echo "Building tests..."
+  cargo test --release --no-run
+
+  echo "Running cargo test..."
+  ${pkgs.coreutils}/bin/timeout 30 cargo test --release
+'';
+
+# flake.nix (Python tests)
+checkPhase = ''
+  echo "Running pytest tests..."
+  ${pkgs.coreutils}/bin/timeout 120 pytest tests/ -v
+'';
+```
+
+**Guidelines**:
+- **Cargo tests**: 30 seconds (currently ~6 seconds, 5x margin; compilation done separately with --no-run)
+- **Pytest tests**: 120 seconds (currently ~25 seconds, 5x margin)
+- Set timeout to 5x typical runtime to avoid flaky failures on slow CI
+
+**When timeout triggers**: Entire test suite is killed. Less precise than test-level, but ensures build never hangs forever.
+
+### Current Timeout Configuration
+
+| Test Suite | Test-Level | Nix-Level | Typical Runtime | Notes |
+|------------|-----------|-----------|----------------|-------|
+| Agent (Rust) | N/A | 30s | ~6s | Nix-level only |
+| Orchestrator (Python) | 10s per test | 120s | ~25s total | Both layers |
+| Sandbox (Python) | 10s per test | 120s | Varies | Both layers |
+
+### Best Practices
+
+1. **Always use timeout decorator** for tests spawning subprocesses (Python)
+2. **Set generous timeout values** - 2-5x expected runtime
+3. **Document expected runtime** in test docstring if unusual
+4. **Fix hanging tests, don't increase timeout** - if test hits timeout, there's a bug
+5. **Use timeout to debug** - when test hangs, timeout converts hang into failure with clear message
+
+### Common Hanging Scenarios
+
+**Subprocess readline blocks forever**:
+```python
+# Bad - can hang forever
+response_line = proc.stdout.readline()
+
+# Good - timeout on read
+import select
+ready, _, _ = select.select([proc.stdout], [], [], 10)
+if not ready:
+    raise TimeoutError("Process didn't respond")
+response_line = proc.stdout.readline()
+```
+
+**Python REPL waits for continuation**:
+```python
+# Issue: Single-line compound statements need extra newline
+process.send("def foo(): return 42\n")  # Hangs - waits for more input
+process.send("def foo(): return 42\n\n")  # Works - double newline completes
+```
+
+**Process doesn't terminate**:
+```python
+# Ensure cleanup handles stuck processes
+try:
+    process.send("exit()\n")
+    process.expect(pexpect.EOF, timeout=2)
+except pexpect.TIMEOUT:
+    process.terminate(force=True)  # Force kill if graceful exit fails
+```
+
 ## Running Tests
 
 ### Quick Test Runs (Tier 1)

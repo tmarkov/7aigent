@@ -5,10 +5,13 @@ import tempfile
 from orchestrator.core_types import CommandText
 from orchestrator.environments.bash import BashEnvironment
 
+from . import timeout
+
 
 class TestBashEnvironment:
     """Test BashEnvironment implementation."""
 
+    @timeout(10)
     def test_bash_environment_maintains_state_across_commands(self) -> None:
         """Bash environment must maintain shell state between commands.
 
@@ -38,6 +41,7 @@ class TestBashEnvironment:
         finally:
             env.shutdown()
 
+    @timeout(10)
     def test_bash_environment_screen_reflects_state(self) -> None:
         """Screen must show current working directory, exit code, and background jobs.
 
@@ -100,6 +104,7 @@ class TestBashEnvironment:
         finally:
             env.shutdown()
 
+    @timeout(10)
     def test_bash_environment_captures_stdout_and_stderr(self) -> None:
         """Output capture must include both stdout and stderr (combined).
 
@@ -120,6 +125,7 @@ class TestBashEnvironment:
         finally:
             env.shutdown()
 
+    @timeout(10)
     def test_bash_environment_maps_exit_codes_to_success(self) -> None:
         """Exit codes must be tracked and map to response.success field.
 
@@ -162,6 +168,7 @@ class TestBashEnvironment:
         finally:
             env.shutdown()
 
+    @timeout(10)
     def test_bash_environment_tracks_background_jobs(self) -> None:
         """Background jobs must be tracked and shown in screen.
 
@@ -186,6 +193,7 @@ class TestBashEnvironment:
         finally:
             env.shutdown()
 
+    @timeout(10)
     def test_bash_environment_enforces_output_size_limit(self) -> None:
         """Large output must be truncated at MAX_OUTPUT_SIZE with warning.
 
@@ -215,6 +223,7 @@ class TestBashEnvironment:
         finally:
             env.shutdown()
 
+    @timeout(10)
     def test_bash_environment_help_text_always_shown(self) -> None:
         """Help text must always be shown (freeform environment design).
 
@@ -250,6 +259,7 @@ class TestBashEnvironment:
         finally:
             env.shutdown()
 
+    @timeout(10)
     def test_bash_environment_lifecycle(self) -> None:
         """Bash environment must handle initialization and shutdown correctly.
 
@@ -286,6 +296,7 @@ class TestBashEnvironment:
         env3.shutdown()
         env3.shutdown()  # Should not raise
 
+    @timeout(10)
     def test_bash_environment_handles_edge_cases(self) -> None:
         """Bash environment must handle edge cases gracefully.
 

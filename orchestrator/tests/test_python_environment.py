@@ -5,10 +5,13 @@ import tempfile
 from orchestrator.core_types import CommandText
 from orchestrator.environments.python import PythonEnvironment
 
+from . import timeout
+
 
 class TestPythonEnvironment:
     """Test PythonEnvironment implementation."""
 
+    @timeout(10)
     def test_python_environment_maintains_repl_state(self) -> None:
         """Python REPL must maintain state (variables, imports, functions, classes) across commands.
 
@@ -42,6 +45,7 @@ class TestPythonEnvironment:
         finally:
             env.shutdown()
 
+    @timeout(10)
     def test_python_environment_tracks_variables_in_screen(self) -> None:
         """Screen must show user-defined variables with types, ordered by recent use (LRU).
 
@@ -99,6 +103,7 @@ class TestPythonEnvironment:
         finally:
             env.shutdown()
 
+    @timeout(10)
     def test_python_environment_variable_ordering_lru(self) -> None:
         """Variables must be ordered by recent use (Least Recently Used).
 
@@ -143,6 +148,7 @@ class TestPythonEnvironment:
         finally:
             env.shutdown()
 
+    @timeout(10)
     def test_python_environment_handles_errors_gracefully(self) -> None:
         """Errors must be captured in output without crashing environment.
 
@@ -172,6 +178,7 @@ class TestPythonEnvironment:
         finally:
             env.shutdown()
 
+    @timeout(10)
     def test_python_environment_tracks_working_directory(self) -> None:
         """Working directory must be tracked and shown in screen.
 
@@ -201,6 +208,7 @@ class TestPythonEnvironment:
         finally:
             env.shutdown()
 
+    @timeout(10)
     def test_python_environment_help_text_always_shown(self) -> None:
         """Help text must always be shown (freeform environment design).
 
@@ -238,6 +246,7 @@ class TestPythonEnvironment:
         finally:
             env.shutdown()
 
+    @timeout(10)
     def test_python_environment_lifecycle(self) -> None:
         """Python environment must handle initialization and shutdown correctly.
 
@@ -274,6 +283,7 @@ class TestPythonEnvironment:
         env3.shutdown()
         env3.shutdown()  # Should not raise
 
+    @timeout(10)
     def test_python_environment_multiline_code_execution(self) -> None:
         """Multiline code (functions, classes, etc.) must be executed correctly.
 
@@ -312,6 +322,7 @@ class TestPythonEnvironment:
         finally:
             env.shutdown()
 
+    @timeout(10)
     def test_python_environment_handles_edge_cases(self) -> None:
         """Python environment must handle edge cases gracefully.
 

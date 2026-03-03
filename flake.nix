@@ -171,7 +171,7 @@
               ${pkgs.ruff}/bin/ruff check orchestrator/ tests/
 
               echo "Running pytest tests..."
-              pytest tests/ -v
+              ${pkgs.coreutils}/bin/timeout 120 pytest tests/ -v
             '';
 
             # Ensure checks are run

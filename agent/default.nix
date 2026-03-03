@@ -33,8 +33,11 @@ rustPlatform.buildRustPackage {
     echo "Running clippy linter..."
     cargo clippy --all-targets --all-features -- -D warnings
 
+    echo "Building tests..."
+    cargo test --release --no-run
+
     echo "Running cargo test..."
-    cargo test --release
+    ${pkgs.coreutils}/bin/timeout 30 cargo test --release
 
     runHook postCheck
   '';

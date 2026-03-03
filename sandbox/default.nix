@@ -120,8 +120,8 @@ EOF
     # Set sandbox script path for tests (now it exists!)
     export SANDBOX_SCRIPT=$out/bin/7aigent-sandbox
 
-    # Run pytest
-    pytest tests/ -v --tb=short
+    # Run pytest with timeout
+    ${pkgs.coreutils}/bin/timeout 120 pytest tests/ -v --tb=short
 
     runHook postInstallCheck
   '';
