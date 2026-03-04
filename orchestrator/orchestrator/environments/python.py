@@ -4,14 +4,11 @@ import ast
 import os
 import re
 import sys
-from typing import Optional
 
-import pexpect
-
-from orchestrator.core_types import CommandResponse, CommandText, ScreenSection
+from orchestrator.interactive import InteractiveEnvironment
 
 
-class PythonEnvironment:
+class PythonEnvironment(InteractiveEnvironment):
     """
     Python REPL environment for executing Python code.
 
@@ -19,18 +16,18 @@ class PythonEnvironment:
     across commands, with variable tracking and display.
 
     Design:
-        - Spawns persistent Python process using pexpect
+        - Extends InteractiveEnvironment for process management
         - Uses custom prompt marker for reliable command completion detection
         - Tracks namespace variables with type information
         - Tracks variable usage via regex matching in commands
         - Displays working directory and recently used variables on screen
         - Supports multi-line code execution
+        - Auto-restarts on process termination
 
     State maintained:
         - Global namespace (variables, functions, classes)
         - Variable usage ordering (most recent first)
         - Current working directory
-        - Whether environment has been used
 
     Limitations:
         - No timeout mechanism (infinite loops will block indefinitely)
@@ -42,21 +39,25 @@ class PythonEnvironment:
     PROMPT_MARKER = "<<<PROMPT>>>"
     # Maximum variables to display
     MAX_VARIABLES_DISPLAY = 100
-    # Command timeout (None = wait indefinitely)
-    # Infinite loops will block indefinitely - agent must be careful
-    TIMEOUT = None
-    # Buffer size for pexpect read operations (64KB)
-    PEXPECT_MAXREAD = 65536
 
     def __init__(self) -> None:
         """Initialize Python environment (process starts on first command)."""
-        self._process: Optional[pexpect.spawn] = None
-        self._used = False
+        super().__init__(
+            prompt_marker=self.PROMPT_MARKER,
+            name="Python",
+        )
         self._cwd: str = os.getcwd()
         self._ordered_vars: list[str] = []
 
-    def _start_process(self) -> None:
-        """Start Python process and configure prompt."""
+    def _get_spawn_command(self) -> tuple[str, list[str]]:
+        """
+        Get Python REPL spawn command.
+
+        Returns:
+            Tuple of (python_executable, ["-u", "-q"])
+
+        Handles SHELL_PREFIX environment variable for nix develop compatibility.
+        """
         # Check for shell prefix (e.g., "nix develop --command")
         shell_prefix = os.environ.get("SHELL_PREFIX", "")
 
@@ -66,30 +67,30 @@ class PythonEnvironment:
             import shlex
 
             cmd_parts = shlex.split(shell_prefix) + [sys.executable, "-u", "-q"]
-            cmd = cmd_parts[0]
-            args = cmd_parts[1:]
+            return cmd_parts[0], cmd_parts[1:]
         else:
             # No wrapper, direct python
-            cmd = sys.executable
-            args = ["-u", "-q"]  # -u: unbuffered, -q: quiet (no banner)
+            return sys.executable, ["-u", "-q"]  # -u: unbuffered, -q: quiet
 
-        # Spawn Python REPL
-        # Set TERM=dumb to disable ANSI escape codes
-        self._process = pexpect.spawn(
-            cmd,
-            args,
-            encoding="utf-8",
-            codec_errors="replace",
-            echo=False,
-            maxread=self.PEXPECT_MAXREAD,
-            env={"TERM": "dumb", "PYTHONIOENCODING": "utf-8"},
-        )
+    def _get_spawn_env(self) -> dict[str, str]:
+        """
+        Set environment variables for Python process.
 
+        Returns:
+            Environment dict with TERM=dumb to disable ANSI codes
+        """
+        return {"TERM": "dumb", "PYTHONIOENCODING": "utf-8"}
+
+    def _initialize_process(self) -> None:
+        """
+        Initialize Python REPL and configure prompt.
+
+        Sets custom sys.ps1/ps2 prompts and gets initial working directory.
+        """
         # Wait for initial prompt (>>>)
         self._process.expect_exact(">>> ")
 
         # Set up custom prompt using sys.ps1 and sys.ps2
-        # ps1 is primary prompt, ps2 is continuation prompt
         self._process.send(f'import sys; sys.ps1 = "{self.PROMPT_MARKER}"\n')
         self._process.expect_exact(self.PROMPT_MARKER)
 
@@ -101,12 +102,10 @@ class PythonEnvironment:
         self._process.send("import os; os.getcwd()\n")
         self._process.expect_exact(self.PROMPT_MARKER)
         output = self._process.before.strip()
-        # Output will be like: "'/ home/user/project'"
+        # Output will be like: "'/home/user/project'"
         # Extract the path from the repr string
         if output and output.startswith("'") and output.endswith("'"):
             self._cwd = output[1:-1]
-
-        self._used = True
 
     def _get_type_name(self, type_str: str) -> str:
         """
@@ -150,15 +149,14 @@ class PythonEnvironment:
         # Parse output: {'var1': "<class 'int'>", 'var2': "<class 'str'>"}
         try:
             # Use ast.literal_eval to safely parse the dict representation
-            # More robust than eval() - only parses Python literals
             var_dict = ast.literal_eval(output)
-            # Verify it's actually a dict (could be a string if error occurred)
+            # Verify it's actually a dict
             if not isinstance(var_dict, dict):
                 return {}
             # Convert type strings to simple names
             return {k: self._get_type_name(v) for k, v in var_dict.items()}
         except (ValueError, SyntaxError, AttributeError):
-            # If parsing fails or unexpected type, return empty dict
+            # If parsing fails, return empty dict
             return {}
 
     def _update_variable_ordering(
@@ -181,7 +179,7 @@ class PythonEnvironment:
         # Move matched variables to front of ordered list
         # Remove matches from current position
         remaining = [v for v in self._ordered_vars if v not in matches]
-        # Add matches at front, preserving their relative order from the match
+        # Add matches at front
         self._ordered_vars = matches + remaining
 
         # Add any new variables (not in matches or remaining)
@@ -211,98 +209,54 @@ class PythonEnvironment:
         namespace = self._get_namespace_variables()
         self._update_variable_ordering(command, namespace)
 
-    def handle_command(self, cmd: CommandText) -> CommandResponse:
+    def _send_command(self, command: str) -> None:
         """
-        Execute Python code.
+        Send Python code to REPL, handling multi-line statements.
 
         Args:
-            cmd: The Python code to execute
+            command: The Python code to send
 
-        Returns:
-            Response with output (printed values and expression results)
+        Multi-line code and compound statements require an extra newline
+        to tell Python the block is complete.
         """
-        try:
-            # Start process on first command
-            if self._process is None:
-                self._start_process()
+        # For multi-line code or compound statements, we need an extra newline
+        # Check if:
+        # 1. Contains newline (explicitly multi-line), OR
+        # 2. Is a complete single-line compound statement
+        is_multiline = "\n" in command
 
-            # Send command
-            command = cmd.value
-
-            # For multi-line code or compound statements, we need an extra newline
-            # to tell Python REPL the block is complete
-            # Check if:
-            # 1. Contains newline (explicitly multi-line), OR
-            # 2. Is a complete single-line compound statement (def...:, class...:, etc.)
-            is_multiline = "\n" in command
-            # Check for complete compound statement (must have colon to be syntactically complete)
-            stripped = command.lstrip()
-            is_compound = (
-                (stripped.startswith(("def ", "class ")) and ":" in command)
-                or (
-                    stripped.startswith(
-                        ("if ", "for ", "while ", "with ", "elif ", "else:")
-                    )
-                    and command.rstrip().endswith(":")
+        # Check for complete compound statement (must have colon)
+        stripped = command.lstrip()
+        is_compound = (
+            (stripped.startswith(("def ", "class ")) and ":" in command)
+            or (
+                stripped.startswith(
+                    ("if ", "for ", "while ", "with ", "elif ", "else:")
                 )
-                or stripped.startswith(("try:", "except", "finally:"))
+                and command.rstrip().endswith(":")
             )
+            or stripped.startswith(("try:", "except", "finally:"))
+        )
 
-            if is_multiline or is_compound:
-                # Multi-line or compound: send command + blank line to complete
-                self._process.send(command + "\n\n")
-            else:
-                # Simple single line: just send with newline
-                self._process.send(command + "\n")
+        if is_multiline or is_compound:
+            # Multi-line or compound: send command + blank line to complete
+            self._process.send(command + "\n\n")
+        else:
+            # Simple single line: just send with newline
+            self._process.send(command + "\n")
 
-            # Wait for prompt marker (with reasonable timeout)
-            # Use None timeout for now (matches bash behavior)
-            # Future: make this configurable
-            self._process.expect_exact(self.PROMPT_MARKER, timeout=None)
+    def _on_restart(self) -> None:
+        """Reset Python-specific state on process restart."""
+        self._cwd = os.getcwd()
+        self._ordered_vars = []
 
-            # Get output
-            output = self._process.before.strip()
-
-            # Update working directory and variable tracking
-            self._update_state_after_command(command)
-
-            # Python REPL doesn't have an explicit success/failure indicator
-            # We consider it processed successfully if we got a prompt back
-            # Exceptions will be in the output
-            processed = True
-
-            return CommandResponse(output=output, processed=processed)
-
-        except pexpect.EOF:
-            return CommandResponse(
-                output="Python process terminated unexpectedly", processed=False
-            )
-        except pexpect.TIMEOUT:
-            return CommandResponse(
-                output="Command timed out (prompt not detected)", processed=False
-            )
-        except Exception as e:
-            return CommandResponse(
-                output=f"Error executing command: {e}", processed=False
-            )
-
-    def get_screen(self) -> ScreenSection:
+    def get_state_display(self) -> str:
         """
-        Get current Python environment state.
+        Get Python environment state for display.
 
         Returns:
-            Screen section showing working directory, variables with types, and help
-
-        Format:
-            Working directory: /home/user/project
-
-            Variables (recent):
-              df: DataFrame
-              model: RandomForestClassifier
-
-            Any Python code. Variables and imports persist across commands.
+            Multi-line string showing working directory, variables, and help
         """
-        # Build screen content
         lines = []
 
         if self._used:
@@ -330,22 +284,11 @@ class PythonEnvironment:
             # Add blank line before help
             lines.append("")
 
-        # Always show help text (freeform environment)
+        # Always show help text
         lines.append("Any Python code. Variables and imports persist across commands.")
 
-        content = "\n".join(lines)
-        return ScreenSection(content=content, max_lines=50)
+        return "\n".join(lines)
 
-    def shutdown(self) -> None:
-        """Clean up Python process."""
-        if self._process:
-            try:
-                # Try graceful shutdown
-                self._process.send("exit()\n")
-                self._process.expect(pexpect.EOF, timeout=2)
-            except (pexpect.TIMEOUT, pexpect.EOF):
-                pass
-            finally:
-                if self._process.isalive():
-                    self._process.terminate(force=True)
-                self._process = None
+    def _shutdown_gracefully(self) -> None:
+        """Send exit() command to Python."""
+        self._process.send("exit()\n")

@@ -164,19 +164,44 @@ class Environment(Protocol):
         ## Interactive Programs
 
         For wrapping interactive programs (gdb, database CLIs, etc.), use the
-        `InteractiveEnvironment` base class which handles common patterns:
+        `InteractiveEnvironment` base class which provides:
+
+        - Process spawning and management via pexpect
+        - Prompt detection for command completion
+        - Auto-restart on process termination
+        - Output truncation
+        - Clean shutdown handling
 
         <python>
         from orchestrator.interactive import InteractiveEnvironment
 
         class GdbEnvironment(InteractiveEnvironment):
-            command = "gdb"
-            prompt = r"\\(gdb\\) "
-            description = "GDB debugger"
+            def __init__(self):
+                super().__init__(prompt_marker="(gdb) ", name="gdb")
+                self.breakpoints = []
+
+            def _get_spawn_command(self) -> tuple[str, list[str]]:
+                return "gdb", ["--quiet", "--interpreter=mi"]
+
+            def _initialize_process(self) -> None:
+                # Wait for initial prompt
+                self._process.expect_exact(self._prompt_marker)
+
+            def _update_state_after_command(self, command: str) -> None:
+                # Extract breakpoints, current frame, etc.
+                pass
+
+            def get_state_display(self) -> str:
+                return f"GDB debugger\\nBreakpoints: {len(self.breakpoints)}"
     </python>
 
-        See the orchestrator documentation for details on the InteractiveEnvironment
-        base class.
+        The base class handles process lifecycle, prompt detection, and error
+        handling automatically. Subclasses only need to implement:
+
+        - `_get_spawn_command()`: Command and args to spawn
+        - `_initialize_process()`: Set up prompts after spawn
+        - `_update_state_after_command(command)`: Extract state after each command
+        - `get_state_display()`: Return state string for screen
     """
 
     def handle_command(self, cmd: CommandText) -> CommandResponse:

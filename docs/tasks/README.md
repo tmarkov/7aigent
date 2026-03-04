@@ -60,6 +60,7 @@ The orchestrator can work as a standalone tool without an agent. Focus on these 
 - [x] [10 - Implement DeclarativeEnvironment base class](./10-implement-declarative-environment.md) - Base class for structured command environments with auto-help
 - [x] [11 - Implement help system](./11-implement-help-system.md) - Implement the designed help system
 - [x] [12 - Review orchestrator implementation](./12-review-orchestrator-implementation.md) - Comprehensive review of design, code, tests, and documentation
+- [x] [25 - Implement InteractiveEnvironment base class](./25-implement-interactive-environment.md) - Create base class for interactive processes, refactor bash and python environments ✅ Completed
 
 ### Agent Design and Implementation
 
