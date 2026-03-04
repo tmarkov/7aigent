@@ -69,7 +69,7 @@ These tasks are for designing and implementing the agent:
 - [x] [14 - Implement agent core](./14-implement-agent-core.md)
 - [x] [15 - Design sandbox container](./15-design-sandbox-container.md) - Design bubblewrap-based sandbox to replace Podman
 - [x] [16 - Implement sandbox container](./16-implement-sandbox-container.md) - Bubblewrap-based sandbox with integrated tests
-- [ ] [17 - End-to-end testing](./17-end-to-end-testing.md)
+- [-] [~~17 - End-to-end testing~~](./17-end-to-end-testing.md) - **DROPPED** - Replaced by tasks 22-24
 
 ### Context Management
 
@@ -83,3 +83,6 @@ These tasks are for designing and implementing the agent:
 
 - [x] [20 - Rework testing strategy](./20-rework-testing-strategy.md) - Replace superficial tests with substantive requirement-based tests ✅ Completed
 - [ ] [21 - Fix orchestrator error handling](./21-fix-orchestrator-error-handling.md) - Return success: false for actual failures instead of always true
+- [ ] [22 - Add LLM integration tests (Tier 2)](./22-llm-integration-tests.md) - Test with real LLM API, validate session management and cost tracking
+- [ ] [23 - Create example sessions](./23-example-sessions.md) - Create example projects demonstrating agent capabilities
+- [ ] [24 - Performance benchmarking](./24-performance-benchmarking.md) - Measure baselines and stress test long sessions
