@@ -150,7 +150,8 @@ fn run_integration_test(log: Arc<Mutex<TestLog>>) {
             response.processed, response.output
         ),
     );
-    assert!(response.processed, "Echo command should succeed");
+    assert!(response.processed, "Echo command should execute");
+    assert_eq!(response.exit_code, Some(0), "Echo should succeed (exit 0)");
     assert!(
         response.output.contains("hello"),
         "Output should contain 'hello', got: {:?}",
@@ -191,7 +192,8 @@ fn run_integration_test(log: Arc<Mutex<TestLog>>) {
             response.processed, response.output
         ),
     );
-    assert!(response.processed, "ls command should succeed");
+    assert!(response.processed, "ls command should execute");
+    assert_eq!(response.exit_code, Some(0), "ls should succeed (exit 0)");
     assert!(
         response.output.contains("test.txt"),
         "Should see test.txt in workspace"
@@ -223,7 +225,8 @@ fn run_integration_test(log: Arc<Mutex<TestLog>>) {
             response.processed, response.output
         ),
     );
-    assert!(response.processed, "cat command should succeed");
+    assert!(response.processed, "cat command should execute");
+    assert_eq!(response.exit_code, Some(0), "cat should succeed (exit 0)");
     assert!(
         response.output.contains("42"),
         "Should read file content '42'"
@@ -247,7 +250,12 @@ fn run_integration_test(log: Arc<Mutex<TestLog>>) {
             response.processed, response.output
         ),
     );
-    assert!(response.processed, "nested cat should succeed");
+    assert!(response.processed, "nested cat should execute");
+    assert_eq!(
+        response.exit_code,
+        Some(0),
+        "nested cat should succeed (exit 0)"
+    );
     assert!(
         response.output.contains("nested file"),
         "Should read nested file content"
@@ -344,7 +352,8 @@ fn run_integration_test(log: Arc<Mutex<TestLog>>) {
             response.processed, response.output
         ),
     );
-    assert!(response.processed, "pwd command should succeed");
+    assert!(response.processed, "pwd command should execute");
+    assert_eq!(response.exit_code, Some(0), "pwd should succeed (exit 0)");
     TestLog::log(&log, "✓ Can switch between environments");
 
     TestLog::log(&log, "=== Test 7: Error Handling ===");
@@ -365,7 +374,17 @@ fn run_integration_test(log: Arc<Mutex<TestLog>>) {
             response.processed, response.output
         ),
     );
-    // Bash environment should capture the error in output
+    // Bash environment should execute the command (even though it fails)
+    assert!(
+        response.processed,
+        "Command should execute (execution succeeds)"
+    );
+    assert_ne!(
+        response.exit_code,
+        Some(0),
+        "cat nonexistent should fail (exit != 0)"
+    );
+    // Verify specific error type via output
     assert!(
         response.output.contains("No such file")
             || response.output.contains("cannot access")
@@ -420,6 +439,8 @@ fn run_integration_test(log: Arc<Mutex<TestLog>>) {
         .receive_response()
         .expect("Failed to receive echo var response");
 
+    assert!(response.processed, "echo $MY_VAR should execute");
+    assert_eq!(response.exit_code, Some(0), "echo should succeed (exit 0)");
     assert!(
         response.output.contains("hello"),
         "Environment variable should persist across commands"
@@ -450,7 +471,74 @@ fn run_integration_test(log: Arc<Mutex<TestLog>>) {
     );
     TestLog::log(&log, "✓ Python state persists across commands");
 
-    TestLog::log(&log, "=== Test 9: Sandbox Shutdown ===");
+    TestLog::log(&log, "=== Test 9: Bash Exit Codes ===");
+
+    // Test: true command
+    TestLog::log(&log, "Sending: bash 'true'");
+    handle
+        .send_command("bash", "true")
+        .expect("Failed to send true command");
+    let (response, _) = handle
+        .receive_response()
+        .expect("Failed to receive true response");
+    assert!(response.processed, "true should execute");
+    assert_eq!(response.exit_code, Some(0), "true should exit 0");
+    TestLog::log(&log, "✓ true exits with 0");
+
+    // Test: false command
+    TestLog::log(&log, "Sending: bash 'false'");
+    handle
+        .send_command("bash", "false")
+        .expect("Failed to send false command");
+    let (response, _) = handle
+        .receive_response()
+        .expect("Failed to receive false response");
+    assert!(
+        response.processed,
+        "false should execute (execution succeeds)"
+    );
+    assert_eq!(
+        response.exit_code,
+        Some(1),
+        "false should exit 1 (operation fails)"
+    );
+    TestLog::log(&log, "✓ false exits with 1");
+
+    // Test: exit command terminates bash process
+    // Since the process exits with non-zero code, it should be treated as an error
+    TestLog::log(&log, "Sending: bash 'exit 42'");
+    handle
+        .send_command("bash", "exit 42")
+        .expect("Failed to send exit 42 command");
+    let (response, _) = handle
+        .receive_response()
+        .expect("Failed to receive exit 42 response");
+    assert!(
+        !response.processed,
+        "exit 42 terminates process with error (non-zero exit)"
+    );
+    TestLog::log(&log, "✓ exit 42 terminates bash process (error)");
+
+    // Test: exit 0 should be treated as clean termination
+    TestLog::log(&log, "Sending: bash 'exit 0'");
+    handle
+        .send_command("bash", "exit 0")
+        .expect("Failed to send exit 0 command");
+    let (response, _) = handle
+        .receive_response()
+        .expect("Failed to receive exit 0 response");
+    assert!(
+        response.processed,
+        "exit 0 terminates cleanly (processed=true)"
+    );
+    assert_eq!(
+        response.exit_code,
+        Some(0),
+        "exit 0 should have exit code 0"
+    );
+    TestLog::log(&log, "✓ exit 0 terminates bash process cleanly");
+
+    TestLog::log(&log, "=== Test 10: Sandbox Shutdown ===");
     handle.shutdown().expect("Failed to shutdown sandbox");
     TestLog::log(&log, "✓ Sandbox shut down cleanly");
 

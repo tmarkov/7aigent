@@ -180,6 +180,7 @@ impl ContainerHandle {
             processed: message["response"]["processed"]
                 .as_bool()
                 .ok_or(ContainerError::InvalidMessage)?,
+            exit_code: message["response"]["exit_code"].as_i64().map(|v| v as i32),
         };
 
         let screen = parse_screen(&message["screen"])?;

@@ -265,6 +265,8 @@ pub enum Event {
         command: String,
         output: String,
         processed: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i32>,
         screen: ScreenState,
     },
     SessionEnd {
@@ -421,6 +423,10 @@ pub struct CommandResponse {
 
     /// Whether command was processed successfully
     pub processed: bool,
+
+    /// Exit code (bash only, optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
 }
 
 // Internal types for LLM context building

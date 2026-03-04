@@ -95,9 +95,12 @@ class BashEnvironment:
         # Get exit code using echo $?
         self._process.send("echo $?\n")
         self._process.expect_exact(self.PROMPT_MARKER)
-        exit_code_output = self._process.before.strip()
+        exit_code_output = self._process.before
+        # Strip ANSI escape codes (bash emits bracketed paste mode even with --norc)
+        # Remove all ANSI CSI sequences: ESC [ ... (any letter)
+        clean_output = re.sub(r"\x1b\[[^a-zA-Z]*[a-zA-Z]", "", exit_code_output).strip()
         try:
-            self._exit_code = int(exit_code_output)
+            self._exit_code = int(clean_output)
         except ValueError:
             # If we can't parse, keep previous exit code
             pass
@@ -180,9 +183,44 @@ class BashEnvironment:
             return response
 
         except pexpect.EOF:
-            return CommandResponse(
-                output="Bash process terminated unexpectedly", processed=False
-            )
+            # Process terminated - get exit status and restart on next command
+            # Need to close() to populate exitstatus/signalstatus
+            if self._process:
+                self._process.close()
+                exit_status = self._process.exitstatus
+                signal_status = self._process.signalstatus
+
+                # Clear process so it restarts on next command
+                self._process = None
+
+                # Determine if this was a clean exit or error
+                if signal_status is not None:
+                    # Killed by signal - always an error
+                    return CommandResponse(
+                        output=f"Bash process killed by signal {signal_status}. Environment will restart on next command.",
+                        processed=False,
+                    )
+                elif exit_status == 0:
+                    # Clean exit - processed successfully
+                    response = CommandResponse(
+                        output="Bash process exited cleanly (exit code 0). Environment will restart on next command.",
+                        processed=True,
+                    )
+                    response.exit_code = 0
+                    return response
+                else:
+                    # Non-zero exit - error
+                    response = CommandResponse(
+                        output=f"Bash process exited with code {exit_status}. Environment will restart on next command.",
+                        processed=False,
+                    )
+                    response.exit_code = exit_status
+                    return response
+            else:
+                # Should not happen, but handle it
+                return CommandResponse(
+                    output="Bash process terminated unexpectedly", processed=False
+                )
         except pexpect.TIMEOUT:
             return CommandResponse(
                 output="Command timed out (prompt not detected)", processed=False
