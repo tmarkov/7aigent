@@ -267,23 +267,23 @@ class PythonEnvironment:
             self._update_state_after_command(command)
 
             # Python REPL doesn't have an explicit success/failure indicator
-            # We consider it successful if we got a prompt back
+            # We consider it processed successfully if we got a prompt back
             # Exceptions will be in the output
-            success = True
+            processed = True
 
-            return CommandResponse(output=output, success=success)
+            return CommandResponse(output=output, processed=processed)
 
         except pexpect.EOF:
             return CommandResponse(
-                output="Python process terminated unexpectedly", success=False
+                output="Python process terminated unexpectedly", processed=False
             )
         except pexpect.TIMEOUT:
             return CommandResponse(
-                output="Command timed out (prompt not detected)", success=False
+                output="Command timed out (prompt not detected)", processed=False
             )
         except Exception as e:
             return CommandResponse(
-                output=f"Error executing command: {e}", success=False
+                output=f"Error executing command: {e}", processed=False
             )
 
     def get_screen(self) -> ScreenSection:

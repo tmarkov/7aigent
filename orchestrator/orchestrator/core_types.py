@@ -63,28 +63,36 @@ class CommandText:
     value: str
 
 
-@dataclass(frozen=True)
+@dataclass
 class CommandResponse:
     """
     Response from executing a command.
 
-    Contains the output produced by the command and a success flag indicating
-    whether the command completed successfully. Environments define their own
-    semantics for success/failure.
+    Contains the output produced by the command and a processed flag indicating
+    whether the orchestrator successfully routed and the environment successfully
+    handled the command.
+
+    The dataclass is mutable (not frozen) to allow environments to add optional
+    fields for environment-specific data (e.g., bash's exit_code field).
 
     Attributes:
         output: Text output from command execution (stdout, stderr, results, etc.)
-        success: Whether the command succeeded (environment-specific definition)
+        processed: Whether the command was processed successfully:
+            - True: Orchestrator routed to environment successfully AND
+                   environment's handle_command() returned normally (no exception)
+            - False: Routing failed (unknown environment) OR
+                    command parsing failed (invalid syntax) OR
+                    infrastructure failure (process crash, timeout, unexpected exception)
 
     Examples:
         >>> CommandResponse("total 48\\ndrwxr-xr-x...", True)
-        CommandResponse(output='total 48\\ndrwxr-xr-x...', success=True)
+        CommandResponse(output='total 48\\ndrwxr-xr-x...', processed=True)
         >>> CommandResponse("Error: file not found", False)
-        CommandResponse(output='Error: file not found', success=False)
+        CommandResponse(output='Error: file not found', processed=False)
     """
 
     output: str
-    success: bool
+    processed: bool
 
 
 @dataclass(frozen=True)

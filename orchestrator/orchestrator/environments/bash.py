@@ -173,22 +173,23 @@ class BashEnvironment:
             self._update_state_after_command()
             self._update_background_jobs()
 
-            # Success based on exit code
-            success = self._exit_code == 0
+            # Create response with processed=True and exit_code field
+            response = CommandResponse(output=output, processed=True)
+            response.exit_code = self._exit_code
 
-            return CommandResponse(output=output, success=success)
+            return response
 
         except pexpect.EOF:
             return CommandResponse(
-                output="Bash process terminated unexpectedly", success=False
+                output="Bash process terminated unexpectedly", processed=False
             )
         except pexpect.TIMEOUT:
             return CommandResponse(
-                output="Command timed out (prompt not detected)", success=False
+                output="Command timed out (prompt not detected)", processed=False
             )
         except Exception as e:
             return CommandResponse(
-                output=f"Error executing command: {e}", success=False
+                output=f"Error executing command: {e}", processed=False
             )
 
     def get_screen(self) -> ScreenSection:

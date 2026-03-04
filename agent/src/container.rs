@@ -177,7 +177,7 @@ impl ContainerHandle {
                 .as_str()
                 .ok_or(ContainerError::InvalidMessage)?
                 .to_string(),
-            success: message["response"]["success"]
+            processed: message["response"]["processed"]
                 .as_bool()
                 .ok_or(ContainerError::InvalidMessage)?,
         };

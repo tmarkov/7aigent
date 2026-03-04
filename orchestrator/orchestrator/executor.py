@@ -44,7 +44,7 @@ def execute_command(
         ...     "echo hello",
         ...     envs
         ... )
-        >>> response.success
+        >>> response.processed
         True
         >>> "hello" in response.output
         True
@@ -55,7 +55,7 @@ def execute_command(
         return CommandResponse(
             output=f"Unknown environment: {env_name.value!r}. "
             f"Available environments: {available}",
-            success=False,
+            processed=False,
         )
 
     # Get environment
@@ -74,5 +74,5 @@ def execute_command(
         # This shouldn't happen (environments should catch their own exceptions),
         # but handle it gracefully just in case
         return CommandResponse(
-            output=f"Internal error: {type(e).__name__}: {e}", success=False
+            output=f"Internal error: {type(e).__name__}: {e}", processed=False
         )

@@ -41,7 +41,7 @@ class TestPythonEnvironment:
             assert "84" in response.output, "Function should persist"
 
             response = env.handle_command(CommandText("Bar()"))
-            assert response.success, "Class should persist"
+            assert response.processed, "Class should persist"
         finally:
             env.shutdown()
 
@@ -162,12 +162,12 @@ class TestPythonEnvironment:
         try:
             # Runtime exception
             response = env.handle_command(CommandText("1 / 0"))
-            assert response.success is True, "Command executed even with exception"
+            assert response.processed is True, "Command executed even with exception"
             assert "ZeroDivisionError" in response.output, "Exception must be in output"
 
             # Syntax error
             response = env.handle_command(CommandText("if True"))
-            assert response.success is True, "Command executed even with syntax error"
+            assert response.processed is True, "Command executed even with syntax error"
             assert "SyntaxError" in response.output, "Syntax error must be in output"
 
             # Environment still works after errors
@@ -299,7 +299,7 @@ class TestPythonEnvironment:
             code = """def add(a, b):
     return a + b"""
             response = env.handle_command(CommandText(code))
-            assert response.success is True, "Function definition should succeed"
+            assert response.processed is True, "Function definition should succeed"
 
             # Use function
             response = env.handle_command(CommandText("add(3, 4)"))
@@ -311,7 +311,7 @@ class TestPythonEnvironment:
         self.x = x
         self.y = y"""
             response = env.handle_command(CommandText(code))
-            assert response.success is True, "Class definition should succeed"
+            assert response.processed is True, "Class definition should succeed"
 
             # Create instance
             env.handle_command(CommandText("p = Point(10, 20)"))
@@ -335,11 +335,11 @@ class TestPythonEnvironment:
         try:
             # Empty command
             response = env.handle_command(CommandText(""))
-            assert response.success is True, "Empty command should succeed"
+            assert response.processed is True, "Empty command should succeed"
 
             # Comment only
             response = env.handle_command(CommandText("# This is a comment"))
-            assert response.success is True, "Comment-only command should succeed"
+            assert response.processed is True, "Comment-only command should succeed"
 
             # Variable reassignment with type change
             env.handle_command(CommandText("x = 42"))

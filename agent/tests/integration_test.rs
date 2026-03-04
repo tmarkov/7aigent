@@ -146,11 +146,11 @@ fn run_integration_test(log: Arc<Mutex<TestLog>>) {
     TestLog::log(
         &log,
         format!(
-            "Response: success={}, output={:?}",
-            response.success, response.output
+            "Response: processed={}, output={:?}",
+            response.processed, response.output
         ),
     );
-    assert!(response.success, "Echo command should succeed");
+    assert!(response.processed, "Echo command should succeed");
     assert!(
         response.output.contains("hello"),
         "Output should contain 'hello', got: {:?}",
@@ -187,11 +187,11 @@ fn run_integration_test(log: Arc<Mutex<TestLog>>) {
     TestLog::log(
         &log,
         format!(
-            "Response: success={}, output={:?}",
-            response.success, response.output
+            "Response: processed={}, output={:?}",
+            response.processed, response.output
         ),
     );
-    assert!(response.success, "ls command should succeed");
+    assert!(response.processed, "ls command should succeed");
     assert!(
         response.output.contains("test.txt"),
         "Should see test.txt in workspace"
@@ -219,11 +219,11 @@ fn run_integration_test(log: Arc<Mutex<TestLog>>) {
     TestLog::log(
         &log,
         format!(
-            "Response: success={}, output={:?}",
-            response.success, response.output
+            "Response: processed={}, output={:?}",
+            response.processed, response.output
         ),
     );
-    assert!(response.success, "cat command should succeed");
+    assert!(response.processed, "cat command should succeed");
     assert!(
         response.output.contains("42"),
         "Should read file content '42'"
@@ -243,11 +243,11 @@ fn run_integration_test(log: Arc<Mutex<TestLog>>) {
     TestLog::log(
         &log,
         format!(
-            "Response: success={}, output={:?}",
-            response.success, response.output
+            "Response: processed={}, output={:?}",
+            response.processed, response.output
         ),
     );
-    assert!(response.success, "nested cat should succeed");
+    assert!(response.processed, "nested cat should succeed");
     assert!(
         response.output.contains("nested file"),
         "Should read nested file content"
@@ -268,11 +268,11 @@ fn run_integration_test(log: Arc<Mutex<TestLog>>) {
     TestLog::log(
         &log,
         format!(
-            "Response: success={}, output={:?}",
-            response.success, response.output
+            "Response: processed={}, output={:?}",
+            response.processed, response.output
         ),
     );
-    assert!(response.success, "Python command should succeed");
+    assert!(response.processed, "Python command should succeed");
     assert!(response.output.contains("4"), "Python should compute 2+2=4");
     TestLog::log(&log, "✓ Python environment works");
 
@@ -289,11 +289,11 @@ fn run_integration_test(log: Arc<Mutex<TestLog>>) {
     TestLog::log(
         &log,
         format!(
-            "Response: success={}, output={:?}",
-            response.success, response.output
+            "Response: processed={}, output={:?}",
+            response.processed, response.output
         ),
     );
-    assert!(response.success, "Python import should succeed");
+    assert!(response.processed, "Python import should succeed");
     assert!(response.output.contains("3.14"), "Should print pi value");
     TestLog::log(&log, "✓ Python imports work");
 
@@ -311,11 +311,11 @@ fn run_integration_test(log: Arc<Mutex<TestLog>>) {
     TestLog::log(
         &log,
         format!(
-            "Response: success={}, output={:?}",
-            response.success, response.output
+            "Response: processed={}, output={:?}",
+            response.processed, response.output
         ),
     );
-    assert!(response.success, "Editor view should succeed");
+    assert!(response.processed, "Editor view should succeed");
 
     // Check that editor screen shows the view
     let editor_screen = &screen.sections["editor"];
@@ -340,11 +340,11 @@ fn run_integration_test(log: Arc<Mutex<TestLog>>) {
     TestLog::log(
         &log,
         format!(
-            "Response: success={}, output={:?}",
-            response.success, response.output
+            "Response: processed={}, output={:?}",
+            response.processed, response.output
         ),
     );
-    assert!(response.success, "pwd command should succeed");
+    assert!(response.processed, "pwd command should succeed");
     TestLog::log(&log, "✓ Can switch between environments");
 
     TestLog::log(&log, "=== Test 7: Error Handling ===");
@@ -361,8 +361,8 @@ fn run_integration_test(log: Arc<Mutex<TestLog>>) {
     TestLog::log(
         &log,
         format!(
-            "Response: success={}, output={:?}",
-            response.success, response.output
+            "Response: processed={}, output={:?}",
+            response.processed, response.output
         ),
     );
     // Bash environment should capture the error in output
@@ -387,12 +387,12 @@ fn run_integration_test(log: Arc<Mutex<TestLog>>) {
     TestLog::log(
         &log,
         format!(
-            "Response: success={}, output={:?}",
-            response.success, response.output
+            "Response: processed={}, output={:?}",
+            response.processed, response.output
         ),
     );
     assert!(
-        response.success,
+        response.processed,
         "Python command executes even with exception"
     );
     assert!(

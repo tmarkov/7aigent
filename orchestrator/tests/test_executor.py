@@ -14,14 +14,14 @@ class TestExecuteCommand:
         # Create mock environment
         mock_env = Mock()
         mock_env.handle_command.return_value = CommandResponse(
-            output="result", success=True
+            output="result", processed=True
         )
 
         envs = {EnvironmentName("bash"): mock_env}
 
         response = execute_command(EnvironmentName("bash"), "echo hello", envs)
 
-        assert response.success is True
+        assert response.processed is True
         assert response.output == "result"
 
         # Verify environment was called with correct command
@@ -34,14 +34,14 @@ class TestExecuteCommand:
         """Test executing a command that fails."""
         mock_env = Mock()
         mock_env.handle_command.return_value = CommandResponse(
-            output="error", success=False
+            output="error", processed=False
         )
 
         envs = {EnvironmentName("bash"): mock_env}
 
         response = execute_command(EnvironmentName("bash"), "false", envs)
 
-        assert response.success is False
+        assert response.processed is False
         assert response.output == "error"
 
     def test_unknown_environment(self) -> None:
@@ -51,7 +51,7 @@ class TestExecuteCommand:
         response = execute_command(EnvironmentName("python"), "print('hello')", envs)
 
         # Should return failed response with helpful error message
-        assert response.success is False
+        assert response.processed is False
         assert "Unknown environment: 'python'" in response.output
         assert "Available environments" in response.output
 
@@ -65,7 +65,7 @@ class TestExecuteCommand:
         response = execute_command(EnvironmentName("editor"), "view foo.py", envs)
 
         # Should list all available environments in error message
-        assert response.success is False
+        assert response.processed is False
         assert "Available environments" in response.output
         assert "bash" in response.output
         assert "python" in response.output
@@ -80,7 +80,7 @@ class TestExecuteCommand:
         response = execute_command(EnvironmentName("bash"), "ls", envs)
 
         # Should return failed response, not raise exception
-        assert response.success is False
+        assert response.processed is False
         assert "Internal error" in response.output
         assert "RuntimeError" in response.output
         assert "Something went wrong" in response.output
@@ -88,13 +88,15 @@ class TestExecuteCommand:
     def test_empty_command(self) -> None:
         """Test executing empty command."""
         mock_env = Mock()
-        mock_env.handle_command.return_value = CommandResponse(output="", success=True)
+        mock_env.handle_command.return_value = CommandResponse(
+            output="", processed=True
+        )
 
         envs = {EnvironmentName("bash"): mock_env}
 
         response = execute_command(EnvironmentName("bash"), "", envs)
 
-        assert response.success is True
+        assert response.processed is True
 
         # Verify environment received empty command
         call_args = mock_env.handle_command.call_args[0]

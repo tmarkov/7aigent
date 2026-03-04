@@ -279,7 +279,7 @@ impl<C: LlmClient> Agent<C> {
                         environment: cmd.env.clone(),
                         command: cmd.command.clone(),
                         output: cmd_response.output,
-                        success: cmd_response.success,
+                        processed: cmd_response.processed,
                         screen: screen_state,
                     };
                     self.session.append_event(&cmd_event)?;
@@ -446,7 +446,7 @@ impl<C: LlmClient> Agent<C> {
                     environment: cmd.env.clone(),
                     command: cmd.command.clone(),
                     output: cmd_response.output,
-                    success: cmd_response.success,
+                    processed: cmd_response.processed,
                     screen: screen_state,
                 };
                 self.session.append_event(&cmd_event)?;

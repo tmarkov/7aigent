@@ -106,13 +106,13 @@ def test_handle_command_routes_correctly():
 
     # Execute increment command
     response = env.handle_command(CommandText("increment"))
-    assert response.success is True
+    assert response.processed is True
     assert response.output == "Counter: 1"
     assert env.counter == 1
 
     # Execute reset command
     response = env.handle_command(CommandText("reset"))
-    assert response.success is True
+    assert response.processed is True
     assert response.output == "Counter reset"
     assert env.counter == 0
 
@@ -122,7 +122,7 @@ def test_handle_command_unknown_command():
     env = SimpleEnvironment()
 
     response = env.handle_command(CommandText("unknown"))
-    assert response.success is False
+    assert response.processed is False
     assert "Unknown command: unknown" in response.output
     assert "Available: increment, reset" in response.output
 
@@ -133,7 +133,7 @@ def test_handle_command_exception_handling():
 
     # Try to stop timer that's not running - should raise ValueError
     response = env.handle_command(CommandText("stop"))
-    assert response.success is False
+    assert response.processed is False
     assert "Error: Timer not running" in response.output
 
 
@@ -303,5 +303,5 @@ def test_empty_command_string():
     env = SimpleEnvironment()
 
     response = env.handle_command(CommandText(""))
-    assert response.success is False
+    assert response.processed is False
     assert "Unknown command:" in response.output

@@ -432,7 +432,7 @@ class EditorEnvironment(DeclarativeEnvironment):
         if not parsed:
             return CommandResponse(
                 output="Invalid view command. Format: view <filepath> /<start_pattern>/ /<end_pattern>/ [<label>]",
-                success=False,
+                processed=False,
             )
 
         filepath = Path(parsed["filepath"])
@@ -443,17 +443,19 @@ class EditorEnvironment(DeclarativeEnvironment):
         # Validate path is within project directory
         is_valid, error_msg = self._validate_filepath(filepath)
         if not is_valid:
-            return CommandResponse(output=error_msg, success=False)
+            return CommandResponse(output=error_msg, processed=False)
 
         # Check if file exists
         full_path = self._project_dir / filepath
         if not full_path.exists():
-            return CommandResponse(output=f"File not found: {filepath}", success=False)
+            return CommandResponse(
+                output=f"File not found: {filepath}", processed=False
+            )
 
         # Check if binary
         if self._is_binary_file(full_path):
             return CommandResponse(
-                output=f"Cannot view binary file: {filepath}", success=False
+                output=f"Cannot view binary file: {filepath}", processed=False
             )
 
         # Auto-close oldest view if at maximum
@@ -479,13 +481,13 @@ class EditorEnvironment(DeclarativeEnvironment):
         if result is None:
             return CommandResponse(
                 output=f"Added view [{view.view_id}] {filepath} /{start_pattern}/ to /{end_pattern}/ (patterns not found)",
-                success=True,
+                processed=True,
             )
 
         _, total_matches = result
         return CommandResponse(
             output=f"Added view [{view.view_id}] {filepath} /{start_pattern}/ to /{end_pattern}/ ({total_matches} match{'es' if total_matches != 1 else ''})",
-            success=True,
+            processed=True,
         )
 
     @command(
@@ -498,13 +500,15 @@ class EditorEnvironment(DeclarativeEnvironment):
         # Find view
         view = next((v for v in self._views if v.view_id == view_id), None)
         if not view:
-            return CommandResponse(output=f"View [{view_id}] not found", success=False)
+            return CommandResponse(
+                output=f"View [{view_id}] not found", processed=False
+            )
 
         # Generate content to get total matches
         result = self._generate_view_content(view)
         if result is None:
             return CommandResponse(
-                output=f"View [{view_id}] has no matches", success=False
+                output=f"View [{view_id}] has no matches", processed=False
             )
 
         _, total_matches = result
@@ -514,7 +518,7 @@ class EditorEnvironment(DeclarativeEnvironment):
 
         return CommandResponse(
             output=f"Showing match {view.current_match_index + 1}/{total_matches}",
-            success=True,
+            processed=True,
         )
 
     @command(
@@ -527,13 +531,15 @@ class EditorEnvironment(DeclarativeEnvironment):
         # Find view
         view = next((v for v in self._views if v.view_id == view_id), None)
         if not view:
-            return CommandResponse(output=f"View [{view_id}] not found", success=False)
+            return CommandResponse(
+                output=f"View [{view_id}] not found", processed=False
+            )
 
         # Generate content to get total matches
         result = self._generate_view_content(view)
         if result is None:
             return CommandResponse(
-                output=f"View [{view_id}] has no matches", success=False
+                output=f"View [{view_id}] has no matches", processed=False
             )
 
         _, total_matches = result
@@ -543,7 +549,7 @@ class EditorEnvironment(DeclarativeEnvironment):
 
         return CommandResponse(
             output=f"Showing match {view.current_match_index + 1}/{total_matches}",
-            success=True,
+            processed=True,
         )
 
     @command(
@@ -556,12 +562,14 @@ class EditorEnvironment(DeclarativeEnvironment):
         # Find and remove view
         view = next((v for v in self._views if v.view_id == view_id), None)
         if not view:
-            return CommandResponse(output=f"View [{view_id}] not found", success=False)
+            return CommandResponse(
+                output=f"View [{view_id}] not found", processed=False
+            )
 
         self._views.remove(view)
         self._cached_content.pop(view_id, None)
 
-        return CommandResponse(output=f"Closed view [{view_id}]", success=True)
+        return CommandResponse(output=f"Closed view [{view_id}]", processed=True)
 
     @command(
         signature="edit <file> <start>-<end>",
@@ -574,7 +582,7 @@ class EditorEnvironment(DeclarativeEnvironment):
         if not parsed:
             return CommandResponse(
                 output="Invalid edit command. Format: edit <filepath> <start_line>-<end_line>\\n<new content>",
-                success=False,
+                processed=False,
             )
 
         filepath = Path(parsed["filepath"])
@@ -585,7 +593,7 @@ class EditorEnvironment(DeclarativeEnvironment):
         # Validate path is within project directory
         is_valid, error_msg = self._validate_filepath(filepath)
         if not is_valid:
-            return CommandResponse(output=error_msg, success=False)
+            return CommandResponse(output=error_msg, processed=False)
 
         # Find which view contains these line numbers
         view_content = None
@@ -601,7 +609,7 @@ class EditorEnvironment(DeclarativeEnvironment):
         if view_content is None:
             return CommandResponse(
                 output=f"Can only edit lines visible in a view. Lines {start_line}-{end_line} not in any view of {filepath}",
-                success=False,
+                processed=False,
             )
 
         # Read current file content
@@ -609,7 +617,7 @@ class EditorEnvironment(DeclarativeEnvironment):
         lines = self._read_file_lines(full_path)
         if lines is None:
             return CommandResponse(
-                output=f"Cannot read file: {filepath}", success=False
+                output=f"Cannot read file: {filepath}", processed=False
             )
 
         # Verify cached content matches current file
@@ -621,7 +629,7 @@ class EditorEnvironment(DeclarativeEnvironment):
         if current_cached_section != view_content.lines:
             return CommandResponse(
                 output=f"File {filepath} has changed since view was generated. Cannot safely edit. Please refresh view.",
-                success=False,
+                processed=False,
             )
 
         # Perform edit: replace lines [start_line, end_line] (inclusive) with new content
@@ -637,11 +645,11 @@ class EditorEnvironment(DeclarativeEnvironment):
             full_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
         except Exception as e:
             return CommandResponse(
-                output=f"Error writing file {filepath}: {e}", success=False
+                output=f"Error writing file {filepath}: {e}", processed=False
             )
 
         return CommandResponse(
-            output=f"Edited {filepath} lines {start_line}-{end_line}", success=True
+            output=f"Edited {filepath} lines {start_line}-{end_line}", processed=True
         )
 
     @command(
@@ -655,7 +663,7 @@ class EditorEnvironment(DeclarativeEnvironment):
         if not parsed:
             return CommandResponse(
                 output="Invalid create command. Format: create <filepath>\\n<content>",
-                success=False,
+                processed=False,
             )
 
         filepath = Path(parsed["filepath"])
@@ -664,13 +672,13 @@ class EditorEnvironment(DeclarativeEnvironment):
         # Validate path is within project directory
         is_valid, error_msg = self._validate_filepath(filepath)
         if not is_valid:
-            return CommandResponse(output=error_msg, success=False)
+            return CommandResponse(output=error_msg, processed=False)
 
         # Check if file already exists
         full_path = self._project_dir / filepath
         if full_path.exists():
             return CommandResponse(
-                output=f"File already exists: {filepath}", success=False
+                output=f"File already exists: {filepath}", processed=False
             )
 
         # Create parent directories if needed
@@ -678,7 +686,7 @@ class EditorEnvironment(DeclarativeEnvironment):
             full_path.parent.mkdir(parents=True, exist_ok=True)
         except Exception as e:
             return CommandResponse(
-                output=f"Error creating directory for {filepath}: {e}", success=False
+                output=f"Error creating directory for {filepath}: {e}", processed=False
             )
 
         # Write file
@@ -686,10 +694,10 @@ class EditorEnvironment(DeclarativeEnvironment):
             full_path.write_text("\n".join(content) + "\n", encoding="utf-8")
         except Exception as e:
             return CommandResponse(
-                output=f"Error creating file {filepath}: {e}", success=False
+                output=f"Error creating file {filepath}: {e}", processed=False
             )
 
-        return CommandResponse(output=f"Created {filepath}", success=True)
+        return CommandResponse(output=f"Created {filepath}", processed=True)
 
     @command(
         signature='search "<pattern>" <glob>',
@@ -702,7 +710,7 @@ class EditorEnvironment(DeclarativeEnvironment):
         if not parsed:
             return CommandResponse(
                 output='Invalid search command. Format: search "<pattern>" <glob>',
-                success=False,
+                processed=False,
             )
 
         pattern = parsed["pattern"]
@@ -712,7 +720,9 @@ class EditorEnvironment(DeclarativeEnvironment):
         try:
             regex = re.compile(pattern)
         except re.error as e:
-            return CommandResponse(output=f"Invalid regex pattern: {e}", success=False)
+            return CommandResponse(
+                output=f"Invalid regex pattern: {e}", processed=False
+            )
 
         # Find matching files
         try:
@@ -720,7 +730,9 @@ class EditorEnvironment(DeclarativeEnvironment):
                 str(self._project_dir / glob_pattern), recursive=True
             )
         except Exception as e:
-            return CommandResponse(output=f"Error in glob pattern: {e}", success=False)
+            return CommandResponse(
+                output=f"Error in glob pattern: {e}", processed=False
+            )
 
         # Search in each file
         matches = []
@@ -751,10 +763,10 @@ class EditorEnvironment(DeclarativeEnvironment):
                     matches.append(f"{rel_path}:{line_num}: {display_line}")
 
         if not matches:
-            return CommandResponse(output="No matches found", success=True)
+            return CommandResponse(output="No matches found", processed=True)
 
         output = f"Matches:\n{'\n'.join(matches)}"
-        return CommandResponse(output=output, success=True)
+        return CommandResponse(output=output, processed=True)
 
     def _execute_command(self, method: callable, cmd_text: str) -> str:
         """
@@ -816,7 +828,7 @@ class EditorEnvironment(DeclarativeEnvironment):
 
         # Convert CommandResponse to string (for DeclarativeEnvironment)
         if isinstance(response, CommandResponse):
-            if not response.success:
+            if not response.processed:
                 raise ValueError(response.output)
             return response.output
         return str(response)

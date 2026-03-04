@@ -59,15 +59,15 @@ class Environment(Protocol):
             def handle_command(self, cmd: CommandText) -> CommandResponse:
                 if cmd.value == "start":
                     self._start_time = time.time()
-                    return CommandResponse("Timer started", success=True)
+                    return CommandResponse("Timer started", processed=True)
                 elif cmd.value == "stop":
                     if self._start_time is None:
-                        return CommandResponse("Timer not running", success=False)
+                        return CommandResponse("Timer not running", processed=False)
                     elapsed = time.time() - self._start_time
                     self._start_time = None
-                    return CommandResponse(f"Elapsed: {elapsed:.2f}s", success=True)
+                    return CommandResponse(f"Elapsed: {elapsed:.2f}s", processed=True)
                 else:
-                    return CommandResponse(f"Unknown command: {cmd.value}", success=False)
+                    return CommandResponse(f"Unknown command: {cmd.value}", processed=False)
 
             def get_screen(self) -> ScreenSection:
                 if self._start_time is not None:
@@ -97,6 +97,42 @@ class Environment(Protocol):
         is no automatic rollback or transaction support. The agent should use
         explicit mechanisms (git commits, checkpoints) for state management.
 
+        ## Response Semantics
+
+        The `processed` field in CommandResponse indicates whether the orchestrator
+        successfully routed the command AND the environment handled it without
+        infrastructure failure:
+
+        - **processed=True**: Command was routed to environment successfully AND
+          environment's handle_command() returned normally (no exception)
+        - **processed=False**: Routing failed (unknown environment) OR command
+          parsing failed (invalid syntax) OR infrastructure failure (process crash,
+          timeout, unexpected exception)
+
+        **Important**: `processed=True` does NOT mean the operation succeeded - it
+        means the environment processed the command. For example:
+
+        - Bash `false` command: `processed=True, exit_code=1` (execution succeeded,
+          operation failed)
+        - Python `1/0`: `processed=True` (exception in output, but environment
+          processed the command)
+        - Editor parse error: `processed=False` (invalid command syntax)
+
+        ## Environment-Specific Fields
+
+        Environments can add optional fields to CommandResponse for structured data:
+
+        - **Bash**: Adds `exit_code` field (0-255) for command exit status
+        - **Other environments**: Can add their own fields as needed
+
+        <python>
+        def handle_command(self, cmd: CommandText) -> CommandResponse:
+            # Bash example - adding exit_code field
+            response = CommandResponse(output=output, processed=True)
+            response.exit_code = self._exit_code
+            return response
+    </python>
+
         ## Error Handling
 
         Environments should catch exceptions and return failed responses rather than
@@ -107,9 +143,10 @@ class Environment(Protocol):
             try:
                 # Execute command
                 result = self._execute(cmd.value)
-                return CommandResponse(result, success=True)
+                return CommandResponse(result, processed=True)
             except Exception as e:
-                return CommandResponse(f"Error: {e}", success=False)
+                # Infrastructure failure - couldn't process the command
+                return CommandResponse(f"Error: {e}", processed=False)
     </python>
 
         If get_screen() raises an exception, the orchestrator will show an error
@@ -154,7 +191,7 @@ class Environment(Protocol):
             cmd: The command to execute
 
         Returns:
-            Response containing output and success status
+            Response containing output and processed status
 
         Implementation notes:
             - This method MUST be synchronous (blocking)
@@ -165,7 +202,7 @@ class Environment(Protocol):
 
         Example:
             >>> env.handle_command(CommandText("ls -la"))
-            CommandResponse(output='total 48\\ndrwxr-xr-x...', success=True)
+            CommandResponse(output='total 48\\ndrwxr-xr-x...', processed=True)
         """
         ...
 

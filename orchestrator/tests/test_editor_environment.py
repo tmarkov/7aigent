@@ -64,7 +64,7 @@ def test_view_command_simple(editor, sample_file):
     response = editor.handle_command(
         CommandText("view sample.py /^def hello/ /^def world/")
     )
-    assert response.success
+    assert response.processed
     assert "Added view [1]" in response.output
     assert "1 match" in response.output
 
@@ -80,7 +80,7 @@ def test_view_command_with_label(editor, sample_file):
     response = editor.handle_command(
         CommandText("view sample.py /^def hello/ /^def world/ my_function")
     )
-    assert response.success
+    assert response.processed
     assert "Added view [1]" in response.output
 
     screen = editor.get_screen()
@@ -93,7 +93,7 @@ def test_view_command_multiple_matches(editor, sample_file):
     response = editor.handle_command(
         CommandText("view sample.py /^class/ /^class|^def|^$/")
     )
-    assert response.success
+    assert response.processed
     assert "matches" in response.output  # Should say "2 matches"
 
     screen = editor.get_screen()
@@ -111,7 +111,7 @@ def test_next_match_command(editor, sample_file):
 
     # Navigate to next match
     response = editor.handle_command(CommandText("next_match 1"))
-    assert response.success
+    assert response.processed
     assert "Showing match" in response.output
 
     screen = editor.get_screen()
@@ -128,7 +128,7 @@ def test_prev_match_command(editor, sample_file):
 
     # Then go back
     response = editor.handle_command(CommandText("prev_match 1"))
-    assert response.success
+    assert response.processed
 
     screen = editor.get_screen()
     assert "def hello():" in screen.content
@@ -141,7 +141,7 @@ def test_close_command(editor, sample_file):
 
     # Close it
     response = editor.handle_command(CommandText("close 1"))
-    assert response.success
+    assert response.processed
     assert "Closed view [1]" in response.output
 
     # Check screen shows no views
@@ -181,7 +181,7 @@ def test_max_views_limit(editor, sample_file):
 def test_create_command(editor, temp_project_dir):
     """Test creating a new file."""
     response = editor.handle_command(CommandText("create test.txt\nHello\nWorld\n"))
-    assert response.success
+    assert response.processed
     assert "Created test.txt" in response.output
 
     # Verify file was created
@@ -195,7 +195,7 @@ def test_create_command(editor, temp_project_dir):
 def test_create_command_existing_file(editor, sample_file):
     """Test that creating an existing file fails."""
     response = editor.handle_command(CommandText("create sample.py\nContent\n"))
-    assert not response.success
+    assert not response.processed
     assert "already exists" in response.output
 
 
@@ -204,7 +204,7 @@ def test_create_command_with_directory(editor, temp_project_dir):
     response = editor.handle_command(
         CommandText("create subdir/newfile.txt\nContent\n")
     )
-    assert response.success
+    assert response.processed
 
     # Verify file and directory were created
     filepath = temp_project_dir / "subdir" / "newfile.txt"
@@ -224,7 +224,7 @@ def test_edit_command(editor, sample_file):
     response = editor.handle_command(
         CommandText('edit sample.py 2-2\n    print("Modified")')
     )
-    assert response.success
+    assert response.processed
     assert "Edited sample.py lines 2-2" in response.output
 
     # Verify file was modified
@@ -243,7 +243,7 @@ def test_edit_command_multiple_lines(editor, sample_file):
     response = editor.handle_command(
         CommandText('edit sample.py 2-3\n    print("Line 1")\n    print("Line 2")')
     )
-    assert response.success
+    assert response.processed
 
     content = sample_file.read_text()
     assert 'print("Line 1")' in content
@@ -258,7 +258,7 @@ def test_edit_command_outside_view(editor, sample_file):
 
     # Try to edit line 10 (which is outside the view)
     response = editor.handle_command(CommandText("edit sample.py 10-10\nNew content"))
-    assert not response.success
+    assert not response.processed
     assert "not in any view" in response.output
 
 
@@ -274,14 +274,14 @@ def test_edit_command_file_changed(editor, sample_file):
 
     # Try to edit - should fail because file changed
     response = editor.handle_command(CommandText("edit sample.py 2-2\nNew content"))
-    assert not response.success
+    assert not response.processed
     assert "has changed" in response.output
 
 
 def test_search_command(editor, sample_file):
     """Test searching for a pattern."""
     response = editor.handle_command(CommandText('search "def " *.py'))
-    assert response.success
+    assert response.processed
     assert "Matches:" in response.output
     assert "sample.py" in response.output
     assert "def hello" in response.output or "def world" in response.output
@@ -290,21 +290,21 @@ def test_search_command(editor, sample_file):
 def test_search_command_no_matches(editor, sample_file):
     """Test search with no matches."""
     response = editor.handle_command(CommandText('search "NONEXISTENT" *.py'))
-    assert response.success
+    assert response.processed
     assert "No matches found" in response.output
 
 
 def test_search_command_invalid_regex(editor, sample_file):
     """Test search with invalid regex."""
     response = editor.handle_command(CommandText('search "[invalid" *.py'))
-    assert not response.success
+    assert not response.processed
     assert "Invalid regex" in response.output
 
 
 def test_view_nonexistent_file(editor):
     """Test viewing a file that doesn't exist."""
     response = editor.handle_command(CommandText("view nonexistent.py /^def/ /^$/"))
-    assert not response.success
+    assert not response.processed
     assert "File not found" in response.output
 
 
@@ -313,7 +313,7 @@ def test_view_patterns_not_found(editor, sample_file):
     response = editor.handle_command(
         CommandText("view sample.py /NONEXISTENT1/ /NONEXISTENT2/")
     )
-    assert response.success  # View is created
+    assert response.processed  # View is created
     assert "patterns not found" in response.output
 
     # First screen generation shows broken view
@@ -348,7 +348,7 @@ def test_binary_file_detection(editor, temp_project_dir):
     binary_file.write_bytes(b"\x00\x01\x02\x03")
 
     response = editor.handle_command(CommandText("view binary.bin /^/ /$/"))
-    assert not response.success
+    assert not response.processed
     assert "binary" in response.output.lower()
 
 
@@ -370,29 +370,29 @@ def test_invalid_commands(editor):
     """Test handling of invalid commands."""
     # Invalid view command
     response = editor.handle_command(CommandText("view invalid"))
-    assert not response.success
+    assert not response.processed
 
     # Invalid close command
     response = editor.handle_command(CommandText("close invalid"))
-    assert not response.success
+    assert not response.processed
 
     # Unknown command
     response = editor.handle_command(CommandText("unknown_command"))
-    assert not response.success
+    assert not response.processed
     assert "Unknown command" in response.output
 
 
 def test_close_nonexistent_view(editor):
     """Test closing a view that doesn't exist."""
     response = editor.handle_command(CommandText("close 999"))
-    assert not response.success
+    assert not response.processed
     assert "not found" in response.output
 
 
 def test_next_match_nonexistent_view(editor):
     """Test next_match on nonexistent view."""
     response = editor.handle_command(CommandText("next_match 999"))
-    assert not response.success
+    assert not response.processed
     assert "not found" in response.output
 
 

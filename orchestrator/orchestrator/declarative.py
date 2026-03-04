@@ -118,7 +118,7 @@ class DeclarativeEnvironment:
             available = ", ".join(sorted(self._commands.keys()))
             return CommandResponse(
                 output=f"Unknown command: {cmd_name}\nAvailable: {available}",
-                success=False,
+                processed=False,
             )
 
         # Mark command as used
@@ -129,9 +129,9 @@ class DeclarativeEnvironment:
         try:
             # Subclass can override _execute_command for custom parsing
             result = self._execute_command(method, cmd.value)
-            return CommandResponse(output=result, success=True)
+            return CommandResponse(output=result, processed=True)
         except Exception as e:
-            return CommandResponse(output=f"Error: {e}", success=False)
+            return CommandResponse(output=f"Error: {e}", processed=False)
 
     def _execute_command(self, method: Callable, cmd_text: str) -> str:
         """

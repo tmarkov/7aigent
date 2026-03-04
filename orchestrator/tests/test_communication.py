@@ -107,7 +107,7 @@ class TestSendResponse:
         """Test sending a basic response."""
         sys.stdout = io.StringIO()
 
-        response = CommandResponse(output="hello", success=True)
+        response = CommandResponse(output="hello", processed=True)
         screen = {EnvironmentName("bash"): ScreenSection("Ready", max_lines=50)}
 
         send_response(response, screen)
@@ -118,7 +118,7 @@ class TestSendResponse:
         # Parse JSON
         data = json.loads(output)
         assert data["response"]["output"] == "hello"
-        assert data["response"]["success"] is True
+        assert data["response"]["processed"] is True
         assert "bash" in data["screen"]
         assert data["screen"]["bash"]["content"] == "Ready"
         assert data["screen"]["bash"]["max_lines"] == 50
@@ -127,21 +127,21 @@ class TestSendResponse:
         """Test sending a failed response."""
         sys.stdout = io.StringIO()
 
-        response = CommandResponse(output="Error: file not found", success=False)
+        response = CommandResponse(output="Error: file not found", processed=False)
         screen = {EnvironmentName("bash"): ScreenSection("Ready", max_lines=50)}
 
         send_response(response, screen)
 
         output = sys.stdout.getvalue()
         data = json.loads(output)
-        assert data["response"]["success"] is False
+        assert data["response"]["processed"] is False
         assert "Error" in data["response"]["output"]
 
     def test_multiple_environments_in_screen(self) -> None:
         """Test screen with multiple environments."""
         sys.stdout = io.StringIO()
 
-        response = CommandResponse(output="done", success=True)
+        response = CommandResponse(output="done", processed=True)
         screen = {
             EnvironmentName("bash"): ScreenSection("Bash ready", max_lines=50),
             EnvironmentName("python"): ScreenSection("Python ready", max_lines=30),

@@ -65,9 +65,9 @@ class TimerEnvironment:
     def handle_command(self, cmd: CommandText) -> CommandResponse:
         if cmd.value == "start":
             self._running = True
-            return CommandResponse("Started", success=True)
+            return CommandResponse("Started", processed=True)
         else:
-            return CommandResponse("Unknown", success=False)
+            return CommandResponse("Unknown", processed=False)
 
     def get_screen(self) -> ScreenSection:
         status = "Running" if self._running else "Stopped"

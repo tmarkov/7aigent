@@ -51,7 +51,7 @@ def test_sandbox_spawns_and_responds():
             assert "screen" in data, f"Response missing 'screen' field: {data}"
 
             response = data["response"]
-            assert response["success"] is True, f"Command failed: {response}"
+            assert response["processed"] is True, f"Command failed: {response}"
             assert (
                 "hello" in response["output"]
             ), f"Expected 'hello' in output: {response['output']}"
@@ -95,7 +95,7 @@ def test_sandbox_bash_execution():
             data = json.loads(response_line)
             response = data["response"]
 
-            assert response["success"] is True, f"Bash command failed: {response}"
+            assert response["processed"] is True, f"Bash command failed: {response}"
             output = response["output"]
 
             # Verify test.txt is visible (we're in /workspace which is mounted from project_dir)
@@ -110,7 +110,7 @@ def test_sandbox_bash_execution():
             data = json.loads(response_line)
             response = data["response"]
 
-            assert response["success"] is True, f"Read command failed: {response}"
+            assert response["processed"] is True, f"Read command failed: {response}"
             assert (
                 "Hello from host" in response["output"]
             ), f"File content not found: {response['output']}"
@@ -144,7 +144,7 @@ def test_sandbox_filesystem_isolation():
             data = json.loads(response_line)
             response = data["response"]
 
-            assert response["success"] is True
+            assert response["processed"] is True
             assert "/workspace" in response["output"], "Not in /workspace"
 
             # Test 2: Verify /nix/store is accessible (read-only)
@@ -158,7 +158,7 @@ def test_sandbox_filesystem_isolation():
             data = json.loads(response_line)
             response = data["response"]
 
-            assert response["success"] is True
+            assert response["processed"] is True
             # Should have some content (Nix store entries)
             assert len(response["output"].strip()) > 0, "/nix/store appears empty"
 
@@ -180,7 +180,7 @@ def test_sandbox_filesystem_isolation():
             data = json.loads(response_line)
             response = data["response"]
 
-            assert response["success"] is True
+            assert response["processed"] is True
             # Should successfully create file in /tmp
             assert (
                 "/tmp/test-file" in response["output"]
@@ -215,7 +215,7 @@ def test_sandbox_python_environment():
             data = json.loads(response_line)
             response = data["response"]
 
-            assert response["success"] is True, f"Python command failed: {response}"
+            assert response["processed"] is True, f"Python command failed: {response}"
             assert "4" in response["output"], f"Unexpected output: {response['output']}"
 
         finally:
@@ -253,7 +253,7 @@ def test_sandbox_required_packages_available():
                 response = data["response"]
 
                 assert (
-                    response["success"] is True
+                    response["processed"] is True
                 ), f"Failed to check for {cmd}: {response}"
                 assert (
                     len(response["output"].strip()) > 0
@@ -288,7 +288,7 @@ def test_sandbox_process_isolation():
             data = json.loads(response_line)
             response = data["response"]
 
-            assert response["success"] is True, f"ps command failed: {response}"
+            assert response["processed"] is True, f"ps command failed: {response}"
 
             # Should see Python process (orchestrator) - it shows as /nix/store/...python
             # Process listing is isolated, so we check for a small number of processes

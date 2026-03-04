@@ -119,27 +119,34 @@ class TestBashEnvironment:
             cmd = "echo 'stdout message' && echo 'stderr message' >&2"
             response = env.handle_command(CommandText(cmd))
 
-            assert response.success is True, "Command should succeed"
+            assert response.processed is True, "Command should succeed"
             assert "stdout message" in response.output, "Stdout must be captured"
             assert "stderr message" in response.output, "Stderr must be captured"
         finally:
             env.shutdown()
 
     @timeout(10)
-    def test_bash_environment_maps_exit_codes_to_success(self) -> None:
-        """Exit codes must be tracked and map to response.success field.
+    def test_bash_environment_provides_exit_code_field(self) -> None:
+        """Exit codes must be tracked and provided in response.exit_code field.
 
         Requirements tested:
-        1. Zero exit code (true) → success=True
-        2. Non-zero exit code (false) → success=False
-        3. Exit code shown in screen
-        4. Exit code persists until next command
+        1. Zero exit code (true) → response.exit_code = 0
+        2. Non-zero exit code (false) → response.exit_code = 1
+        3. processed is always True (unless infrastructure failure)
+        4. Exit code shown in screen
+        5. Exit code persists until next command
         """
         env = BashEnvironment()
         try:
             # Success case
             response = env.handle_command(CommandText("true"))
-            assert response.success is True, "Exit code 0 should mean success=True"
+            assert (
+                response.processed is True
+            ), "Command should be processed successfully"
+            assert hasattr(
+                response, "exit_code"
+            ), "Response should have exit_code field"
+            assert response.exit_code == 0, "Exit code 0 for successful command"
 
             screen = env.get_screen()
             assert "Last exit code: 0" in screen.content, "Screen must show exit code"
@@ -150,9 +157,15 @@ class TestBashEnvironment:
                 "Last exit code: 0" in screen2.content
             ), "Exit code must persist until next command"
 
-            # Failure case
+            # Failure case - command executed but operation failed
             response = env.handle_command(CommandText("false"))
-            assert response.success is False, "Exit code 1 should mean success=False"
+            assert (
+                response.processed is True
+            ), "Command should be processed (execution succeeded)"
+            assert hasattr(
+                response, "exit_code"
+            ), "Response should have exit_code field"
+            assert response.exit_code == 1, "Exit code 1 for failed operation"
 
             screen = env.get_screen()
             assert (
@@ -161,7 +174,8 @@ class TestBashEnvironment:
 
             # Success again
             response = env.handle_command(CommandText("true"))
-            assert response.success is True, "Exit code should update"
+            assert response.processed is True, "Command should be processed"
+            assert response.exit_code == 0, "Exit code should update to 0"
 
             screen = env.get_screen()
             assert "Last exit code: 0" in screen.content, "Exit code must update"
@@ -181,7 +195,7 @@ class TestBashEnvironment:
         try:
             # Start a background job (sleep for short time)
             response = env.handle_command(CommandText("sleep 2 &"))
-            assert response.success is True, "Background job command should succeed"
+            assert response.processed is True, "Background job command should succeed"
 
             # Check screen shows background job
             screen = env.get_screen()
@@ -310,14 +324,14 @@ class TestBashEnvironment:
             # Empty command
             response = env.handle_command(CommandText(""))
             assert (
-                response.success is True
+                response.processed is True
             ), "Empty command should succeed (bash treats it as no-op)"
 
             # Multiline output
             response = env.handle_command(
                 CommandText("echo -e 'line1\\nline2\\nline3'")
             )
-            assert response.success is True
+            assert response.processed is True
             assert "line1" in response.output
             assert "line2" in response.output
             assert "line3" in response.output
@@ -326,7 +340,7 @@ class TestBashEnvironment:
             response = env.handle_command(
                 CommandText("echo 'special: !@#$%^&*()[]{}|\\\"'")
             )
-            assert response.success is True
+            assert response.processed is True
             assert "special:" in response.output
         finally:
             env.shutdown()

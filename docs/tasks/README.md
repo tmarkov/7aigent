@@ -82,7 +82,7 @@ These tasks are for designing and implementing the agent:
 ### Testing
 
 - [x] [20 - Rework testing strategy](./20-rework-testing-strategy.md) - Replace superficial tests with substantive requirement-based tests ✅ Completed
-- [ ] [21 - Fix orchestrator error handling](./21-fix-orchestrator-error-handling.md) - Return success: false for actual failures instead of always true
+- [x] [21 - Fix orchestrator error handling](./21-fix-orchestrator-error-handling.md) - Replace success field with processed field, add exit_code for bash ✅ Completed
 - [ ] [22 - Add LLM integration tests (Tier 2)](./22-llm-integration-tests.md) - Test with real LLM API, validate session management and cost tracking
 - [ ] [23 - Create example sessions](./23-example-sessions.md) - Create example projects demonstrating agent capabilities
 - [ ] [24 - Performance benchmarking](./24-performance-benchmarking.md) - Measure baselines and stress test long sessions

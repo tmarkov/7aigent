@@ -140,26 +140,26 @@ class TestCommandResponse:
         """Any output string and success boolean should be accepted."""
         response = CommandResponse(output, success)
         assert response.output == output
-        assert response.success == success
+        assert response.processed == success
 
     # Example-based tests
     def test_successful_response(self) -> None:
         """Successful command response."""
         response = CommandResponse("total 48\ndrwxr-xr-x...", True)
         assert response.output == "total 48\ndrwxr-xr-x..."
-        assert response.success is True
+        assert response.processed is True
 
     def test_failed_response(self) -> None:
         """Failed command response."""
         response = CommandResponse("Error: file not found", False)
         assert response.output == "Error: file not found"
-        assert response.success is False
+        assert response.processed is False
 
     def test_empty_output(self) -> None:
         """Empty output is valid."""
         response = CommandResponse("", True)
         assert response.output == ""
-        assert response.success is True
+        assert response.processed is True
 
     def test_multiline_output(self) -> None:
         """Multiline output."""
@@ -167,13 +167,12 @@ class TestCommandResponse:
         response = CommandResponse(output, True)
         assert response.output == output
 
-    def test_frozen_dataclass(self) -> None:
-        """CommandResponse should be immutable."""
+    def test_mutable_dataclass_allows_adding_fields(self) -> None:
+        """CommandResponse should be mutable to allow adding environment-specific fields."""
         response = CommandResponse("output", True)
-        with pytest.raises(AttributeError):
-            response.output = "new output"  # type: ignore[misc]
-        with pytest.raises(AttributeError):
-            response.success = False  # type: ignore[misc]
+        # Should be able to add new fields (e.g., exit_code for bash)
+        response.exit_code = 0
+        assert response.exit_code == 0
 
 
 class TestScreenSection:
@@ -254,11 +253,10 @@ class TestScreenSection:
 class TestDataclassImmutability:
     """Cross-cutting tests for immutability of all dataclasses."""
 
-    def test_all_types_are_frozen(self) -> None:
-        """All core type dataclasses should be frozen."""
+    def test_frozen_types_are_immutable(self) -> None:
+        """Some core type dataclasses should be frozen (immutable)."""
         env_name = EnvironmentName("bash")
         cmd_text = CommandText("ls")
-        cmd_response = CommandResponse("output", True)
         screen_section = ScreenSection("content")
 
         # Try to modify each - all should raise AttributeError
@@ -269,10 +267,15 @@ class TestDataclassImmutability:
             cmd_text.value = "pwd"  # type: ignore[misc]
 
         with pytest.raises(AttributeError):
-            cmd_response.output = "new"  # type: ignore[misc]
-
-        with pytest.raises(AttributeError):
             screen_section.content = "new"  # type: ignore[misc]
+
+    def test_command_response_is_mutable(self) -> None:
+        """CommandResponse should be mutable to allow adding environment-specific fields."""
+        cmd_response = CommandResponse("output", True)
+
+        # Should be able to add new fields
+        cmd_response.exit_code = 0
+        assert cmd_response.exit_code == 0
 
     def test_dataclass_equality(self) -> None:
         """Dataclasses with same values should be equal."""
@@ -288,7 +291,7 @@ class TestDataclassImmutability:
         assert CommandResponse("out", True) != CommandResponse("out", False)
         assert ScreenSection("c", 10) != ScreenSection("c", 20)
 
-    def test_dataclass_hashable(self) -> None:
+    def test_frozen_dataclasses_are_hashable(self) -> None:
         """Frozen dataclasses should be hashable."""
         # Should be able to use in sets and as dict keys
         env_names = {EnvironmentName("bash"), EnvironmentName("python")}
@@ -297,11 +300,8 @@ class TestDataclassImmutability:
         cmd_dict = {CommandText("ls"): "list", CommandText("pwd"): "print dir"}
         assert len(cmd_dict) == 2
 
-        response_set = {
-            CommandResponse("out", True),
-            CommandResponse("out", False),
-        }
-        assert len(response_set) == 2
+        # CommandResponse is not frozen, so not hashable
+        # (needed to allow adding environment-specific fields like exit_code)
 
         screen_set = {ScreenSection("a", 10), ScreenSection("b", 20)}
         assert len(screen_set) == 2

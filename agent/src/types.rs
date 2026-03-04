@@ -264,7 +264,7 @@ pub enum Event {
         environment: String,
         command: String,
         output: String,
-        success: bool,
+        processed: bool,
         screen: ScreenState,
     },
     SessionEnd {
@@ -419,8 +419,8 @@ pub struct CommandResponse {
     /// Command output
     pub output: String,
 
-    /// Whether command succeeded
-    pub success: bool,
+    /// Whether command was processed successfully
+    pub processed: bool,
 }
 
 // Internal types for LLM context building
