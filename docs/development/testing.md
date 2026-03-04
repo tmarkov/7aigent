@@ -47,17 +47,21 @@ Run automatically during `nix build`. Must complete in < 30 seconds total.
 
 **Key: Spawning orchestrator subprocess is FAST** (~100ms) and validates real integration. Not a reason to defer to Tier 2.
 
-### Tier 2: Pre-Commit Tests (Comprehensive)
+**Note:** `agent/tests/integration_test.rs` tests the full agent->sandbox->orchestrator stack but is classified as Tier 1 because it completes in ~2-5 seconds. Spawning orchestrator subprocess is fast and validates real integration without being slow enough to defer.
 
-Run before commits via pre-commit hook. Can be slower.
+### Tier 2: Comprehensive Tests (Not Yet Implemented)
 
-**Includes:**
-- End-to-end integration tests
-- Stress tests and chaos testing
-- VM-based sandbox tests (if needed)
-- Any test too slow for Tier 1
+Slower tests that would run before commits. Currently we have **NO Tier 2 tests**.
 
-**Run via**: Pre-commit hook (enforced)
+**Future tests (from Task 17):**
+- Real LLM integration tests (requires API key, expensive)
+- Session management tests (create, pause, resume)
+- Cost tracking and budget enforcement
+- Long-running scenario tests (minutes per scenario)
+- Stress tests and performance benchmarks
+- Multi-session integration tests
+
+**Run via**: Pre-commit hook (when implemented)
 
 ## Test Timeouts
 
@@ -135,9 +139,12 @@ checkPhase = ''
 
 | Test Suite | Test-Level | Nix-Level | Typical Runtime | Notes |
 |------------|-----------|-----------|----------------|-------|
-| Agent (Rust) | N/A | 30s | ~6s | Nix-level only |
-| Orchestrator (Python) | 10s per test | 120s | ~25s total | Both layers |
-| Sandbox (Python) | 10s per test | 120s | Varies | Both layers |
+| Agent (Rust) - Unit | N/A | 30s | ~6s | Tier 1 |
+| Agent (Rust) - Integration | 180s | 180s | ~2-5s | Tier 1 (full stack) |
+| Orchestrator (Python) | 10s per test | 120s | ~25s total | Tier 1 |
+| Sandbox (Python) | 10s per test | 120s | Varies | Tier 1 |
+
+**Note:** Integration test has generous 180s timeout because it spawns subprocesses and uses thread-based timeout enforcement for diagnostics. Actual runtime is ~2-5s.
 
 ### Best Practices
 

@@ -101,7 +101,7 @@ impl ContainerManager {
 
         Ok(ContainerHandle {
             child: Some(child),
-            stdin: BufWriter::new(stdin),
+            stdin: Some(BufWriter::new(stdin)),
             stdout: BufReader::new(stdout),
         })
     }
@@ -116,7 +116,7 @@ impl Default for ContainerManager {
 /// Handle for communicating with a running container
 pub struct ContainerHandle {
     child: Option<Child>,
-    stdin: BufWriter<std::process::ChildStdin>,
+    stdin: Option<BufWriter<std::process::ChildStdin>>,
     stdout: BufReader<std::process::ChildStdout>,
 }
 
@@ -128,14 +128,18 @@ impl ContainerHandle {
             "command": command,
         });
 
-        serde_json::to_writer(&mut self.stdin, &message)
+        let stdin = self.stdin.as_mut().ok_or(ContainerError::SendError(
+            "stdin already closed".to_string(),
+        ))?;
+
+        serde_json::to_writer(&mut *stdin, &message)
             .map_err(|e| ContainerError::SendError(e.to_string()))?;
 
-        self.stdin
+        stdin
             .write_all(b"\n")
             .map_err(|e| ContainerError::SendError(e.to_string()))?;
 
-        self.stdin
+        stdin
             .flush()
             .map_err(|e| ContainerError::SendError(e.to_string()))?;
 
@@ -185,12 +189,12 @@ impl ContainerHandle {
 
     /// Shutdown the sandbox gracefully
     pub fn shutdown(mut self) -> Result<()> {
-        // stdin is automatically dropped when self is consumed
-        // This sends EOF to the orchestrator
+        // Close stdin to send EOF to orchestrator
+        // Must happen BEFORE waiting for process to exit
+        self.stdin = None;
 
-        // Take the child process out of Option
+        // Wait for process to exit
         if let Some(mut child) = self.child.take() {
-            // Wait for process to exit
             let status = child.wait().map_err(|e| {
                 ContainerError::SendError(format!("failed to wait for sandbox: {}", e))
             })?;

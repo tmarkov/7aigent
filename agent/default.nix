@@ -36,8 +36,14 @@ rustPlatform.buildRustPackage {
     echo "Building tests..."
     cargo test --release --no-run
 
-    echo "Running cargo test..."
-    ${pkgs.coreutils}/bin/timeout 30 cargo test --release
+    # Set SANDBOX_PATH for integration tests
+    export SANDBOX_PATH=${sandbox}/bin/7aigent-sandbox
+
+    echo "Running unit tests (Tier 1)..."
+    ${pkgs.coreutils}/bin/timeout 30 cargo test --release --lib
+
+    echo "Running integration tests (Tier 1)..."
+    ${pkgs.coreutils}/bin/timeout 180 cargo test --release --test integration_test
 
     runHook postCheck
   '';

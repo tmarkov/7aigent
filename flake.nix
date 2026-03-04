@@ -53,18 +53,11 @@
         pre-commit-check = pre-commit-hooks.lib.${system}.run {
           src = ./.;
           hooks = {
-            # Rust hooks
+            # Tier 1: Formatters and linters (fast, <1s)
             rustfmt = {
               enable = true;
               entry = "${pkgs.rustfmt}/bin/rustfmt --check";
             };
-            # clippy = {
-            #   enable = true;
-            #   entry = "${pkgs.cargo}/bin/cargo clippy -- -D warnings";
-            #   files = "\\.rs$";
-            # };
-
-            # Python hooks
             black = {
               enable = true;
               entry = "${pkgs.black}/bin/black --check";
@@ -76,6 +69,36 @@
             ruff = {
               enable = true;
               entry = "${pkgs.ruff}/bin/ruff check";
+            };
+
+            # Tier 1: Full test suite via Nix builds (~60s)
+            # This runs all formatters, linters, unit tests, and integration tests
+            build-agent = {
+              enable = true;
+              entry = "${pkgs.writeShellScript "build-agent" ''
+                echo "Building agent (Tier 1: formatters + linters + all tests)..."
+                ${pkgs.nix}/bin/nix build .#agent --no-link --print-build-logs
+              ''}";
+              pass_filenames = false;
+              files = "\\.(rs|toml|nix)$";
+            };
+            build-orchestrator = {
+              enable = true;
+              entry = "${pkgs.writeShellScript "build-orchestrator" ''
+                echo "Building orchestrator (formatters + linters + tests)..."
+                ${pkgs.nix}/bin/nix build .#orchestrator --no-link --print-build-logs
+              ''}";
+              pass_filenames = false;
+              files = "\\.(py|toml|nix)$";
+            };
+            build-sandbox = {
+              enable = true;
+              entry = "${pkgs.writeShellScript "build-sandbox" ''
+                echo "Building sandbox (tests)..."
+                ${pkgs.nix}/bin/nix build .#sandbox --no-link --print-build-logs
+              ''}";
+              pass_filenames = false;
+              files = "(sandbox/|orchestrator/).*\\.(py|sh|nix)$";
             };
           };
         };
