@@ -221,4 +221,5 @@ When an ad-hoc environment fails validation:
 - [Orchestrator Overview](overview.md)
 - [Bash Environment Design](bash-environment.md)
 - [Python Environment Design](python-environment.md)
-- [Editor Environment Design](editor-environment.md)
+- [Editor Environment Design](editor-environment-v2.md) (current implementation)
+- [Editor Environment Design v1](editor-environment.md) (deprecated, March 2026)

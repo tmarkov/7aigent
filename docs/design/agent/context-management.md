@@ -33,7 +33,7 @@ This document describes how the agent manages conversation history, screen state
   "sections": {
     "bash": {"content": "Working directory: /workspace\n...", "max_lines": 50},
     "python": {"content": "Variables:\n  df: DataFrame\n...", "max_lines": 50},
-    "editor": {"content": "Views:\n  [1] src/main.py:45-78\n...", "max_lines": 50}
+    "editor": {"content": "Views:\n  [main] src/main.py\n    45  def main():\n...", "max_lines": 50}
   }
 }
 ```

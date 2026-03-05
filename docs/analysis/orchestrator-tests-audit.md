@@ -1,5 +1,7 @@
 # Orchestrator Tests Audit
 
+**Note**: This audit was conducted in January 2026 and references the original v1 editor environment. The editor was redesigned in March 2026 (see task 26). Editor test findings may no longer apply to the current implementation.
+
 Complete audit of all orchestrator test files (12 files, ~210 tests total). Each test classified as:
 - **GOOD**: Verifies actual requirements, uses property-based testing, or tests substantive behavior
 - **NEEDS-IMPROVEMENT**: Trivial tests that just verify bash/python work, or brittle string matching

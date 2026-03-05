@@ -77,4 +77,4 @@ From these scenarios, we identified critical requirements:
 - [Environments](environments.md) - Environment contract and built-ins
 - [Bash Environment](bash-environment.md) - Shell command execution
 - [Python Environment](python-environment.md) - Persistent REPL
-- [Editor Environment](editor-environment.md) - File viewing and editing
+- [Editor Environment](editor-environment-v2.md) - Query-based file viewing and editing

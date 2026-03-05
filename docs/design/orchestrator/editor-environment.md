@@ -1,4 +1,6 @@
-# Editor Environment
+# Editor Environment (v1 - Deprecated)
+
+**⚠️ DEPRECATED**: This document describes the original editor environment design that was superseded in March 2026. For the current query-based pipeline system, see [editor-environment-v2.md](editor-environment-v2.md).
 
 **Purpose**: View and edit files, maintain persistent views of code sections.
 

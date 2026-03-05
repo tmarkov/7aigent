@@ -39,7 +39,7 @@ Sent by the agent to execute a command in an environment.
 ```
 
 ```json
-{"type": "command", "environment": "editor", "command": "view src/main.py /^def main/ /^if __name__/"}
+{"type": "command", "environment": "editor", "command": "view main /^def main/ in src/main.py | while-indent"}
 ```
 
 ### Response (Orchestrator → Agent)

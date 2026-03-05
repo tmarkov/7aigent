@@ -36,7 +36,7 @@ nix build .#agent
 
 - **Bash**: Run shell commands, manage files
 - **Python**: Execute Python code with persistent REPL
-- **Editor**: View and edit files with pattern-based navigation
+- **Editor**: View and edit files with query-based pipeline system
 
 ### Sandboxed Execution
 

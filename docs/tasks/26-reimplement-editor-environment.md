@@ -201,106 +201,106 @@ Replace the current dual-pattern editor with a query-based pipeline system that 
 
 ### Implementation
 
-- [ ] Implement query parser (`orchestrator/environments/editor/parser.py`)
-  - [ ] Parse `view <label> <matcher> in <glob> | <operations>`
-  - [ ] Parse `peek <matcher> in <glob> | <operations>`
-  - [ ] Parse matchers: `<pattern> in <glob>`, `line N in <file>`, `line N-M in <file>`
-  - [ ] Parse expansion operations: `context`, `up`, `down`, `until`, `up-until`, `until-blank`, `while-indent`
-  - [ ] Parse filtering operations: `filter`, `exclude`, `limit`
-  - [ ] Parse close commands: `close label`, `close pattern`, `close file`, `close all`
-  - [ ] Generate AST for pipeline execution
-  - [ ] Error handling for invalid syntax
+- [x] Implement query parser (`orchestrator/environments/editor/parser.py`)
+  - [x] Parse `view <label> <matcher> in <glob> | <operations>`
+  - [x] Parse `peek <matcher> in <glob> | <operations>`
+  - [x] Parse matchers: `<pattern> in <glob>`, `line N in <file>`, `line N-M in <file>`
+  - [x] Parse expansion operations: `context`, `up`, `down`, `until`, `up-until`, `until-blank`, `while-indent`
+  - [x] Parse filtering operations: `filter`, `exclude`, `limit`
+  - [x] Parse close commands: `close label`, `close pattern`, `close file`, `close all`
+  - [x] Generate AST for pipeline execution
+  - [x] Error handling for invalid syntax
 
-- [ ] Implement query executor (`orchestrator/environments/editor/executor.py`)
-  - [ ] Ripgrep backend for pattern matching
-  - [ ] Line matcher implementation
-  - [ ] Expansion operations:
-    - [ ] `context <n>` - expand n lines up and down
-    - [ ] `up <n>`, `down <n>` - directional expansion
-    - [ ] `until <pattern>`, `up-until <pattern>` - expand until pattern
-    - [ ] `until-blank` - expand until blank line
-    - [ ] `while-indent` - expand while indented (with smart closing)
-  - [ ] Filtering operations:
-    - [ ] `filter <pattern>` - keep windows containing pattern
-    - [ ] `exclude <pattern>` - remove windows containing pattern
-    - [ ] `limit <n>` - keep first n windows
-  - [ ] Pipeline composition (left-to-right execution)
-  - [ ] Max expansion limits (200 lines per operation)
+- [x] Implement query executor (`orchestrator/environments/editor/executor.py`)
+  - [x] Ripgrep backend for pattern matching
+  - [x] Line matcher implementation
+  - [x] Expansion operations:
+    - [x] `context <n>` - expand n lines up and down
+    - [x] `up <n>`, `down <n>` - directional expansion
+    - [x] `until <pattern>`, `up-until <pattern>` - expand until pattern
+    - [x] `until-blank` - expand until blank line
+    - [x] `while-indent` - expand while indented (with smart closing)
+  - [x] Filtering operations:
+    - [x] `filter <pattern>` - keep windows containing pattern
+    - [x] `exclude <pattern>` - remove windows containing pattern
+    - [x] `limit <n>` - keep first n windows
+  - [x] Pipeline composition (left-to-right execution)
+  - [x] Max expansion limits (200 lines per operation)
 
-- [ ] Implement window/view management (`orchestrator/environments/editor/windows.py`)
-  - [ ] Window data structure (file, start_line, end_line, content, label)
-  - [ ] View merging (overlapping windows in same file)
-  - [ ] Deduplication
-  - [ ] Screen generation from views
+- [x] Implement window/view management (`orchestrator/environments/editor/windows.py`)
+  - [x] Window data structure (file, start_line, end_line, content, label)
+  - [x] View merging (overlapping windows in same file)
+  - [x] Deduplication
+  - [x] Screen generation from views
 
-- [ ] Implement indentation analysis (`orchestrator/environments/editor/indentation.py`)
-  - [ ] Reference indentation calculation (first line of window)
-  - [ ] Empty/whitespace-only line handling (treated as indented)
-  - [ ] Smart closing rule (auto-include single closing brace/bracket)
-  - [ ] Language-agnostic implementation
+- [x] Implement indentation analysis (`orchestrator/environments/editor/indentation.py`)
+  - [x] Reference indentation calculation (first line of window)
+  - [x] Empty/whitespace-only line handling (treated as indented)
+  - [x] Smart closing rule (auto-include single closing brace/bracket)
+  - [x] Language-agnostic implementation
 
-- [ ] Integrate AI summary system (uses auxiliary LLM query protocol from task 27)
-  - [ ] Collect all windows from <editor> tag
-  - [ ] Infer focus from query patterns
-  - [ ] Build summary prompt
-  - [ ] Call `orchestrator.request_auxiliary_llm_query(prompt, context)`
-  - [ ] Receive summary response
-  - [ ] Include in tool output
-  - [ ] One summary per <editor>...</editor> tag
+- [x] Integrate AI summary system (uses auxiliary LLM query protocol from task 27)
+  - [x] Collect all windows from <editor> tag
+  - [x] Infer focus from query patterns
+  - [x] Build summary prompt
+  - [x] Call `orchestrator.request_auxiliary_llm_query(prompt, context)`
+  - [x] Receive summary response
+  - [x] Include in tool output
+  - [x] One summary per <editor>...</editor> tag
 
-- [ ] Implement query lifecycle
-  - [ ] Phase 1: Pipeline execution
-  - [ ] Phase 2: Size checking (300 for peek, 3000 total for view)
-  - [ ] Phase 3: AI summary generation (on tag close)
-  - [ ] Phase 4: Store query and check for auto-removal
-  - [ ] Phase 5: Add to active query set
-  - [ ] Phase 6: Execute all queries and generate screen
+- [x] Implement query lifecycle
+  - [x] Phase 1: Pipeline execution
+  - [x] Phase 2: Size checking (300 for peek, 3000 total for view)
+  - [x] Phase 3: AI summary generation (on tag close)
+  - [x] Phase 4: Store query and check for auto-removal
+  - [x] Phase 5: Add to active query set
+  - [x] Phase 6: Execute all queries and generate screen
 
-- [ ] Implement active query management
-  - [ ] Query storage (label → query mapping)
-  - [ ] Label override (same label replaces previous query)
-  - [ ] Auto-removal (query returns 0 windows)
-  - [ ] File exclusion (modifies existing queries)
-  - [ ] Pattern-based close (remove all queries matching label pattern)
+- [x] Implement active query management
+  - [x] Query storage (label → query mapping)
+  - [x] Label override (same label replaces previous query)
+  - [x] Auto-removal (query returns 0 windows)
+  - [x] File exclusion (modifies existing queries)
+  - [x] Pattern-based close (remove all queries matching label pattern)
 
-- [ ] Implement edit operations
-  - [ ] Find view containing target lines
-  - [ ] Verify lines are visible
-  - [ ] Verify content matches current view
-  - [ ] Perform edit
-  - [ ] Trigger screen regeneration (all queries re-execute)
-  - [ ] Mark query as "used" (update timestamp)
+- [x] Implement edit operations
+  - [x] Find view containing target lines
+  - [x] Verify lines are visible
+  - [x] Verify content matches current view
+  - [x] Perform edit
+  - [x] Trigger screen regeneration (all queries re-execute)
+  - [x] Mark query as "used" (update timestamp)
 
-- [ ] Refactor EditorEnvironment main class
-  - [ ] Integrate parser
-  - [ ] Integrate executor
-  - [ ] Integrate window/view management
-  - [ ] Integrate summarizer
-  - [ ] Implement command routing
-  - [ ] Implement screen generation
-  - [ ] Implement edit command
+- [x] Refactor EditorEnvironment main class
+  - [x] Integrate parser
+  - [x] Integrate executor
+  - [x] Integrate window/view management
+  - [x] Integrate summarizer
+  - [x] Implement command routing
+  - [x] Implement screen generation
+  - [x] Implement edit command
 
-- [ ] Write comprehensive tests
-  - [ ] Test query parser (all syntax variations)
-  - [ ] Test each expansion operation
-  - [ ] Test each filtering operation
-  - [ ] Test pipeline composition
-  - [ ] Test window merging and deduplication
-  - [ ] Test indentation analysis (Python, C, Nix examples)
-  - [ ] Test query lifecycle
-  - [ ] Test auto-removal on empty results
-  - [ ] Test label override
-  - [ ] Test file exclusion
-  - [ ] Test pattern-based close
-  - [ ] Test procedural view updates (edit causes re-execution)
-  - [ ] Test all 5 scenarios above
-  - [ ] Test limit enforcement (300 peek, 3000 total)
-  - [ ] Test error conditions (invalid syntax, no matches, etc.)
+- [x] Write comprehensive tests
+  - [x] Test query parser (all syntax variations)
+  - [x] Test each expansion operation
+  - [x] Test each filtering operation
+  - [x] Test pipeline composition
+  - [x] Test window merging and deduplication
+  - [x] Test indentation analysis (Python, C, Nix examples)
+  - [x] Test query lifecycle
+  - [x] Test auto-removal on empty results
+  - [x] Test label override
+  - [x] Test file exclusion
+  - [x] Test pattern-based close
+  - [x] Test procedural view updates (edit causes re-execution)
+  - [x] Test all 5 scenarios above
+  - [x] Test limit enforcement (300 peek, 3000 total)
+  - [x] Test error conditions (invalid syntax, no matches, etc.)
 
-- [ ] Verify with `nix build .#orchestrator`
-  - [ ] All formatters pass (black, isort)
-  - [ ] All linters pass (ruff)
-  - [ ] All tests pass
+- [x] Verify with `nix build .#orchestrator`
+  - [x] All formatters pass (black, isort)
+  - [x] All linters pass (ruff)
+  - [x] All tests pass
 
 - [ ] Update documentation
   - [ ] Update environment protocol docs

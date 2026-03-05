@@ -1,3 +1,7 @@
+# Task: Implement Editor Environment (v1 - Superseded)
+
+**⚠️ SUPERSEDED**: This task describes the original v1 editor implementation that was replaced by task 26 in March 2026. The current editor uses a query-based pipeline system. See [task 26](./26-reimplement-editor-environment.md) for the current implementation.
+
 # Description
 
 Implement the editor environment, which provides pattern-based file viewing and line-based editing. This is the most complex environment and should be implemented after learning from bash and Python.

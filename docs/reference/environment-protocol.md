@@ -109,7 +109,7 @@ class Environment(Protocol):
 Loaded from `orchestrator/environments/` package:
 - `bash.py` exports `BashEnvironment` class
 - `python.py` exports `PythonEnvironment` class
-- `editor.py` exports `EditorEnvironment` class
+- `editor/` package exports `EditorEnvironment` class (query-based pipeline system, v2 redesign March 2026)
 
 ### Custom Environments
 

@@ -4,7 +4,7 @@ The orchestrator is the main process inside the container that manages environme
 
 ## Architecture
 
-- **Environments**: Stateful components that handle commands (bash shell, Python REPL, file editor)
+- **Environments**: Stateful components that handle commands (bash shell, Python REPL, query-based file editor)
 - **Protocol**: Defines the contract all environments must implement
 - **Communication**: NDJSON over stdin/stdout for agent-orchestrator communication
 

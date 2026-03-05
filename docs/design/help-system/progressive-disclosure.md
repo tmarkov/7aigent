@@ -34,13 +34,23 @@ Views:
   (no views)
 
 Commands:
-  view <file> /<start>/ /<end>/ [label]
-    View a section of a file using regex patterns to define boundaries.
-    Patterns are Python regex. Multiple matches can be navigated with next_match/prev_match.
+  view <label> <matcher> in <glob> | <operations>
+    Create a persistent labeled view by executing a query pipeline.
+    Matchers: /pattern/, line N, line N-M (in specific file only)
+    Operations: context N, while-indent, until-blank, filter, limit
     Example:
       <editor>
-      view src/main.py /^def main/ /^if __name__/
-      
+      view main /^def main/ in src/*.py | while-indent
+
+</editor>
+
+  peek <matcher> in <glob> | <operations>
+    Transiently view content without creating a persistent view.
+    Same syntax as view but results are discarded after screen refresh.
+    Example:
+      <editor>
+      peek /TODO/ in **/*.py | context 3 | limit 5
+
 </editor>
 
   edit <file> <start>-<end>
@@ -52,16 +62,7 @@ Commands:
       def process(verbose=False):
           if not verbose:
               return
-      
-</editor>
 
-  search "<pattern>" <glob>
-    Find all occurrences of pattern in files matching glob.
-    Returns filepath:line_number for each match.
-    Example:
-      <editor>
-      search "TODO" *.py
-      
 </editor>
 
   create <file>
@@ -71,29 +72,31 @@ Commands:
       <editor>
       create new_file.py
       # New module
-      
+
 </editor>
 
-  close <id> - Close a view
-  next_match <id> - Show next pattern match for a view
-  prev_match <id> - Show previous pattern match for a view
+  close label <name> - Close view by label
+  close pattern <glob> - Close all views matching label pattern
+  close file <path> - Close all views of a file
+  close all - Close all views
 ```
 
-**Note**: Simple commands (close, next_match, prev_match) only show SHORT help even initially - they're self-explanatory.
+**Note**: Simple commands (close variants) only show SHORT help even initially - they're self-explanatory.
 
 ### After Using `view`
 
 ```
 ==================== EDITOR ====================
 Views:
-  [1] src/main.py /^def main/ to /^if __name__/ (match 1/1)
+  [main] src/main.py
      45  def main():
      46      parser = argparse.ArgumentParser()
      ...
-     78  if __name__ == '__main__':
+     78      return 0
 
 Commands:
-  view <file> /<start>/ /<end>/ [label] - View file section by regex patterns
+  view <label> <matcher> in <glob> | <operations> - Create persistent labeled view
+  peek <matcher> in <glob> | <operations> - Transiently view content
 
   edit <file> <start>-<end>
     Replace lines with new content. Lines must be visible in a view.
@@ -104,16 +107,7 @@ Commands:
       def process(verbose=False):
           if not verbose:
               return
-      
-</editor>
 
-  search "<pattern>" <glob>
-    Find all occurrences of pattern in files matching glob.
-    Returns filepath:line_number for each match.
-    Example:
-      <editor>
-      search "TODO" *.py
-      
 </editor>
 
   create <file>
@@ -123,34 +117,36 @@ Commands:
       <editor>
       create new_file.py
       # New module
-      
+
 </editor>
 
-  close <id> - Close a view
-  next_match <id> - Show next pattern match for a view
-  prev_match <id> - Show previous pattern match for a view
+  close label <name> - Close view by label
+  close pattern <glob> - Close all views matching label pattern
+  close file <path> - Close all views of a file
+  close all - Close all views
 ```
 
 **Changes**:
 - `view` collapsed to one line (agent already knows how to use it)
-- `edit`, `search`, `create` still show full help (not yet used)
+- `peek` also collapsed (similar to view)
+- `edit` and `create` still show full help (not yet used)
 - Screen space freed for the view content
 
-### After Using `view`, `edit`, `search`
+### After Using `view`, `edit`, `peek`
 
 ```
 ==================== EDITOR ====================
 Views:
-  [1] src/main.py /^def main/ to /^if __name__/ (match 1/1)
+  [main] src/main.py
      45  def main():
      46      parser = argparse.ArgumentParser()
      ...
-     78  if __name__ == '__main__':
+     78      return 0
 
 Commands:
-  view <file> /<start>/ /<end>/ [label] - View file section by regex patterns
+  view <label> <matcher> in <glob> | <operations> - Create persistent labeled view
+  peek <matcher> in <glob> | <operations> - Transiently view content
   edit <file> <start>-<end> - Replace lines (must be visible in a view)
-  search "<pattern>" <glob> - Find text matching pattern in files
 
   create <file>
     Create a new file with initial content.
@@ -159,12 +155,13 @@ Commands:
       <editor>
       create new_file.py
       # New module
-      
+
 </editor>
 
-  close <id> - Close a view
-  next_match <id> - Show next pattern match for a view
-  prev_match <id> - Show previous pattern match for a view
+  close label <name> - Close view by label
+  close pattern <glob> - Close all views matching label pattern
+  close file <path> - Close all views of a file
+  close all - Close all views
 ```
 
 **Key insight**: When agent needs `create` for the first time, LONG help with example is still there!

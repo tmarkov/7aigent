@@ -60,9 +60,9 @@ The agent is the main binary users interact with. It:
 The orchestrator provides tool execution environments. It:
 
 - **Runs in sandbox**: Isolated by bubblewrap, only sees project directory
-- **Manages environments**: Bash, Python REPL, Editor (file viewing/editing)
+- **Manages environments**: Bash, Python REPL, Editor (query-based file viewing/editing)
 - **Handles commands**: Receives JSON commands via stdin, returns JSON responses
-- **Maintains state**: Each environment keeps persistent state (bash session, Python variables, open files)
+- **Maintains state**: Each environment keeps persistent state (bash session, Python variables, active queries)
 
 **Key files**: `orchestrator/main.py`, `orchestrator/environments/`
 
@@ -112,7 +112,7 @@ Each environment is independent with its own state:
 
 - **Bash**: Persistent shell session, working directory, environment variables
 - **Python**: Persistent REPL, variables survive across commands
-- **Editor**: File views with pattern-based navigation
+- **Editor**: Query-based pipeline system with procedural views that auto-update
 
 Environments communicate only through the filesystem. No inter-environment messaging.
 
