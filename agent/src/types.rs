@@ -104,6 +104,18 @@ pub struct SessionMetadata {
 
     /// Number of commands executed
     pub command_count: usize,
+
+    /// Cost from auxiliary LLM queries (in dollars)
+    #[serde(default)]
+    pub auxiliary_cost: Decimal,
+
+    /// Token usage from auxiliary queries
+    #[serde(default)]
+    pub auxiliary_tokens: TokenUsage,
+
+    /// Number of auxiliary LLM queries
+    #[serde(default)]
+    pub auxiliary_query_count: usize,
 }
 
 impl SessionMetadata {
@@ -178,6 +190,15 @@ impl SessionMetadata {
             }
             Event::SessionEnd { status, .. } => {
                 self.status = *status;
+            }
+            Event::AuxiliaryLlmQuery { response, .. } => {
+                self.auxiliary_query_count += 1;
+                self.auxiliary_cost += response.cost;
+                self.total_cost += response.cost;
+                self.auxiliary_tokens.prompt_tokens += response.usage.prompt_tokens as usize;
+                self.auxiliary_tokens.completion_tokens +=
+                    response.usage.completion_tokens as usize;
+                self.auxiliary_tokens.total_tokens += response.usage.total_tokens as usize;
             }
             _ => {}
         }
@@ -274,6 +295,14 @@ pub enum Event {
         status: SessionStatus,
         reason: Option<String>,
     },
+    AuxiliaryLlmQuery {
+        timestamp: DateTime<Utc>,
+        request_id: String,
+        prompt: String,
+        context: Option<String>,
+        request: CompletionRequest,
+        response: CompletionResponse,
+    },
 }
 
 impl Event {
@@ -284,6 +313,7 @@ impl Event {
             Event::LlmCall { timestamp, .. } => *timestamp,
             Event::CommandExecution { timestamp, .. } => *timestamp,
             Event::SessionEnd { timestamp, .. } => *timestamp,
+            Event::AuxiliaryLlmQuery { timestamp, .. } => *timestamp,
         }
     }
 }
@@ -361,6 +391,9 @@ impl SessionManager {
             total_tokens: Default::default(),
             llm_call_count: 0,
             command_count: 0,
+            auxiliary_cost: Decimal::ZERO,
+            auxiliary_tokens: Default::default(),
+            auxiliary_query_count: 0,
         };
 
         // Save initial metadata and create empty events file

@@ -176,6 +176,104 @@ impl<C: LlmClient> Agent<C> {
         }
     }
 
+    /// Receive response from container, handling any auxiliary requests that arrive first
+    async fn receive_with_aux_handling(
+        &mut self,
+    ) -> Result<(crate::types::CommandResponse, ScreenState)> {
+        use crate::container::OrchestratorMessage;
+
+        loop {
+            let message = self
+                .container
+                .receive_message()
+                .context("Failed to receive message from orchestrator")?;
+
+            match message {
+                OrchestratorMessage::CommandResponse(response, screen) => {
+                    return Ok((response, screen));
+                }
+                OrchestratorMessage::AuxiliaryLlmRequest(request) => {
+                    let request_id = request.request_id.clone();
+                    let result = self.handle_auxiliary_request(request).await;
+                    self.container
+                        .send_auxiliary_response(&request_id, result)
+                        .context("Failed to send auxiliary response")?;
+                    // Continue loop to wait for actual command response
+                }
+            }
+        }
+    }
+
+    /// Handle an auxiliary LLM request from the orchestrator
+    async fn handle_auxiliary_request(
+        &mut self,
+        request: crate::container::AuxiliaryLlmRequest,
+    ) -> std::result::Result<String, String> {
+        use crate::llm::LlmMessage;
+
+        println!(
+            "[Auxiliary LLM Query] request_id={}, prompt_len={}",
+            request.request_id,
+            request.prompt.len()
+        );
+
+        // Build auxiliary LLM request with special system message
+        let mut messages = vec![LlmMessage::system(
+            "You specialize in providing concise summaries and explanations. \
+             When provided one or a few larger snippets of code or text, provide a summary of each \
+             and explain how they relate to each other. When provided multiple smaller snippets, \
+             focus on identifying common threads and patterns between them. Be clear and concise."
+                .to_string(),
+        )];
+
+        // Add context if provided
+        let user_content = if let Some(ctx) = &request.context {
+            format!("{}\n\nContext:\n{}", request.prompt, ctx)
+        } else {
+            request.prompt.clone()
+        };
+
+        messages.push(LlmMessage::user(user_content));
+
+        // Create LLM request
+        let llm_request = crate::llm::CompletionRequest {
+            messages,
+            model: self.config.llm.model.clone(),
+            max_tokens: Some(5000), // Limit auxiliary responses
+            temperature: self.config.llm.temperature,
+        };
+
+        // Call LLM
+        let llm_response = match self.llm_client.complete(llm_request.clone()).await {
+            Ok(resp) => resp,
+            Err(e) => {
+                eprintln!("[Auxiliary LLM Query] Error: {}", e);
+                return Err(format!("LLM error: {}", e));
+            }
+        };
+
+        // Log event
+        let event = Event::AuxiliaryLlmQuery {
+            timestamp: Utc::now(),
+            request_id: request.request_id.clone(),
+            prompt: request.prompt,
+            context: request.context,
+            request: llm_request,
+            response: llm_response.clone(),
+        };
+
+        if let Err(e) = self.session.append_event(&event) {
+            eprintln!("[Auxiliary LLM Query] Failed to log event: {}", e);
+        }
+
+        println!(
+            "[Auxiliary LLM Query] Complete. tokens={} cost=${:.4}",
+            llm_response.usage.total_tokens, llm_response.cost
+        );
+
+        Ok(llm_response.content)
+    }
+
     /// Run the main agent loop until task completion or error
     pub async fn run(&mut self) -> Result<()> {
         println!("Starting task: {}", self.session.task);
@@ -259,10 +357,7 @@ impl<C: LlmClient> Agent<C> {
                         .send_command(&cmd.env, &cmd.command)
                         .context("Failed to send command to orchestrator")?;
 
-                    let (cmd_response, mut screen_state) = self
-                        .container
-                        .receive_response()
-                        .context("Failed to receive response from orchestrator")?;
+                    let (cmd_response, mut screen_state) = self.receive_with_aux_handling().await?;
 
                     // Print command output
                     println!();
@@ -427,10 +522,7 @@ impl<C: LlmClient> Agent<C> {
                     .send_command(&cmd.env, &cmd.command)
                     .context("Failed to send command to orchestrator")?;
 
-                let (cmd_response, mut screen_state) = self
-                    .container
-                    .receive_response()
-                    .context("Failed to receive response from orchestrator")?;
+                let (cmd_response, mut screen_state) = self.receive_with_aux_handling().await?;
 
                 // Print command output
                 println!();
@@ -604,6 +696,9 @@ fn build_llm_messages_from_events(
             }
             Event::SessionEnd { .. } => {
                 // Don't include session end in context
+            }
+            Event::AuxiliaryLlmQuery { .. } => {
+                // Don't include auxiliary queries in main conversation context
             }
         }
     }

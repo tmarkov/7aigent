@@ -7,6 +7,8 @@ Protocol:
     - Agent → Orchestrator: {"env": "bash", "command": "ls -la"}
     - Orchestrator → Agent: {"response": {...}, "screen": {...}}
     - Orchestrator → Agent (error): {"type": "error", "message": "..."}
+    - Orchestrator → Agent (auxiliary request): {"type": "auxiliary_llm_request", "request_id": "...", "prompt": "...", "context": "..."}
+    - Agent → Orchestrator (auxiliary response): {"type": "auxiliary_llm_response", "request_id": "...", "response": "...", "error": "..."}
 
 All messages are single-line JSON terminated by newline.
 """
@@ -177,3 +179,77 @@ def send_error_response(error_msg: str) -> None:
     json.dump(message, sys.stdout)
     sys.stdout.write("\n")
     sys.stdout.flush()
+
+
+def send_auxiliary_llm_request(
+    request_id: str, prompt: str, context: Optional[str] = None
+) -> None:
+    """
+    Send auxiliary LLM request to agent.
+
+    Args:
+        request_id: Unique identifier for this request
+        prompt: The prompt to send to the LLM
+        context: Optional additional context
+
+    Message format:
+        {"type": "auxiliary_llm_request", "request_id": "...", "prompt": "...", "context": "..."}
+    """
+    message = {
+        "type": "auxiliary_llm_request",
+        "request_id": request_id,
+        "prompt": prompt,
+    }
+    if context is not None:
+        message["context"] = context
+
+    json.dump(message, sys.stdout)
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+
+
+def read_auxiliary_llm_response(request_id: str) -> str:
+    """
+    Read auxiliary LLM response from stdin.
+
+    Args:
+        request_id: The request ID we're waiting for
+
+    Returns:
+        The LLM response text
+
+    Raises:
+        ParseError: If message is invalid or an error occurred
+        RuntimeError: If response is for wrong request_id
+    """
+    line = sys.stdin.readline()
+    if not line:  # EOF
+        raise ParseError("Unexpected EOF while waiting for auxiliary LLM response")
+
+    try:
+        data = json.loads(line)
+    except json.JSONDecodeError as e:
+        raise ParseError(f"Invalid JSON: {e}")
+
+    if not isinstance(data, dict):
+        raise ParseError(f"Message must be JSON object, got {type(data).__name__}")
+
+    if data.get("type") != "auxiliary_llm_response":
+        raise ParseError(
+            f"Expected auxiliary_llm_response, got {data.get('type', 'unknown')}"
+        )
+
+    if data.get("request_id") != request_id:
+        raise RuntimeError(
+            f"Response request_id mismatch: expected {request_id}, got {data.get('request_id')}"
+        )
+
+    # Check for error in response
+    if "error" in data:
+        raise ParseError(f"LLM error: {data['error']}")
+
+    # Return the response
+    if "response" not in data:
+        raise ParseError("Missing 'response' field in auxiliary LLM response")
+
+    return data["response"]

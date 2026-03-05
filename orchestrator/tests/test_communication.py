@@ -9,7 +9,9 @@ import pytest
 from orchestrator.communication import (
     ParsedMessage,
     ParseError,
+    read_auxiliary_llm_response,
     read_message,
+    send_auxiliary_llm_request,
     send_error_response,
     send_response,
 )
@@ -187,3 +189,87 @@ class TestParsedMessage:
 
         with pytest.raises(AttributeError):
             msg.command = "pwd"  # type: ignore
+
+
+class TestAuxiliaryLlmProtocol:
+    """Test auxiliary LLM request/response protocol."""
+
+    def test_send_auxiliary_request(self) -> None:
+        """Test sending an auxiliary LLM request."""
+        sys.stdout = io.StringIO()
+
+        send_auxiliary_llm_request("req-123", "Summarize this code", "def foo(): pass")
+
+        output = sys.stdout.getvalue()
+        assert output.endswith("\n")
+
+        # Parse JSON
+        data = json.loads(output)
+        assert data["type"] == "auxiliary_llm_request"
+        assert data["request_id"] == "req-123"
+        assert data["prompt"] == "Summarize this code"
+        assert data["context"] == "def foo(): pass"
+
+    def test_send_auxiliary_request_without_context(self) -> None:
+        """Test sending an auxiliary LLM request without context."""
+        sys.stdout = io.StringIO()
+
+        send_auxiliary_llm_request("req-456", "What is this?")
+
+        output = sys.stdout.getvalue()
+        data = json.loads(output)
+        assert data["type"] == "auxiliary_llm_request"
+        assert data["request_id"] == "req-456"
+        assert data["prompt"] == "What is this?"
+        assert "context" not in data
+
+    def test_read_auxiliary_response(self) -> None:
+        """Test reading a successful auxiliary LLM response."""
+        sys.stdin = io.StringIO(
+            '{"type": "auxiliary_llm_response", "request_id": "req-123", "response": "This is a summary"}\n'
+        )
+
+        response = read_auxiliary_llm_response("req-123")
+
+        assert response == "This is a summary"
+
+    def test_read_auxiliary_response_with_error(self) -> None:
+        """Test reading an auxiliary LLM response with error."""
+        sys.stdin = io.StringIO(
+            '{"type": "auxiliary_llm_response", "request_id": "req-123", "error": "LLM timeout"}\n'
+        )
+
+        with pytest.raises(ParseError, match="LLM error: LLM timeout"):
+            read_auxiliary_llm_response("req-123")
+
+    def test_read_auxiliary_response_wrong_type(self) -> None:
+        """Test that reading wrong message type raises error."""
+        sys.stdin = io.StringIO('{"type": "error", "message": "something"}\n')
+
+        with pytest.raises(ParseError, match="Expected auxiliary_llm_response"):
+            read_auxiliary_llm_response("req-123")
+
+    def test_read_auxiliary_response_wrong_request_id(self) -> None:
+        """Test that mismatched request_id raises error."""
+        sys.stdin = io.StringIO(
+            '{"type": "auxiliary_llm_response", "request_id": "req-456", "response": "text"}\n'
+        )
+
+        with pytest.raises(RuntimeError, match="request_id mismatch"):
+            read_auxiliary_llm_response("req-123")
+
+    def test_read_auxiliary_response_missing_response_field(self) -> None:
+        """Test that missing response field raises error."""
+        sys.stdin = io.StringIO(
+            '{"type": "auxiliary_llm_response", "request_id": "req-123"}\n'
+        )
+
+        with pytest.raises(ParseError, match="Missing 'response' field"):
+            read_auxiliary_llm_response("req-123")
+
+    def test_read_auxiliary_response_eof(self) -> None:
+        """Test that EOF while waiting raises error."""
+        sys.stdin = io.StringIO("")
+
+        with pytest.raises(ParseError, match="Unexpected EOF"):
+            read_auxiliary_llm_response("req-123")

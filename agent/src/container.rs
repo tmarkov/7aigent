@@ -8,6 +8,23 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use thiserror::Error;
 
+/// Auxiliary LLM request from orchestrator
+#[derive(Debug, Clone)]
+pub struct AuxiliaryLlmRequest {
+    pub request_id: String,
+    pub prompt: String,
+    pub context: Option<String>,
+}
+
+/// Message from orchestrator
+#[derive(Debug)]
+pub enum OrchestratorMessage {
+    /// Regular command response with screen  state
+    CommandResponse(CommandResponse, ScreenState),
+    /// Auxiliary LLM query request
+    AuxiliaryLlmRequest(AuxiliaryLlmRequest),
+}
+
 #[derive(Debug, Error)]
 pub enum ContainerError {
     #[error("Failed to spawn sandbox: {0}")]
@@ -146,8 +163,8 @@ impl ContainerHandle {
         Ok(())
     }
 
-    /// Receive a response from the orchestrator
-    pub fn receive_response(&mut self) -> Result<(CommandResponse, ScreenState)> {
+    /// Receive a message from the orchestrator
+    pub fn receive_message(&mut self) -> Result<OrchestratorMessage> {
         let mut line = String::new();
         let bytes_read = self
             .stdout
@@ -161,31 +178,104 @@ impl ContainerHandle {
         let message: serde_json::Value = serde_json::from_str(&line)
             .map_err(|e| ContainerError::ReceiveError(format!("invalid JSON: {}", e)))?;
 
-        // Check for error response
-        if message["type"].as_str() == Some("error") {
-            return Err(ContainerError::OrchestratorError(
+        // Check message type
+        match message["type"].as_str() {
+            Some("error") => Err(ContainerError::OrchestratorError(
                 message["message"]
                     .as_str()
                     .ok_or(ContainerError::InvalidMessage)?
                     .to_string(),
-            ));
-        }
+            )),
+            Some("auxiliary_llm_request") => {
+                // Parse auxiliary request
+                let request_id = message["request_id"]
+                    .as_str()
+                    .ok_or(ContainerError::InvalidMessage)?
+                    .to_string();
+                let prompt = message["prompt"]
+                    .as_str()
+                    .ok_or(ContainerError::InvalidMessage)?
+                    .to_string();
+                let context = message["context"].as_str().map(|s| s.to_string());
 
-        // Parse successful response
-        let response = CommandResponse {
-            output: message["response"]["output"]
-                .as_str()
-                .ok_or(ContainerError::InvalidMessage)?
-                .to_string(),
-            processed: message["response"]["processed"]
-                .as_bool()
-                .ok_or(ContainerError::InvalidMessage)?,
-            exit_code: message["response"]["exit_code"].as_i64().map(|v| v as i32),
+                Ok(OrchestratorMessage::AuxiliaryLlmRequest(
+                    AuxiliaryLlmRequest {
+                        request_id,
+                        prompt,
+                        context,
+                    },
+                ))
+            }
+            _ => {
+                // Parse regular command response
+                let response = CommandResponse {
+                    output: message["response"]["output"]
+                        .as_str()
+                        .ok_or(ContainerError::InvalidMessage)?
+                        .to_string(),
+                    processed: message["response"]["processed"]
+                        .as_bool()
+                        .ok_or(ContainerError::InvalidMessage)?,
+                    exit_code: message["response"]["exit_code"].as_i64().map(|v| v as i32),
+                };
+
+                let screen = parse_screen(&message["screen"])?;
+
+                Ok(OrchestratorMessage::CommandResponse(response, screen))
+            }
+        }
+    }
+
+    /// Send auxiliary LLM response back to orchestrator
+    pub fn send_auxiliary_response(
+        &mut self,
+        request_id: &str,
+        response: std::result::Result<String, String>,
+    ) -> Result<()> {
+        let message = match response {
+            Ok(text) => serde_json::json!({
+                "type": "auxiliary_llm_response",
+                "request_id": request_id,
+                "response": text,
+            }),
+            Err(error) => serde_json::json!({
+                "type": "auxiliary_llm_response",
+                "request_id": request_id,
+                "error": error,
+            }),
         };
 
-        let screen = parse_screen(&message["screen"])?;
+        let stdin = self.stdin.as_mut().ok_or(ContainerError::SendError(
+            "stdin already closed".to_string(),
+        ))?;
 
-        Ok((response, screen))
+        serde_json::to_writer(&mut *stdin, &message)
+            .map_err(|e| ContainerError::SendError(e.to_string()))?;
+
+        stdin
+            .write_all(b"\n")
+            .map_err(|e| ContainerError::SendError(e.to_string()))?;
+
+        stdin
+            .flush()
+            .map_err(|e| ContainerError::SendError(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// Receive a response from the orchestrator
+    ///
+    /// This is a simple wrapper that expects only command responses.
+    /// The agent itself handles auxiliary requests properly via receive_with_aux_handling.
+    pub fn receive_response(&mut self) -> Result<(CommandResponse, ScreenState)> {
+        match self.receive_message()? {
+            OrchestratorMessage::CommandResponse(response, screen) => Ok((response, screen)),
+            OrchestratorMessage::AuxiliaryLlmRequest(_request) => {
+                // In tests, we don't expect auxiliary requests
+                // The agent handles these properly via receive_with_aux_handling
+                Err(ContainerError::InvalidMessage)
+            }
+        }
     }
 
     /// Shutdown the sandbox gracefully

@@ -151,6 +151,43 @@ fn format_event_pretty(event: &Event, include_timestamp: bool, show_context: boo
                 .unwrap_or_default();
             format!("{}\n{}{}\n", header, status_str, reason_str)
         }
+        Event::AuxiliaryLlmQuery {
+            timestamp,
+            request_id,
+            prompt,
+            context,
+            response,
+            ..
+        } => {
+            let header = if include_timestamp {
+                format!(
+                    "=== AUXILIARY LLM QUERY ({}) === ({})",
+                    request_id,
+                    format_timestamp(timestamp)
+                )
+            } else {
+                format!("=== AUXILIARY LLM QUERY ({}) ===", request_id)
+            };
+
+            let mut output = format!("{}\n", header);
+            output.push_str(&format!("Prompt: {}\n", prompt));
+
+            if let Some(ctx) = context {
+                output.push_str(&format!("Context: {}\n", ctx));
+            }
+
+            if show_context {
+                output.push_str(&format!(
+                    "\nTokens: {} prompt + {} completion = {} total\n",
+                    response.usage.prompt_tokens,
+                    response.usage.completion_tokens,
+                    response.usage.total_tokens
+                ));
+            }
+
+            output.push_str(&format!("Response: {}\n", response.content));
+            output
+        }
     }
 }
 
@@ -179,15 +216,36 @@ pub fn format_session_summary(session: &SessionMetadata) -> String {
 
 /// Format a completion summary (when agent finishes)
 pub fn format_completion_summary(session: &SessionMetadata) -> String {
-    format!(
-        "✓ Task completed!\n\nSummary:\n  Total LLM calls: {}\n  Total commands: {}\n  Total cost: ${:.4}\n  Total tokens: {} prompt + {} completion = {} total\n",
-        session.llm_call_count,
-        session.command_count,
-        session.total_cost,
+    let mut output = format!(
+        "✓ Task completed!\n\nSummary:\n  Total LLM calls: {}\n  Total commands: {}\n",
+        session.llm_call_count, session.command_count,
+    );
+
+    if session.auxiliary_query_count > 0 {
+        output.push_str(&format!(
+            "  Auxiliary LLM queries: {}\n",
+            session.auxiliary_query_count
+        ));
+    }
+
+    output.push_str(&format!("  Total cost: ${:.4}", session.total_cost));
+
+    if session.auxiliary_query_count > 0 {
+        output.push_str(&format!(
+            " (main: ${:.4}, auxiliary: ${:.4})",
+            session.total_cost - session.auxiliary_cost,
+            session.auxiliary_cost
+        ));
+    }
+
+    output.push_str(&format!(
+        "\n  Total tokens: {} prompt + {} completion = {} total\n",
         session.total_tokens.prompt_tokens,
         session.total_tokens.completion_tokens,
         session.total_tokens.total_tokens,
-    )
+    ));
+
+    output
 }
 
 /// Format a list of LLM calls (for --list-calls)
@@ -459,6 +517,9 @@ mod tests {
             },
             llm_call_count: 3,
             command_count: 5,
+            auxiliary_cost: dec!(0.0000),
+            auxiliary_tokens: Default::default(),
+            auxiliary_query_count: 0,
         };
 
         let output = format_session_summary(&session);

@@ -6,6 +6,7 @@ use std::fmt;
 use thiserror::Error;
 
 pub mod cost;
+pub mod mock; // Mock client for testing
 pub mod openai;
 pub mod retry;
 
