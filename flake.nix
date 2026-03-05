@@ -123,6 +123,9 @@
             isort
             ruff
 
+            # Code search (required by editor environment)
+            ripgrep
+
             # Sandboxing
             bubblewrap
 
@@ -174,13 +177,17 @@
             propagatedBuildInputs = with pkgs.python313Packages; [
               pexpect
               textual
-            ];
+            ] ++ (with pkgs; [
+              ripgrep  # Required by editor environment for pattern search
+            ]);
 
             # Check inputs (test and lint dependencies)
             nativeCheckInputs = with pkgs.python313Packages; [
               pytest
               hypothesis
-            ];
+            ] ++ (with pkgs; [
+              ripgrep  # Required for editor environment tests
+            ]);
 
             # Run checks (tests and linters)
             checkPhase = ''

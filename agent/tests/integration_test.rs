@@ -306,13 +306,13 @@ fn run_integration_test(log: Arc<Mutex<TestLog>>) {
     TestLog::log(&log, "✓ Python imports work");
 
     TestLog::log(&log, "=== Test 5: Editor Environment ===");
-    TestLog::log(&log, "Sending: editor 'view test.txt /.*/ /.*/  '");
+    TestLog::log(&log, "Sending: editor 'peek /test/ in test.txt'");
     handle
-        .send_command("editor", "view test.txt /.*/ /.*/")
+        .send_command("editor", "peek /test/ in test.txt")
         .expect("Failed to send editor command");
 
     TestLog::log(&log, "Waiting for response...");
-    let (response, screen) = handle
+    let (response, _screen) = handle
         .receive_response()
         .expect("Failed to receive editor response");
 
@@ -323,14 +323,13 @@ fn run_integration_test(log: Arc<Mutex<TestLog>>) {
             response.processed, response.output
         ),
     );
-    assert!(response.processed, "Editor view should succeed");
+    assert!(response.processed, "Editor peek should succeed");
 
-    // Check that editor screen shows the view
-    let editor_screen = &screen.sections["editor"];
+    // Check that response contains content from the file
     assert!(
-        editor_screen.content.contains("test.txt") || editor_screen.content.contains("[1]"),
-        "Editor screen should show view, got: {:?}",
-        editor_screen.content
+        response.output.contains("test content") || response.output.contains("test.txt"),
+        "Editor peek should return file content, got: {:?}",
+        response.output
     );
     TestLog::log(&log, "✓ Editor environment works");
 
