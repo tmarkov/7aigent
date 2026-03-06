@@ -37,7 +37,7 @@ The agent runs in a minimal sandbox by default (Python, bash, coreutils). To add
 **2. Configure the agent:**
 
 ```toml
-# .7aigent.toml in your project
+# .7aigent/config.toml in your project
 [sandbox]
 shell_prefix = "nix develop --command"
 ```

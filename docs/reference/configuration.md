@@ -9,7 +9,7 @@ This document provides a comprehensive reference for all configuration options a
 - Applied to all projects
 
 **Project configuration:**
-- Location: `.7aigent.toml` (in project root)
+- Location: `.7aigent/config.toml` (in project directory)
 - Applied to specific project only
 - Overrides global configuration
 
@@ -204,7 +204,7 @@ Control agent behavior:
 [behavior]
 explain_actions = true                    # Agent explains reasoning
 ask_before_destructive = false            # Confirm destructive operations
-initial_messages = ".7aigent-init.md"     # Path to initial messages file
+initial_messages = ".7aigent/init.md"     # Path to initial messages file
 ```
 
 **Fields:**
@@ -221,7 +221,7 @@ Initial messages are pre-configured simulated assistant messages that populate t
 - Avoid wasting tokens on generic exploration
 
 **Default behavior:**
-- If `initial_messages` not specified: checks for `.7aigent-init.md` in project root
+- If `initial_messages` not specified: checks for `.7aigent/init.md` in project directory
 - If file doesn't exist: agent starts with empty context (no initial messages)
 - If file exists: parses and executes messages at startup
 
@@ -251,7 +251,7 @@ cat config.toml
 
 Each section is treated as a separate simulated message. Commands are parsed and executed just like normal LLM responses, and their outputs populate the agent's screen state.
 
-**Example `.7aigent-init.md`:**
+**Example `.7aigent/init.md`:**
 
 ```markdown
 I need to understand this TypeScript project. Let's start with the README:
@@ -273,7 +273,9 @@ view src/index.ts
 - **Project-specific**: Each project can have its own initialization
 - **Demonstrative**: Shows the agent how to use commands effectively
 
-**See:** `.7aigent-init.md.example` in the repository for a complete example.
+**See:** Example files in the repository:
+- `.7aigent/init.md.example` - Initial messages example
+- `.7aigent/config.toml.example` - Configuration example
 
 ## Budget Configuration
 
@@ -332,7 +334,7 @@ read_write = ["src/**", "docs/**"]
 no_access = [".git/**", "node_modules/**"]
 
 [behavior]
-initial_messages = ".7aigent-init.md"  # Load project-specific startup
+initial_messages = ".7aigent/init.md"  # Load project-specific startup
 
 [budget]
 max_cost_per_session = 5.00
@@ -421,7 +423,7 @@ warn_threshold = 0.75
 
 1. Built-in defaults
 2. Global config (`~/.config/7aigent/config.toml`)
-3. Project config (`.7aigent.toml`)
+3. Project config (`.7aigent/config.toml`)
 
 Later configurations override earlier ones.
 
@@ -441,7 +443,7 @@ Create default project configuration:
 7aigent --init
 </bash>
 
-Creates `.7aigent.toml` with commented examples.
+Creates `.7aigent/config.toml` with commented examples.
 
 ## Environment Variables
 

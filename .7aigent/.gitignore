@@ -1,0 +1,10 @@
+# Ignore user configuration files
+config.toml
+init.md
+
+# Keep example files
+!*.example
+
+# Keep sessions directory structure but not contents
+sessions/
+!sessions/.gitkeep

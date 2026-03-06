@@ -1,0 +1,61 @@
+# 7aigent Project Configuration Example
+#
+# This file shows all available configuration options.
+# Copy to .7aigent/config.toml and uncomment/modify as needed.
+
+[llm]
+# REQUIRED: LLM API endpoint and model
+endpoint = "https://api.openai.com/v1"
+model = "gpt-4"
+
+# Optional: Environment variable containing API key (default: "OPENAI_API_KEY")
+# api_key_env = "OPENAI_API_KEY"
+
+# Optional: Sampling parameters
+# temperature = 0.7
+# max_tokens = 4096
+
+# Optional: Custom system prompt suffix
+# system_prompt_suffix = """
+# Additional instructions for the agent.
+# Example: "Always run tests after making changes."
+# """
+
+# Optional: Override model pricing (USD per 1k tokens)
+# [llm.pricing.gpt-4]
+# input_per_1k = 0.03
+# output_per_1k = 0.06
+
+[sandbox]
+# Optional: Shell prefix for wrapping interactive processes
+# Useful for project-specific development environments (nix, poetry, conda, etc.)
+# shell_prefix = "nix develop --command"
+
+# Optional: Disable network access (default: false, network enabled)
+# disable_network = false
+
+# Optional: Custom sandbox script path
+# sandbox_path = "/path/to/custom/sandbox"
+
+[sandbox.files]
+# Optional: File access restrictions (advisory - communicated to LLM via system prompt)
+# read_only = ["tests/**", ".env", "package-lock.json"]
+# read_write = ["src/**", "docs/**"]
+# no_access = [".git/**", "node_modules/**"]
+
+[sandbox.resources]
+# Optional: Resource limits (not enforced in V1, use systemd-run wrapper)
+# max_memory = "4G"
+# max_cpus = "2.0"
+
+[budget]
+# Optional: Cost management (USD)
+# max_cost_per_session = 5.00   # Abort session if exceeded
+# max_cost_per_call = 0.50       # Warn and confirm if exceeded
+# warn_threshold = 0.80          # Warn at 80% of session budget
+
+[behavior]
+# Optional: Behavioral settings
+# explain_actions = true                # Agent explains reasoning (default: true)
+# ask_before_destructive = false        # Confirm destructive operations (default: false)
+# initial_messages = ".7aigent/init.md" # Path to initial messages file

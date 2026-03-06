@@ -308,7 +308,7 @@ pub struct BehaviorConfig {
     pub ask_before_destructive: bool,
 
     /// Path to markdown file containing initial messages (optional)
-    /// If not specified, defaults to checking for .7aigent-init.md in project directory
+    /// If not specified, defaults to checking for .7aigent/init.md in project directory
     /// If file doesn't exist, agent starts without initial messages
     pub initial_messages: Option<PathBuf>,
 }
@@ -376,11 +376,11 @@ impl ConfigLoader {
         dirs::config_dir().map(|d| d.join("7aigent").join("config.toml"))
     }
 
-    /// Get project config path (./.7aigent.toml)
+    /// Get project config path (./.7aigent/config.toml)
     fn project_config_path() -> Option<PathBuf> {
         std::env::current_dir()
             .ok()
-            .map(|d| d.join(".7aigent.toml"))
+            .map(|d| d.join(".7aigent").join("config.toml"))
     }
 }
 

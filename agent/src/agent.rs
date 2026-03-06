@@ -464,8 +464,8 @@ impl<C: LlmClient> Agent<C> {
             }
         }
 
-        // Otherwise, check for default .7aigent-init.md in project directory
-        let default_path = self.session.project_dir.join(".7aigent-init.md");
+        // Otherwise, check for default .7aigent/init.md in project directory
+        let default_path = self.session.project_dir.join(".7aigent").join("init.md");
         if default_path.exists() {
             Some(default_path)
         } else {
