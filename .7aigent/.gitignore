@@ -6,5 +6,6 @@ init.md
 !*.example
 
 # Keep sessions directory structure but not contents
+next_session_id
 sessions/
 !sessions/.gitkeep
