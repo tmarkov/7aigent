@@ -196,6 +196,85 @@ max_cpus = "2.0"     # CPU quota (e.g., "2.0" = 2 cores)
 max_disk = "10G"     # Not enforced, advisory only
 ```
 
+## Behavior Configuration
+
+Control agent behavior:
+
+```toml
+[behavior]
+explain_actions = true                    # Agent explains reasoning
+ask_before_destructive = false            # Confirm destructive operations
+initial_messages = ".7aigent-init.md"     # Path to initial messages file
+```
+
+**Fields:**
+- `explain_actions`: Whether agent should explain its reasoning (bool, default: `true`)
+- `ask_before_destructive`: Prompt before destructive operations like `rm -rf` (bool, default: `false`)
+- `initial_messages`: Path to markdown file with initial simulated messages (string, optional)
+
+### Initial Messages
+
+Initial messages are pre-configured simulated assistant messages that populate the agent's context at startup. This allows you to:
+- Demonstrate the expected interaction style
+- Set a starting point for exploration
+- Guide the agent toward relevant project files
+- Avoid wasting tokens on generic exploration
+
+**Default behavior:**
+- If `initial_messages` not specified: checks for `.7aigent-init.md` in project root
+- If file doesn't exist: agent starts with empty context (no initial messages)
+- If file exists: parses and executes messages at startup
+
+**File format:**
+
+Create a markdown file with simulated assistant messages separated by horizontal rules (`---`, `***`, `___`, or `~~~`):
+
+```markdown
+Let's start by examining the project README:
+
+<editor>
+view README.md /^#/ /^#/
+</editor>
+---
+Now check the main source code structure:
+
+<editor>
+search "fn main" src/**/*.rs
+</editor>
+---
+Let's look at the configuration:
+
+<bash>
+cat config.toml
+</bash>
+```
+
+Each section is treated as a separate simulated message. Commands are parsed and executed just like normal LLM responses, and their outputs populate the agent's screen state.
+
+**Example `.7aigent-init.md`:**
+
+```markdown
+I need to understand this TypeScript project. Let's start with the README:
+
+<editor>
+view README.md /^#/ /^#/
+</editor>
+---
+Now let's see the main entry point:
+
+<editor>
+view src/index.ts
+</editor>
+```
+
+**Benefits:**
+- **No LLM cost**: Initial messages don't consume LLM tokens
+- **Consistent starting point**: Every session starts the same way
+- **Project-specific**: Each project can have its own initialization
+- **Demonstrative**: Shows the agent how to use commands effectively
+
+**See:** `.7aigent-init.md.example` in the repository for a complete example.
+
 ## Budget Configuration
 
 Control LLM API costs:
@@ -251,6 +330,9 @@ shell_prefix = "nix develop --command"
 read_only = ["tests/**", ".env", "flake.lock"]
 read_write = ["src/**", "docs/**"]
 no_access = [".git/**", "node_modules/**"]
+
+[behavior]
+initial_messages = ".7aigent-init.md"  # Load project-specific startup
 
 [budget]
 max_cost_per_session = 5.00

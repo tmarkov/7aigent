@@ -7,6 +7,7 @@ pub mod config;
 pub mod container;
 pub mod context;
 pub mod format;
+pub mod initial_messages;
 pub mod llm;
 pub mod parser;
 pub mod session;

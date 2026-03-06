@@ -117,6 +117,11 @@ impl Config {
             self.budget.max_cost_per_call = other.budget.max_cost_per_call;
         }
         self.budget.warn_threshold = other.budget.warn_threshold;
+
+        // Behavior: override if set
+        if other.behavior.initial_messages.is_some() {
+            self.behavior.initial_messages = other.behavior.initial_messages;
+        }
     }
 }
 
@@ -301,6 +306,11 @@ pub struct BehaviorConfig {
     /// Whether to ask before destructive operations
     #[serde(default)]
     pub ask_before_destructive: bool,
+
+    /// Path to markdown file containing initial messages (optional)
+    /// If not specified, defaults to checking for .7aigent-init.md in project directory
+    /// If file doesn't exist, agent starts without initial messages
+    pub initial_messages: Option<PathBuf>,
 }
 
 fn default_explain_actions() -> bool {
@@ -312,6 +322,7 @@ impl Default for BehaviorConfig {
         Self {
             explain_actions: default_explain_actions(),
             ask_before_destructive: false,
+            initial_messages: None,
         }
     }
 }

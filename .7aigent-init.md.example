@@ -1,0 +1,17 @@
+Let's start by examining the project README to understand what this project is about:
+
+<editor>
+view README.md /^#/ /^#/
+</editor>
+---
+Now let's check the main documentation to understand the architecture:
+
+<editor>
+view CLAUDE.md /^#/ /^#/
+</editor>
+---
+Let's see what the main agent code looks like:
+
+<editor>
+search "pub struct Agent" agent/src/*.rs
+</editor>

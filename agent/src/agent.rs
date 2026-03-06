@@ -11,6 +11,7 @@ use crate::budget::{check_budget, BudgetCheckResult};
 use crate::config::Config;
 use crate::container::ContainerHandle;
 use crate::format::{format_completion_summary, format_event, DisplayMode};
+use crate::initial_messages::load_initial_messages;
 use crate::llm::{CompletionRequest, LlmClient, LlmMessage};
 use crate::parser::parse_commands;
 use crate::types::{
@@ -18,117 +19,9 @@ use crate::types::{
 };
 use anyhow::{Context, Result};
 use chrono::Utc;
-use ignore::WalkBuilder;
 use std::collections::HashMap;
 use std::io::{self, Write as IoWrite};
-use std::path::Path;
-
-/// Helper struct for tree building results
-struct TreeResult {
-    content: String,
-    file_count: usize,
-}
-
-/// Build directory tree at specific depth
-fn build_tree_at_depth(project_dir: &Path, max_depth: usize) -> Result<TreeResult> {
-    let mut entries = Vec::new();
-    let mut file_count = 0;
-
-    // Use ignore crate to respect .gitignore
-    let walker = WalkBuilder::new(project_dir)
-        .max_depth(Some(max_depth))
-        .hidden(false) // Show hidden files like .github
-        .git_ignore(true) // Respect .gitignore
-        .git_exclude(true) // Respect .git/info/exclude
-        .git_global(false) // Don't use global gitignore
-        .require_git(false) // Respect .gitignore even in non-git directories
-        .build();
-
-    for result in walker {
-        let entry = result.context("Failed to read directory entry")?;
-        let path = entry.path();
-
-        // Skip .git and .7aigent directories and all their contents
-        let file_name = path.file_name().and_then(|n| n.to_str());
-        if file_name == Some(".git")
-            || file_name == Some(".7aigent")
-            || path.ancestors().any(|p| {
-                let name = p.file_name().and_then(|n| n.to_str());
-                name == Some(".git") || name == Some(".7aigent")
-            })
-        {
-            continue;
-        }
-
-        // Get relative path
-        let rel_path = path
-            .strip_prefix(project_dir)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .to_string();
-
-        if rel_path.is_empty() {
-            continue; // Skip root
-        }
-
-        if entry.file_type().is_some_and(|ft| ft.is_file()) {
-            file_count += 1;
-        }
-
-        entries.push((rel_path, entry.file_type()));
-    }
-
-    // Sort entries
-    entries.sort_by(|a, b| a.0.cmp(&b.0));
-
-    // Build tree-style output
-    let mut content = String::new();
-    for (path, file_type) in entries {
-        let is_dir = file_type.is_some_and(|ft| ft.is_dir());
-        let display = if is_dir {
-            format!("{}/\n", path)
-        } else {
-            format!("{}\n", path)
-        };
-        content.push_str(&display);
-    }
-
-    Ok(TreeResult {
-        content,
-        file_count,
-    })
-}
-
-/// Build a directory tree with adaptive depth based on file count.
-///
-/// Starts at depth 1 and increases until hitting max_files or max depth of 5.
-/// Always returns at least depth 1, even if there are >max_files files at root.
-fn build_directory_tree(project_dir: &Path, max_files: usize) -> Result<String> {
-    const MAX_DEPTH: usize = 5;
-
-    let mut depth = 1;
-    let mut tree = build_tree_at_depth(project_dir, depth)?;
-
-    // Always guarantee at least depth 1
-    if tree.file_count > max_files {
-        return Ok(tree.content);
-    }
-
-    // Try to go deeper
-    while depth < MAX_DEPTH {
-        depth += 1;
-        let new_tree = build_tree_at_depth(project_dir, depth)?;
-
-        if new_tree.file_count > max_files {
-            // Too many files, return previous depth
-            return Ok(tree.content);
-        }
-
-        tree = new_tree;
-    }
-
-    Ok(tree.content)
-}
+use std::path::PathBuf;
 
 /// Main agent that manages LLM interaction and command execution
 pub struct Agent<C: LlmClient> {
@@ -305,85 +198,84 @@ impl<C: LlmClient> Agent<C> {
             print!("{}", format_event(&task_event, DisplayMode::Runtime));
             self.session.append_event(&task_event)?;
 
-            // Build directory tree and find best overview file
-            println!("[Initialization] Building directory tree...");
-            let dir_tree =
-                build_directory_tree(&self.session.project_dir, 100).unwrap_or_else(|e| {
-                    eprintln!("Warning: Failed to build directory tree: {}", e);
-                    String::from("Unable to build directory tree")
-                });
-            println!("  Found project structure");
-            println!();
+            // Load and execute initial messages from config if available
+            let init_file_path = self.get_initial_messages_path();
 
-            println!("[Initialization] Finding best overview file...");
-            let overview_file = self
-                .find_overview_file(&dir_tree)
-                .await
-                .unwrap_or_else(|e| {
-                    eprintln!("Warning: Failed to find overview file: {}", e);
-                    // Fallback to README.md if it exists, otherwise empty
-                    let readme_path = self.session.project_dir.join("README.md");
-                    if readme_path.exists() {
-                        "README.md".to_string()
+            if let Some(path) = init_file_path {
+                if path.exists() {
+                    println!(
+                        "[Initialization] Loading initial messages from: {}",
+                        path.display()
+                    );
+
+                    let messages =
+                        load_initial_messages(&path).context("Failed to load initial messages")?;
+
+                    if messages.is_empty() {
+                        println!("  No messages found in file");
                     } else {
-                        String::new()
+                        println!("  Loaded {} initial message(s)", messages.len());
+                        println!();
+
+                        // Execute each simulated message
+                        for (msg_idx, simulated_content) in messages.iter().enumerate() {
+                            // Print simulated message (not saved as event - it's just for display)
+                            println!("=== ASSISTANT (Initial {}) ===", msg_idx + 1);
+                            println!("{}", simulated_content);
+                            println!();
+
+                            // Parse commands from simulated message (same as regular LLM responses)
+                            let commands = parse_commands(simulated_content)
+                                .context("Failed to parse simulated message")?;
+
+                            // Execute each command (same as main loop)
+                            for (idx, cmd) in commands.iter().enumerate() {
+                                println!("  [{}] Executing {} command...", idx + 1, cmd.env);
+
+                                self.container
+                                    .send_command(&cmd.env, &cmd.command)
+                                    .context("Failed to send command to orchestrator")?;
+
+                                let (cmd_response, mut screen_state) =
+                                    self.receive_with_aux_handling().await?;
+
+                                // Print command output
+                                println!();
+                                println!("=== ORCHESTRATOR ({}) ===", cmd.env);
+                                println!("{}", cmd_response.output);
+                                println!();
+
+                                // Update screen timestamp
+                                screen_state.timestamp = Utc::now();
+
+                                // Create and emit command execution event
+                                let cmd_event = Event::CommandExecution {
+                                    timestamp: Utc::now(),
+                                    environment: cmd.env.clone(),
+                                    command: cmd.command.clone(),
+                                    output: cmd_response.output,
+                                    processed: cmd_response.processed,
+                                    exit_code: cmd_response.exit_code,
+                                    screen: screen_state,
+                                };
+                                self.session.append_event(&cmd_event)?;
+                            }
+
+                            println!();
+                        }
                     }
-                });
-
-            if overview_file.is_empty() {
-                eprintln!("Warning: No overview file found, skipping initial view");
-                println!("[Initialization] Complete. Starting main loop...");
-                println!();
-            } else {
-                println!("  Overview file: {}", overview_file);
-                println!();
-
-                let simulated_content = Self::generate_simulated_message(&overview_file);
-
-                // Print simulated message (not saved as event - it's just for display)
-                println!("=== ASSISTANT (Initial) ===");
-                println!("{}", simulated_content);
-                println!();
-
-                // Parse commands from simulated message (same as regular LLM responses)
-                let commands = parse_commands(&simulated_content)
-                    .context("Failed to parse simulated message")?;
-
-                // Execute each command (same as main loop)
-                for (idx, cmd) in commands.iter().enumerate() {
-                    println!("  [{}] Executing {} command...", idx + 1, cmd.env);
-
-                    self.container
-                        .send_command(&cmd.env, &cmd.command)
-                        .context("Failed to send command to orchestrator")?;
-
-                    let (cmd_response, mut screen_state) = self.receive_with_aux_handling().await?;
-
-                    // Print command output
-                    println!();
-                    println!("=== ORCHESTRATOR ({}) ===", cmd.env);
-                    println!("{}", cmd_response.output);
-                    println!();
-
-                    // Update screen timestamp
-                    screen_state.timestamp = Utc::now();
-
-                    // Create and emit command execution event
-                    let cmd_event = Event::CommandExecution {
-                        timestamp: Utc::now(),
-                        environment: cmd.env.clone(),
-                        command: cmd.command.clone(),
-                        output: cmd_response.output,
-                        processed: cmd_response.processed,
-                        exit_code: cmd_response.exit_code,
-                        screen: screen_state,
-                    };
-                    self.session.append_event(&cmd_event)?;
+                } else {
+                    println!(
+                        "[Initialization] Initial messages file not found: {}",
+                        path.display()
+                    );
                 }
-
-                println!("[Initialization] Complete. Starting main loop...");
-                println!();
+            } else {
+                println!("[Initialization] No initial messages configured");
             }
+
+            println!("[Initialization] Complete. Starting main loop...");
+            println!();
         }
 
         loop {
@@ -558,88 +450,26 @@ impl<C: LlmClient> Agent<C> {
         &self.session
     }
 
-    /// Ask LLM to identify the best file for project overview given a directory tree.
-    async fn find_overview_file(&mut self, dir_tree: &str) -> Result<String> {
-        let system_msg =
-            "You identify the best file for understanding a project's purpose and structure."
-                .to_string();
-        let user_msg = format!(
-            "Here's a directory tree:\n\n{}\n\nWhich single file would be best for getting a general overview of this project?\nLook for README files, documentation, or main entry points.\n\nRespond with ONLY the file path (e.g., 'README.md' or 'docs/overview.md'), nothing else.",
-            dir_tree
-        );
-
-        let overview_request = CompletionRequest {
-            messages: vec![LlmMessage::system(system_msg), LlmMessage::user(user_msg)],
-            model: self.config.llm.model.clone(),
-            max_tokens: Some(500), // Increased to allow for reasoning tokens + actual response
-            temperature: Some(0.3),
-        };
-
-        // Track this LLM call
-        let call_id = self.llm_call_counter;
-        self.llm_call_counter += 1;
-
-        let response = self
-            .llm_client
-            .complete(overview_request.clone())
-            .await
-            .context("Failed to find overview file")?;
-
-        // Emit LLM call event for initialization
-        let llm_event = Event::LlmCall {
-            timestamp: Utc::now(),
-            call_id,
-            purpose: LlmCallPurpose::Initialization,
-            request: overview_request,
-            response: response.clone(),
-        };
-        self.session.append_event(&llm_event)?;
-
-        // Parse response - take first line, trim whitespace
-        let file_path = response
-            .content
-            .lines()
-            .next()
-            .unwrap_or("")
-            .trim()
-            .to_string();
-
-        // Validate path exists
-        let full_path = self.session.project_dir.join(&file_path);
-        if !full_path.exists() || !full_path.is_file() {
-            anyhow::bail!("LLM returned invalid file path: {}", file_path);
+    /// Get the path to the initial messages file based on configuration.
+    ///
+    /// Returns the path if configured or if default file exists, None otherwise.
+    fn get_initial_messages_path(&self) -> Option<PathBuf> {
+        // If explicitly configured, use that path
+        if let Some(ref path) = self.config.behavior.initial_messages {
+            // If relative path, resolve relative to project directory
+            if path.is_relative() {
+                return Some(self.session.project_dir.join(path));
+            } else {
+                return Some(path.clone());
+            }
         }
 
-        Ok(file_path)
-    }
-
-    /// Generate a simulated initial assistant message that views the overview file.
-    ///
-    /// This creates the appearance that the LLM has already taken a first step
-    /// by viewing a relevant overview file. The message demonstrates proper LLM
-    /// behavior: reasoning about the situation, explaining the plan, and using
-    /// proper tool formatting.
-    ///
-    /// The approach varies based on file type:
-    /// - Markdown files (.md): Search for headings, then view by sections
-    /// - Other text files: View paragraphs (blank line to blank line)
-    /// - Empty string (no file): Fallback to ls command
-    fn generate_simulated_message(file_path: &str) -> String {
-        if file_path.is_empty() {
-            // Case 3: No overview file - use ls as fallback
-            "I can see the project structure and git status on screen. Since there's no obvious overview documentation file, let me list the directory contents to understand what we're working with:\n\n<bash>\nls -alh\n</bash>".to_string()
-        } else if file_path.ends_with(".md") {
-            // Case 1: Markdown file - search for headings and view by sections
-            format!(
-                "I can see the project structure and git status on screen. To understand what we're working with and address the task effectively, I should start by examining the overview documentation.\n\nLet me first find the structure of the markdown file by searching for section headers:\n\n<editor>\nsearch \"^#\\s\" {}\n</editor>\n\nNow let me view the sections to understand the content:\n\n<editor>\nview {} /^#\\s/ /^#\\s/\n</editor>",
-                file_path, file_path
-            )
+        // Otherwise, check for default .7aigent-init.md in project directory
+        let default_path = self.session.project_dir.join(".7aigent-init.md");
+        if default_path.exists() {
+            Some(default_path)
         } else {
-            // Case 2: Other text file - view by paragraphs (empty line to empty line)
-            format!(
-                "I can see the project structure and git status on screen. To understand what we're working with and address the task effectively, I should start by examining the overview documentation.\n\nLet me view the file content by paragraphs:\n\n<editor>\nview {} /^$|^/ /^$/\n</editor>",
-                file_path
-            )
+            None
         }
     }
 }
@@ -718,275 +548,4 @@ fn build_llm_messages_from_events(
     result.push((screen_message.role, screen_message.content));
 
     result
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::llm::{CompletionResponse, FinishReason, TokenUsage as LlmTokenUsage};
-    use rust_decimal::Decimal;
-    use rust_decimal_macros::dec;
-    use tempfile::TempDir;
-
-    // Mock LLM client for testing
-    struct MockLlmClient {
-        response: String,
-    }
-
-    #[async_trait::async_trait]
-    impl LlmClient for MockLlmClient {
-        async fn complete(
-            &self,
-            _request: CompletionRequest,
-        ) -> Result<CompletionResponse, crate::llm::LlmError> {
-            Ok(CompletionResponse {
-                content: self.response.clone(),
-                usage: LlmTokenUsage {
-                    prompt_tokens: 100,
-                    completion_tokens: 50,
-                    total_tokens: 150,
-                },
-                cost: dec!(0.001),
-                finish_reason: FinishReason::Stop,
-            })
-        }
-
-        fn estimate_cost(
-            &self,
-            _request: &CompletionRequest,
-        ) -> Result<Decimal, crate::llm::LlmError> {
-            Ok(dec!(0.001))
-        }
-
-        fn count_tokens(&self, _message: &str) -> usize {
-            100
-        }
-    }
-
-    fn create_test_project() -> TempDir {
-        let temp_dir = TempDir::new().unwrap();
-        let base = temp_dir.path();
-
-        // Create a simple project structure
-        std::fs::write(base.join("README.md"), "# Test Project").unwrap();
-        std::fs::write(base.join("main.rs"), "fn main() {}").unwrap();
-        std::fs::create_dir(base.join("src")).unwrap();
-        std::fs::write(base.join("src").join("lib.rs"), "// lib").unwrap();
-
-        temp_dir
-    }
-
-    #[test]
-    fn test_generate_simulated_message_markdown_produces_parseable_commands() {
-        // Requirements:
-        // 1. Message must be parseable by parse_commands
-        // 2. Must produce exactly 2 editor commands
-        // 3. Commands must reference the file being viewed
-        // 4. First command must be search with markdown heading pattern
-        // 5. Second command must be view with section delimiters
-        //
-        // Combined requirements testing structure validation of generated message.
-
-        let message = Agent::<MockLlmClient>::generate_simulated_message("README.md");
-
-        // Requirement 1: Parseability
-        let commands = parse_commands(&message)
-            .expect("Generated message must be parseable by parse_commands");
-
-        // Requirement 2: Command count and environment
-        assert_eq!(
-            commands.len(),
-            2,
-            "Must generate exactly 2 commands for markdown file"
-        );
-        assert_eq!(
-            commands[0].env, "editor",
-            "First command must be for editor environment"
-        );
-        assert_eq!(
-            commands[1].env, "editor",
-            "Second command must be for editor environment"
-        );
-
-        // Requirement 3: Commands reference the file
-        assert!(
-            commands[0].command.contains("README.md"),
-            "First command must reference README.md. Command: {}",
-            commands[0].command
-        );
-        assert!(
-            commands[1].command.contains("README.md"),
-            "Second command must reference README.md. Command: {}",
-            commands[1].command
-        );
-
-        // Requirement 4: First command structure (search for headings)
-        assert!(
-            commands[0].command.starts_with("search"),
-            "First command must be search. Command: {}",
-            commands[0].command
-        );
-        assert!(
-            commands[0].command.contains("^#\\s"),
-            "Search command must use markdown heading pattern. Command: {}",
-            commands[0].command
-        );
-
-        // Requirement 5: Second command structure (view with delimiters)
-        assert!(
-            commands[1].command.starts_with("view"),
-            "Second command must be view. Command: {}",
-            commands[1].command
-        );
-        assert!(
-            commands[1].command.contains("/^#\\s/"),
-            "View command must use section heading delimiters. Command: {}",
-            commands[1].command
-        );
-    }
-
-    #[test]
-    fn test_generate_simulated_message_text_produces_parseable_commands() {
-        // Requirements:
-        // 1. Message must be parseable by parse_commands
-        // 2. Must produce exactly 1 editor command (non-markdown files)
-        // 3. Command must reference the file being viewed
-        // 4. Command must be view with paragraph delimiters
-        //
-        // Combined requirements testing structure validation for non-markdown files.
-
-        let message = Agent::<MockLlmClient>::generate_simulated_message("LICENSE");
-
-        // Requirement 1: Parseability
-        let commands = parse_commands(&message)
-            .expect("Generated message must be parseable by parse_commands");
-
-        // Requirement 2: Command count and environment
-        assert_eq!(
-            commands.len(),
-            1,
-            "Must generate exactly 1 command for text file"
-        );
-        assert_eq!(
-            commands[0].env, "editor",
-            "Command must be for editor environment"
-        );
-
-        // Requirement 3: Command references the file
-        assert!(
-            commands[0].command.contains("LICENSE"),
-            "Command must reference LICENSE. Command: {}",
-            commands[0].command
-        );
-
-        // Requirement 4: View command with paragraph delimiters
-        assert!(
-            commands[0].command.starts_with("view"),
-            "Command must be view. Command: {}",
-            commands[0].command
-        );
-        assert!(
-            commands[0].command.contains("/^$|^/") && commands[0].command.contains("/^$/"),
-            "View command must use paragraph delimiters (blank line patterns). Command: {}",
-            commands[0].command
-        );
-    }
-
-    #[test]
-    fn test_generate_simulated_message_no_file_produces_parseable_commands() {
-        // Requirements:
-        // 1. Message must be parseable by parse_commands
-        // 2. Must produce exactly 1 bash command (fallback when no file)
-        // 3. Command must be ls to list directory contents
-        //
-        // Combined requirements testing fallback behavior when no overview file.
-
-        let message = Agent::<MockLlmClient>::generate_simulated_message("");
-
-        // Requirement 1: Parseability
-        let commands = parse_commands(&message)
-            .expect("Generated message must be parseable by parse_commands");
-
-        // Requirement 2: Command count and environment
-        assert_eq!(
-            commands.len(),
-            1,
-            "Must generate exactly 1 command when no file"
-        );
-        assert_eq!(
-            commands[0].env, "bash",
-            "Command must be for bash environment"
-        );
-
-        // Requirement 3: ls command to list contents
-        assert!(
-            commands[0].command.starts_with("ls"),
-            "Command must be ls to list directory. Command: {}",
-            commands[0].command
-        );
-    }
-
-    #[test]
-    fn test_build_directory_tree_includes_files_and_directories() {
-        // Requirement: Directory tree must include all non-ignored files and mark
-        // directories with trailing slash.
-
-        let temp_dir = create_test_project();
-        let tree = build_directory_tree(temp_dir.path(), 100).unwrap();
-
-        println!("Tree output:\n{}", tree);
-
-        // Verify files are included
-        assert!(tree.contains("README.md"), "Tree should contain README.md");
-        assert!(tree.contains("main.rs"), "Tree should contain main.rs");
-
-        // Verify directories are marked with trailing slash
-        assert!(
-            tree.contains("src/"),
-            "Tree should contain src/ directory with trailing slash"
-        );
-    }
-
-    #[test]
-    fn test_build_tree_at_depth_limits_nesting() {
-        // Requirement: Depth parameter must limit tree traversal - depth 1 shows
-        // top-level files and directories only, not nested contents.
-
-        let temp_dir = create_test_project();
-        let result = build_tree_at_depth(temp_dir.path(), 1).unwrap();
-
-        // At depth 1, should see top-level files and directories
-        assert!(
-            result.content.contains("README.md"),
-            "Depth 1 should include top-level files"
-        );
-        assert!(
-            result.content.contains("main.rs"),
-            "Depth 1 should include top-level files"
-        );
-        assert!(
-            result.content.contains("src/"),
-            "Depth 1 should show directories"
-        );
-
-        // Should NOT see files inside src/ at depth 1
-        assert!(
-            !result.content.contains("src/lib.rs"),
-            "Depth 1 must not include nested files (src/lib.rs should be hidden)"
-        );
-    }
-
-    #[test]
-    fn test_build_tree_at_depth_2_includes_nested_files() {
-        // Requirement: Depth 2 must include files inside first-level directories.
-
-        let temp_dir = create_test_project();
-        let result = build_tree_at_depth(temp_dir.path(), 2).unwrap();
-
-        // At depth 2, should see files inside src/
-        assert!(
-            result.content.contains("src/lib.rs"),
-            "Depth 2 must include files inside first-level directories"
-        );
-    }
 }
