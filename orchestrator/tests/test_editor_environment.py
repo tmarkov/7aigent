@@ -343,6 +343,72 @@ def test_peek_with_line_range_returns_specified_range(editor, sample_py_file):
 
 
 @timeout(10)
+def test_peek_line_glob_returns_lines_from_multiple_files(editor, temp_project_dir):
+    """Requirement: peek line glob must return specified lines from all matching files."""
+    # Create test files
+    (temp_project_dir / "file1.md").write_text("# File 1\nLine 2\nLine 3\n")
+    (temp_project_dir / "file2.md").write_text(
+        "# File 2\nAnother line 2\nAnother line 3\n"
+    )
+    (temp_project_dir / "other.txt").write_text("Should not match\n")
+
+    response = editor.handle_command(CommandText("peek line 1-2 in *.md"))
+    assert response.processed, "Line glob should work"
+
+    # Should contain content from both .md files
+    assert "# File 1" in response.output, "Should include file1.md"
+    assert "# File 2" in response.output, "Should include file2.md"
+    assert "Should not match" not in response.output, "Should not include .txt file"
+
+
+@timeout(10)
+def test_peek_line_glob_with_context_operation(editor, temp_project_dir):
+    """Requirement: peek line glob must support pipeline operations."""
+    (temp_project_dir / "test1.py").write_text("line1\nline2\nline3\nline4\nline5\n")
+    (temp_project_dir / "test2.py").write_text("a\nb\nc\nd\ne\n")
+
+    response = editor.handle_command(CommandText("peek line 3 in *.py | context 1"))
+    assert response.processed, "Line glob with operations should work"
+
+    # Should show lines 2-4 from both files
+    assert "line2" in response.output and "line4" in response.output
+    assert "b" in response.output and "d" in response.output
+
+
+@timeout(10)
+def test_peek_line_glob_recursive_pattern(editor, temp_project_dir):
+    """Requirement: peek line glob must support recursive glob patterns."""
+    subdir = temp_project_dir / "subdir"
+    subdir.mkdir()
+    (temp_project_dir / "root.rs").write_text("root line 1\nroot line 2\n")
+    (subdir / "nested.rs").write_text("nested line 1\nnested line 2\n")
+
+    response = editor.handle_command(CommandText("peek line 1 in **/*.rs"))
+    assert response.processed, "Recursive glob should work"
+
+    assert "root line 1" in response.output, "Should include root file"
+    assert "nested line 1" in response.output, "Should include nested file"
+
+
+@timeout(10)
+def test_peek_line_glob_skips_files_with_insufficient_lines(editor, temp_project_dir):
+    """Requirement: peek line glob must skip files that don't have requested lines."""
+    (temp_project_dir / "short.py").write_text("line1\nline2\n")  # Only 2 lines
+    (temp_project_dir / "long.py").write_text(
+        "\n".join([f"line{i}" for i in range(1, 101)]) + "\n"
+    )
+
+    response = editor.handle_command(CommandText("peek line 50-52 in *.py"))
+    assert response.processed, "Should work"
+
+    # Should only show long.py content
+    assert "line50" in response.output, "Should include line from long.py"
+    assert (
+        "line1" not in response.output and "line2" not in response.output
+    ), "Should skip short.py"
+
+
+@timeout(10)
 def test_view_rejects_line_matcher_with_error(editor, sample_py_file):
     """Requirement: view command must reject line matcher since line numbers become stale.
 

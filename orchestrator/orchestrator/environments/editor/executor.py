@@ -8,10 +8,11 @@ This module executes parsed queries by:
 Uses ripgrep as the search backend for fast pattern matching.
 """
 
+import glob
 import re
 import subprocess
-from collections import defaultdict
 from pathlib import Path
+from typing import Optional
 
 from orchestrator.environments.editor.indentation import IndentationAnalyzer
 from orchestrator.environments.editor.parser import (
@@ -68,17 +69,42 @@ class QueryExecutor:
             >>> isinstance(windows, list)
             True
         """
-        # Phase 1: Execute matcher
+        # Phase 1: Find matching files
         if isinstance(ast.matcher, PatternMatcher):
-            windows = self._search_pattern(
-                ast.matcher, ast.label or "peek", excluded_files
-            )
+            matching_files = self._find_matching_files(ast.matcher.glob, excluded_files)
         elif isinstance(ast.matcher, LineMatcher):
-            windows = self._search_lines(ast.matcher, ast.label or "peek")
+            if ast.matcher.glob:
+                matching_files = self._find_matching_files(
+                    ast.matcher.glob, excluded_files
+                )
+            elif ast.matcher.filepath:
+                # Single file - no glob expansion needed
+                matching_files = [ast.matcher.filepath]
+            else:
+                return []  # Neither glob nor filepath set - invalid
         else:
             return []
 
-        # Phase 2: Apply operations sequentially
+        # Phase 2: Apply matcher to each file
+        windows = []
+        for filepath in matching_files:
+            if isinstance(ast.matcher, PatternMatcher):
+                windows.extend(
+                    self._apply_pattern_to_file(
+                        filepath, ast.matcher.pattern, ast.label or "peek"
+                    )
+                )
+            elif isinstance(ast.matcher, LineMatcher):
+                window = self._extract_lines_from_file(
+                    filepath,
+                    ast.matcher.start_line,
+                    ast.matcher.end_line,
+                    ast.label or "peek",
+                )
+                if window:
+                    windows.append(window)
+
+        # Phase 3: Apply operations sequentially
         for op in ast.operations:
             if isinstance(op, ContextOp):
                 windows = self._expand_context(windows, op.n)
@@ -103,33 +129,66 @@ class QueryExecutor:
 
         return windows
 
-    def _search_pattern(
-        self, matcher: PatternMatcher, label: str, excluded: set[Path]
-    ) -> list[Window]:
-        """Search for pattern using ripgrep.
+    def _find_matching_files(
+        self, glob_pattern: str, excluded: set[Path]
+    ) -> list[Path]:
+        """Find files matching glob pattern.
 
         Args:
-            matcher: Pattern matcher
-            label: Query label
+            glob_pattern: Glob pattern for files (or exact path)
             excluded: Excluded file paths
 
         Returns:
-            List of windows (single-line windows at match locations)
+            List of matching file paths
+        """
+        # Expand glob pattern relative to project dir
+        pattern = str(self._project_dir / glob_pattern)
+        try:
+            matched_files = glob.glob(pattern, recursive=True)
+        except (OSError, ValueError):
+            return []
+
+        # Enforce file limit and filter excluded
+        result = []
+        for filepath_str in matched_files:
+            filepath = Path(filepath_str)
+
+            # Resolve relative to project dir
+            if not filepath.is_absolute():
+                filepath = self._project_dir / filepath
+
+            # Skip excluded files
+            if filepath in excluded:
+                continue
+
+            result.append(filepath)
+
+            if len(result) >= MAX_FILES:
+                break
+
+        return result
+
+    def _apply_pattern_to_file(
+        self, filepath: Path, regex_pattern: str, label: str
+    ) -> list[Window]:
+        """Apply regex pattern to a single file.
+
+        Args:
+            filepath: File to search
+            regex_pattern: Regex pattern to search for
+            label: Query label
+
+        Returns:
+            List of windows (one per match)
         """
         cmd = [
             "rg",
             "--line-number",
             "--no-heading",
-            "--no-ignore",  # Don't respect .gitignore
-            "--hidden",  # Search hidden files
             "--max-count",
             str(MAX_MATCHES_PER_FILE),
-            "--max-filesize",
-            "10M",
-            "--glob",
-            matcher.glob,
-            matcher.pattern,
-            ".",  # Search current directory
+            regex_pattern,
+            str(filepath),
         ]
 
         try:
@@ -144,51 +203,25 @@ class QueryExecutor:
             return []
 
         # ripgrep returns 0 on matches, 1 on no matches, 2+ on error
-        # We want to return empty list for no matches (1), but we should
-        # check for errors (2+)
         if result.returncode >= 2:
-            # Error case - could be invalid regex, permission denied, etc.
             return []
 
-        # returncode 0 or 1 (matches or no matches)
         windows = []
-        file_count = defaultdict(int)
-
         for line in result.stdout.split("\n"):
             if not line:
                 continue
 
-            # Parse ripgrep output: filepath:line_num:content
-            parts = line.split(":", 2)
-            if len(parts) < 3:
+            # Parse ripgrep output: line_num:content
+            parts = line.split(":", 1)
+            if len(parts) < 2:
                 continue
 
-            filepath_str, line_num_str, content = parts
-            filepath = Path(filepath_str)
-
-            # Resolve relative to project dir
-            if not filepath.is_absolute():
-                filepath = self._project_dir / filepath
-
-            # Skip excluded files
-            if filepath in excluded:
-                continue
-
-            # Enforce limits
-            if len(file_count) >= MAX_FILES:
-                break
-
-            if file_count[filepath] >= MAX_MATCHES_PER_FILE:
-                continue
-
+            line_num_str, content = parts
             try:
                 line_num = int(line_num_str)
             except ValueError:
                 continue
 
-            file_count[filepath] += 1
-
-            # Create single-line window
             windows.append(
                 Window(
                     filepath=filepath,
@@ -201,17 +234,21 @@ class QueryExecutor:
 
         return windows
 
-    def _search_lines(self, matcher: LineMatcher, label: str) -> list[Window]:
-        """Search for specific lines in file.
+    def _extract_lines_from_file(
+        self, filepath: Path, start_line: int, end_line: int, label: str
+    ) -> Optional[Window]:
+        """Extract line range from a single file.
 
         Args:
-            matcher: Line matcher
+            filepath: Path to file (relative or absolute)
+            start_line: Start line (1-based)
+            end_line: End line (1-based, inclusive)
             label: Query label
 
         Returns:
-            List with single window containing specified lines
+            Window with extracted lines, or None if file can't be read or lines out of bounds
         """
-        filepath = matcher.filepath
+        # Resolve to absolute path
         if not filepath.is_absolute():
             filepath = self._project_dir / filepath
 
@@ -220,25 +257,28 @@ class QueryExecutor:
                 all_lines = f.readlines()
 
             # Extract specified range (convert to 0-based)
-            start_idx = matcher.start_line - 1
-            end_idx = matcher.end_line  # Inclusive, so no -1
+            start_idx = start_line - 1
+            end_idx = end_line  # Inclusive, so no -1
 
-            if start_idx < 0 or end_idx > len(all_lines):
-                return []
+            # Check if start is valid (within file bounds)
+            if start_idx < 0 or start_idx >= len(all_lines):
+                return None
+
+            # Clamp end to file length
+            end_idx = min(end_idx, len(all_lines))
+            actual_end_line = end_idx  # This is the actual 1-based end line
 
             lines = [line.rstrip("\n") for line in all_lines[start_idx:end_idx]]
 
-            return [
-                Window(
-                    filepath=filepath,
-                    start_line=matcher.start_line,
-                    end_line=matcher.end_line,
-                    lines=lines,
-                    label=label,
-                )
-            ]
+            return Window(
+                filepath=filepath,
+                start_line=start_line,
+                end_line=actual_end_line,  # Use clamped value
+                lines=lines,
+                label=label,
+            )
         except (OSError, IOError):
-            return []
+            return None
 
     def _expand_context(self, windows: list[Window], n: int) -> list[Window]:
         """Expand windows N lines up and down.

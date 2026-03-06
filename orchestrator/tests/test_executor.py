@@ -151,3 +151,84 @@ class TestQueryExecutor:
             assert len(windows) == 1
             assert windows[0].start_line == 3
             assert windows[0].end_line == 10
+
+    def test_search_lines_glob_multiple_files(self):
+        """Test line glob matches multiple files."""
+        with TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir)
+
+            # Create multiple test files
+            (tmppath / "test1.py").write_text("line1\nline2\nline3\n")
+            (tmppath / "test2.py").write_text("a\nb\nc\nd\ne\n")
+            (tmppath / "other.txt").write_text("should not match\n")
+
+            parser = QueryParser()
+            ast = parser.parse_peek("peek line 1-2 in *.py")
+
+            executor = QueryExecutor(tmppath)
+            windows = executor.execute(ast, set())
+
+            # Should find 2 windows (one per .py file)
+            assert len(windows) == 2
+            assert all(w.filepath.suffix == ".py" for w in windows)
+            assert all(w.start_line == 1 and w.end_line == 2 for w in windows)
+
+    def test_search_lines_glob_out_of_bounds(self):
+        """Test line glob handles files with insufficient lines."""
+        with TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir)
+
+            # Create files with different lengths
+            (tmppath / "short.py").write_text("line1\nline2\n")  # Only 2 lines
+            (tmppath / "long.py").write_text(
+                "\n".join([f"line{i}" for i in range(1, 101)]) + "\n"
+            )  # 100 lines
+
+            parser = QueryParser()
+            ast = parser.parse_peek("peek line 50-60 in *.py")
+
+            executor = QueryExecutor(tmppath)
+            windows = executor.execute(ast, set())
+
+            # Should only find window from long.py (short.py skipped)
+            assert len(windows) == 1
+            assert windows[0].filepath.name == "long.py"
+            assert windows[0].start_line == 50
+            assert windows[0].end_line == 60
+
+    def test_search_lines_glob_no_matches(self):
+        """Test line glob with no matching files."""
+        with TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir)
+
+            (tmppath / "test.txt").write_text("content\n")
+
+            parser = QueryParser()
+            ast = parser.parse_peek("peek line 1-10 in *.py")  # No .py files
+
+            executor = QueryExecutor(tmppath)
+            windows = executor.execute(ast, set())
+
+            assert len(windows) == 0
+
+    def test_search_lines_glob_recursive(self):
+        """Test line glob with recursive pattern."""
+        with TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir)
+
+            # Create nested structure
+            subdir = tmppath / "subdir"
+            subdir.mkdir()
+            (tmppath / "root.py").write_text("root\nline2\n")
+            (subdir / "nested.py").write_text("nested\nline2\n")
+
+            parser = QueryParser()
+            ast = parser.parse_peek("peek line 1 in **/*.py")
+
+            executor = QueryExecutor(tmppath)
+            windows = executor.execute(ast, set())
+
+            # Should find both files
+            assert len(windows) == 2
+            assert windows[0].lines == ["root"] or windows[0].lines == ["nested"]
+            assert windows[1].lines == ["nested"] or windows[1].lines == ["root"]

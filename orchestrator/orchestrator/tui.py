@@ -190,10 +190,10 @@ class OrchestratorTUI(App):
 
             # Show command response
             cmd_response = response.get("response", {})
-            success = cmd_response.get("success", False)
+            processed = cmd_response.get("processed", False)
             output = cmd_response.get("output", "")
 
-            if success:
+            if processed:
                 self.write_output("[green]✓ Success[/green]")
             else:
                 self.write_output("[red]✗ Failed[/red]")

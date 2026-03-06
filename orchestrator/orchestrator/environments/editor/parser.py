@@ -9,7 +9,8 @@ Command syntax:
 
 Matchers:
     Pattern: /regex/ in <glob>
-    Line: line N in <file> or line N-M in <file> (peek only)
+    Line: line N in <file-or-glob> or line N-M in <file-or-glob> (peek only)
+          Supports globs: line 1-100 in *.md, line 50 in **/*.py
 
 Operations:
     context N, up N, down N
@@ -43,11 +44,16 @@ class PatternMatcher(Matcher):
 
 @dataclass
 class LineMatcher(Matcher):
-    """Line-based matcher (peek only)."""
+    """Line-based matcher (peek only).
+
+    Supports both exact file paths and glob patterns.
+    Exactly one of filepath or glob must be set.
+    """
 
     start_line: int  # 1-based
     end_line: int  # 1-based, inclusive
-    filepath: Path  # Specific file
+    filepath: Optional[Path] = None  # Specific file
+    glob: Optional[str] = None  # Glob pattern
 
 
 # Operation classes
@@ -157,6 +163,18 @@ class QueryParser:
     # Command patterns
     VIEW_PATTERN = re.compile(r"^view\s+(\w+)\s+(.+)$")
     PEEK_PATTERN = re.compile(r"^peek\s+(.+)$")
+
+    @staticmethod
+    def _is_glob_pattern(text: str) -> bool:
+        """Check if text contains glob pattern characters.
+
+        Args:
+            text: String to check
+
+        Returns:
+            True if text contains *, ?, or [ characters
+        """
+        return any(c in text for c in ["*", "?", "["])
 
     # Matcher patterns
     PATTERN_MATCHER = re.compile(r"^/(.+?)/\s+in\s+(.+?)(?:\s+\||$)")
@@ -335,18 +353,27 @@ class QueryParser:
                 start_line = int(match.group(1))
                 end_line_str = match.group(2)
                 end_line = int(end_line_str) if end_line_str else start_line
-                filepath_str = match.group(3).strip()
-                return LineMatcher(
-                    start_line=start_line,
-                    end_line=end_line,
-                    filepath=Path(filepath_str),
-                )
+                file_or_glob = match.group(3).strip()
+
+                # Check if it's a glob pattern or exact file
+                if self._is_glob_pattern(file_or_glob):
+                    return LineMatcher(
+                        start_line=start_line,
+                        end_line=end_line,
+                        glob=file_or_glob,
+                    )
+                else:
+                    return LineMatcher(
+                        start_line=start_line,
+                        end_line=end_line,
+                        filepath=Path(file_or_glob),
+                    )
 
         # No match
         if allow_line:
             raise ParseError(
                 f"Invalid matcher: {text}\n"
-                "Expected: /pattern/ in <glob> or line N in <file> or line N-M in <file>"
+                "Expected: /pattern/ in <glob> or line N in <file-or-glob> or line N-M in <file-or-glob>"
             )
         else:
             raise ParseError(

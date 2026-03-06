@@ -149,6 +149,62 @@ def test_peek_line_with_operations(parser):
     assert isinstance(ast.operations[0], ContextOp)
 
 
+def test_peek_line_glob_simple(parser):
+    """Test peek with simple glob pattern."""
+    ast = parser.parse_peek("peek line 1-10 in *.py")
+    assert isinstance(ast.matcher, LineMatcher)
+    assert ast.matcher.start_line == 1
+    assert ast.matcher.end_line == 10
+    assert ast.matcher.glob == "*.py"
+    assert ast.matcher.filepath is None
+
+
+def test_peek_line_glob_recursive(parser):
+    """Test peek with recursive glob pattern."""
+    ast = parser.parse_peek("peek line 1-10 in **/*.rs")
+    assert isinstance(ast.matcher, LineMatcher)
+    assert ast.matcher.start_line == 1
+    assert ast.matcher.end_line == 10
+    assert ast.matcher.glob == "**/*.rs"
+    assert ast.matcher.filepath is None
+
+
+def test_peek_line_glob_question_mark(parser):
+    """Test peek with ? glob pattern."""
+    ast = parser.parse_peek("peek line 50 in test?.py")
+    assert isinstance(ast.matcher, LineMatcher)
+    assert ast.matcher.start_line == 50
+    assert ast.matcher.end_line == 50
+    assert ast.matcher.glob == "test?.py"
+    assert ast.matcher.filepath is None
+
+
+def test_peek_line_glob_bracket(parser):
+    """Test peek with bracket glob pattern."""
+    ast = parser.parse_peek("peek line 1-100 in test[123].py")
+    assert isinstance(ast.matcher, LineMatcher)
+    assert ast.matcher.glob == "test[123].py"
+    assert ast.matcher.filepath is None
+
+
+def test_peek_line_exact_file_with_underscore(parser):
+    """Test that files with underscores are treated as exact paths."""
+    ast = parser.parse_peek("peek line 1-10 in my_file.py")
+    assert isinstance(ast.matcher, LineMatcher)
+    assert ast.matcher.filepath is not None
+    assert str(ast.matcher.filepath) == "my_file.py"
+    assert ast.matcher.glob is None
+
+
+def test_peek_line_exact_file_with_dots(parser):
+    """Test that files with dots are treated as exact paths."""
+    ast = parser.parse_peek("peek line 1-10 in setup.cfg")
+    assert isinstance(ast.matcher, LineMatcher)
+    assert ast.matcher.filepath is not None
+    assert str(ast.matcher.filepath) == "setup.cfg"
+    assert ast.matcher.glob is None
+
+
 def test_peek_invalid_syntax(parser):
     """Test peek with invalid syntax."""
     with pytest.raises(ParseError):
