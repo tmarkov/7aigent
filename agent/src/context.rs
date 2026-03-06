@@ -50,7 +50,8 @@ pub fn build_system_prompt(config: &Config, sandbox: &SandboxConfig) -> Message 
     prompt.push_str("To execute commands, use environment tags:\n");
     prompt.push_str("<bash>\nls -la\n</bash>\n\n");
     prompt.push_str("<python>\nimport pandas as pd\n</python>\n\n");
-    prompt.push_str("<editor>\nview src/main.py 1-50\n</editor>\n\n");
+    prompt
+        .push_str("<editor>\nview main /__main__/ in src/main.py | while-indented \n</editor>\n\n");
     prompt.push_str("IMPORTANT: Write code directly inside tags without escaping. For example:\n");
     prompt.push_str("<python>\nif x < 5:\n    print(\"hello\")\n</python>\n\n");
     prompt.push_str("Do NOT escape < > & characters. Just write normal code.\n\n");
