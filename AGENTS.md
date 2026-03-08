@@ -12,6 +12,8 @@ When working on this project, follow these guidelines:
 4. **Explicit over implicit**: Code should be clear and obvious, not clever
 5. **Test thoroughly**: Property-based testing ensures correctness across input space
 
+See [docs/development/testing.md](docs/development/testing.md) for testing strategy.
+
 See [docs/reference/coding-style.md](docs/reference/coding-style.md) for detailed conventions that support these principles.
 
 ## Build System
