@@ -21,7 +21,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use std::collections::HashMap;
 use std::io::{self, Write as IoWrite};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Main agent that manages LLM interaction and command execution
 pub struct Agent<C: LlmClient> {
@@ -178,9 +178,14 @@ impl<C: LlmClient> Agent<C> {
 
         // On first run, emit system prompt and task events
         if is_new_session {
-            let system_prompt_content =
-                crate::context::build_system_prompt(&self.config, &self.config.sandbox).content;
-            let task_content = self.session.task.clone();
+            let system_prompt_content = crate::context::build_system_prompt(
+                &self.config,
+                &self.config.sandbox,
+                &self.session.project_dir,
+            )
+            .content;
+            let task_content =
+                crate::context::format_task(&self.session.task, &self.session.project_dir).content;
 
             // Create and emit system prompt event
             let system_event = Event::SystemPrompt {
@@ -296,7 +301,8 @@ impl<C: LlmClient> Agent<C> {
                 .unwrap_or_else(Self::create_empty_screen);
 
             // Build LLM context from events
-            let messages = build_llm_messages_from_events(&events, &current_screen);
+            let messages =
+                build_llm_messages_from_events(&events, &current_screen, &self.session.project_dir);
 
             // Convert to LLM messages
             let llm_messages: Vec<LlmMessage> = messages
@@ -480,6 +486,7 @@ impl<C: LlmClient> Agent<C> {
 fn build_llm_messages_from_events(
     events: &[Event],
     current_screen: &ScreenState,
+    project_dir: &Path,
 ) -> Vec<(MessageRole, String)> {
     use crate::context::truncate_history;
     use crate::types::Message;
@@ -516,11 +523,25 @@ fn build_llm_messages_from_events(
                 });
             }
             Event::CommandExecution {
-                output, timestamp, ..
+                environment,
+                command,
+                output,
+                exit_code,
+                processed,
+                timestamp,
+                ..
             } => {
+                let formatted = crate::context::format_command_output(
+                    environment,
+                    command,
+                    output,
+                    *exit_code,
+                    *processed,
+                    project_dir,
+                );
                 messages.push(Message {
                     role: MessageRole::User,
-                    content: output.clone(),
+                    content: formatted.content,
                     timestamp: *timestamp,
                 });
             }
@@ -537,7 +558,7 @@ fn build_llm_messages_from_events(
     let truncated = truncate_history(&messages, MAX_HISTORY_CHARS);
 
     // Add current screen
-    let screen_message = crate::context::format_screen(current_screen);
+    let screen_message = crate::context::format_screen(current_screen, project_dir);
 
     // Build final message list
     let mut result: Vec<(MessageRole, String)> = truncated

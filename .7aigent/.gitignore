@@ -1,6 +1,7 @@
 # Ignore user configuration files
 config.toml
 init.md
+prompts/*
 
 # Keep example files
 !*.example

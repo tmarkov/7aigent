@@ -5,7 +5,9 @@
 //! and screen state.
 
 use crate::config::{Config, SandboxConfig};
+use crate::templates::{TemplateContext, TemplateRenderer};
 use crate::types::{Message, ScreenState};
+use std::path::Path;
 
 /// Build system prompt from configuration
 ///
@@ -15,81 +17,107 @@ use crate::types::{Message, ScreenState};
 /// - Command syntax instructions
 /// - File access restrictions (from sandbox config)
 /// - Behavioral guidelines
-pub fn build_system_prompt(config: &Config, sandbox: &SandboxConfig) -> Message {
-    let mut prompt = String::new();
+pub fn build_system_prompt(
+    config: &Config,
+    sandbox: &SandboxConfig,
+    project_dir: &Path,
+) -> Message {
+    let renderer = TemplateRenderer::new(project_dir);
+    let mut context = TemplateContext::new();
 
-    // Agent identity
-    prompt.push_str(
-        "You are 7aigent, an AI assistant that helps users accomplish diverse tasks.\n\n",
-    );
-
-    // Working directory context
-    prompt.push_str(
-        "You are working in a project directory. All commands execute within this directory. ",
-    );
-    prompt.push_str("The project context (directory structure, git status, and any project-specific instructions in AGENTS.md) ");
-    prompt.push_str("is shown in the screen state.\n\n");
-
-    // Screen mechanism explanation
-    prompt.push_str("IMPORTANT: Screen Mechanism\n");
-    prompt.push_str("After each command you execute, you receive a 'screen' showing the current state of all environments. ");
-    prompt.push_str("The screen is NOT part of the conversation history - it's ephemeral state that updates after every command. ");
-    prompt.push_str("You can reference information from the screen (e.g., 'I can see from the file tree that...'), ");
-    prompt.push_str("but this information is only visible to you in the current screen, not in previous messages. ");
-    prompt.push_str(
-        "Check the screen sections to see what information each environment provides.\n\n",
-    );
-
-    // Available environments
-    prompt.push_str("You have access to the following environments:\n");
-    prompt.push_str("- bash: Execute shell commands\n");
-    prompt.push_str("- python: Execute Python code (persistent REPL)\n");
-    prompt.push_str("- editor: View and edit files\n\n");
-
-    // Command syntax
-    prompt.push_str("To execute commands, use environment tags:\n");
-    prompt.push_str("<bash>\nls -la\n</bash>\n\n");
-    prompt.push_str("<python>\nimport pandas as pd\n</python>\n\n");
-    prompt
-        .push_str("<editor>\nview main /__main__/ in src/main.py | while-indented \n</editor>\n\n");
-    prompt.push_str("IMPORTANT: Write code directly inside tags without escaping. For example:\n");
-    prompt.push_str("<python>\nif x < 5:\n    print(\"hello\")\n</python>\n\n");
-    prompt.push_str("Do NOT escape < > & characters. Just write normal code.\n\n");
-
-    // File restrictions
-    if !sandbox.files.read_only.is_empty() {
-        prompt.push_str("IMPORTANT: Do NOT modify these files (read-only):\n");
+    // Build read-only files section
+    let read_only_files = if !sandbox.files.read_only.is_empty() {
+        let mut section = String::from("IMPORTANT: Do NOT modify these files (read-only):\n");
         for pattern in &sandbox.files.read_only {
-            prompt.push_str(&format!("  - {}\n", pattern));
+            section.push_str(&format!("  - {}\n", pattern));
         }
-        prompt.push('\n');
-    }
+        section.push('\n');
+        section
+    } else {
+        String::new()
+    };
 
-    if !sandbox.files.no_access.is_empty() {
-        prompt.push_str("IMPORTANT: Do NOT access these files:\n");
+    // Build no-access files section
+    let no_access_files = if !sandbox.files.no_access.is_empty() {
+        let mut section = String::from("IMPORTANT: Do NOT access these files:\n");
         for pattern in &sandbox.files.no_access {
-            prompt.push_str(&format!("  - {}\n", pattern));
+            section.push_str(&format!("  - {}\n", pattern));
         }
-        prompt.push('\n');
-    }
+        section.push('\n');
+        section
+    } else {
+        String::new()
+    };
 
-    // Behavioral guidelines
-    prompt.push_str("Guidelines:\n");
-    prompt.push_str("- Work step by step to accomplish the task\n");
-    prompt.push_str("- Check your work and fix errors\n");
-    prompt.push_str("- When done, explain what you accomplished\n");
-
+    // Build additional guidelines
+    let mut additional_guidelines = String::new();
     if !config.behavior.explain_actions {
-        prompt.push_str("- Be concise. Don't explain every action unless asked\n");
+        additional_guidelines.push_str("- Be concise. Don't explain every action unless asked\n");
     }
-
     if config.behavior.ask_before_destructive {
-        prompt.push_str("- Ask before destructive operations (rm, drop table, etc.)\n");
+        additional_guidelines
+            .push_str("- Ask before destructive operations (rm, drop table, etc.)\n");
     }
 
-    prompt.push('\n');
+    // Insert all template keys
+    context.insert("read_only_files", read_only_files);
+    context.insert("no_access_files", no_access_files);
+    context.insert("additional_guidelines", additional_guidelines);
 
-    Message::system(prompt)
+    // Render template
+    let content = renderer
+        .render("system.md", &context)
+        .expect("Failed to render system prompt template");
+
+    Message::system(content)
+}
+
+/// Format task message
+///
+/// Converts the task description into a user message.
+pub fn format_task(task: &str, project_dir: &Path) -> Message {
+    let renderer = TemplateRenderer::new(project_dir);
+    let mut context = TemplateContext::new();
+
+    context.insert("task", task);
+
+    let content = renderer
+        .render("task.md", &context)
+        .expect("Failed to render task template");
+
+    Message::user(content)
+}
+
+/// Format command execution output
+///
+/// Converts command execution results into a user message.
+pub fn format_command_output(
+    environment: &str,
+    command: &str,
+    output: &str,
+    exit_code: Option<i32>,
+    processed: bool,
+    project_dir: &Path,
+) -> Message {
+    let renderer = TemplateRenderer::new(project_dir);
+    let mut context = TemplateContext::new();
+
+    context.insert("environment", environment);
+    context.insert("command", command);
+    context.insert("output", output);
+    context.insert(
+        "exit_code",
+        exit_code
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "N/A".to_string()),
+    );
+    context.insert("processed", if processed { "yes" } else { "no" });
+
+    let content = renderer
+        .render("command_output.md", &context)
+        .expect("Failed to render command output template");
+
+    Message::user(content)
 }
 
 /// Truncate conversation history to fit within character limit
@@ -125,10 +153,12 @@ pub fn truncate_history(history: &[Message], max_chars: usize) -> Vec<Message> {
 /// Converts the screen state into a text representation that shows
 /// the current state of each environment.
 /// Format screen state into a Message (public for event-based context building)
-pub fn format_screen(screen: &ScreenState) -> Message {
-    let mut content = String::new();
+pub fn format_screen(screen: &ScreenState, project_dir: &Path) -> Message {
+    let renderer = TemplateRenderer::new(project_dir);
+    let mut context = TemplateContext::new();
 
-    content.push_str("=== Current Screen State ===\n\n");
+    // Build screen content
+    let mut screen_content = String::new();
 
     // Sort environment names for consistent ordering
     let mut env_names: Vec<_> = screen.sections.keys().collect();
@@ -137,16 +167,22 @@ pub fn format_screen(screen: &ScreenState) -> Message {
     for env_name in env_names {
         let section = &screen.sections[env_name];
 
-        content.push_str(&format!("--- {} ---\n", env_name));
-        content.push_str(&section.content);
+        screen_content.push_str(&format!("--- {} ---\n", env_name));
+        screen_content.push_str(&section.content);
 
         // Add newline if content doesn't end with one
         if !section.content.ends_with('\n') {
-            content.push('\n');
+            screen_content.push('\n');
         }
 
-        content.push('\n');
+        screen_content.push('\n');
     }
+
+    context.insert("screen", screen_content);
+
+    let content = renderer
+        .render("screen.md", &context)
+        .expect("Failed to render screen template");
 
     Message::user(content)
 }
@@ -158,9 +194,11 @@ mod tests {
     use crate::types::{MessageRole, ScreenSection};
     use chrono::Utc;
     use std::collections::HashMap;
+    use tempfile::TempDir;
 
     #[test]
     fn test_build_system_prompt_basic() {
+        let tmp = TempDir::new().unwrap();
         let config = Config::default();
 
         let sandbox = SandboxConfig {
@@ -171,7 +209,7 @@ mod tests {
             resources: ResourceConfig::default(),
         };
 
-        let msg = build_system_prompt(&config, &sandbox);
+        let msg = build_system_prompt(&config, &sandbox, tmp.path());
         assert_eq!(msg.role, MessageRole::System);
         assert!(msg.content.contains("7aigent"));
         assert!(msg.content.contains("bash"));
@@ -181,6 +219,7 @@ mod tests {
 
     #[test]
     fn test_build_system_prompt_with_restrictions() {
+        let tmp = TempDir::new().unwrap();
         let mut config = Config::default();
         config.behavior.explain_actions = false;
         config.behavior.ask_before_destructive = true;
@@ -197,7 +236,7 @@ mod tests {
             resources: ResourceConfig::default(),
         };
 
-        let msg = build_system_prompt(&config, &sandbox);
+        let msg = build_system_prompt(&config, &sandbox, tmp.path());
         assert!(msg.content.contains("*.lock"));
         assert!(msg.content.contains(".env"));
         assert!(msg.content.contains("Be concise"));
@@ -205,7 +244,38 @@ mod tests {
     }
 
     #[test]
+    fn test_format_task() {
+        let tmp = TempDir::new().unwrap();
+        let task = "Fix the authentication bug";
+
+        let msg = format_task(task, tmp.path());
+        assert_eq!(msg.role, MessageRole::User);
+        assert_eq!(msg.content.trim(), task);
+    }
+
+    #[test]
+    fn test_format_command_output() {
+        let tmp = TempDir::new().unwrap();
+
+        let msg = format_command_output(
+            "bash",
+            "ls -la",
+            "file1.txt\nfile2.txt",
+            Some(0),
+            true,
+            tmp.path(),
+        );
+        assert_eq!(msg.role, MessageRole::User);
+        assert!(msg.content.contains("Environment: bash"));
+        assert!(msg.content.contains("Command: ls -la"));
+        assert!(msg.content.contains("Exit Code: 0"));
+        assert!(msg.content.contains("Processed: yes"));
+        assert!(msg.content.contains("file1.txt"));
+    }
+
+    #[test]
     fn test_format_screen() {
+        let tmp = TempDir::new().unwrap();
         let mut sections = HashMap::new();
         sections.insert(
             "bash".to_string(),
@@ -227,7 +297,7 @@ mod tests {
             sections,
         };
 
-        let msg = format_screen(&screen);
+        let msg = format_screen(&screen, tmp.path());
         assert_eq!(msg.role, MessageRole::User);
         assert!(msg.content.contains("Current Screen State"));
         assert!(msg.content.contains("--- bash ---"));

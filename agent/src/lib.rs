@@ -11,6 +11,7 @@ pub mod initial_messages;
 pub mod llm;
 pub mod parser;
 pub mod session;
+pub mod templates;
 pub mod types;
 pub mod ui;
 

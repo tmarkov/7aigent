@@ -72,20 +72,24 @@ This document describes the internal structure of the agent and how components i
 ### Interaction Loop
 
 1. **Agent Core** constructs prompt from:
-   - Task description
-   - Conversation history
-   - Current screen state (all environments)
+   - System prompt (via template renderer with config values)
+   - Task description (via template renderer)
+   - Conversation history (command outputs via template renderer)
+   - Current screen state (via template renderer)
 2. **LLM Client** sends prompt to LLM API
 3. **LLM Client** receives response with tool calls
 4. **Agent Core** for each tool call:
    - Sends command to **Container Manager**
    - Receives result from orchestrator
+   - Formats output via template renderer
    - Appends to conversation history
 5. **Session** persists:
    - Updated conversation history
    - New screen state
    - Token usage
 6. Repeat until LLM indicates task complete
+
+**Template Rendering**: All messages sent to the LLM are generated from markdown templates (`agent/templates/prompts/*.md`) using `{{key}}` replacement. Templates can be overridden per-project in `.7aigent/prompts/` for customization without recompilation.
 
 ### Session End
 

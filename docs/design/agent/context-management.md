@@ -19,6 +19,8 @@ This document describes how the agent manages conversation history, screen state
 - `user`: Task description, tool outputs, screen updates
 - `assistant`: LLM responses (thoughts + commands)
 
+**Message Generation**: All messages are generated from markdown templates using the template renderer in `agent/src/templates.rs`. Templates support `{{key}}` replacement syntax and can be overridden per-project in `.7aigent/prompts/`. This allows users to customize the agent's communication style without recompilation.
+
 ## Screen History
 
 **Purpose**: For debugging - inspect LLM context at specific step.

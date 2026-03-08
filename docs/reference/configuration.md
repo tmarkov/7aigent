@@ -93,6 +93,47 @@ Examples:
 """
 ```
 
+### Template Overrides
+
+All agent messages (system prompt, task, screen state, command output) are generated from markdown templates with `{{key}}` replacement syntax. You can override these templates in your project:
+
+**Location**: `.7aigent/prompts/` in your project directory
+
+**Available templates**:
+- `system.md` - System prompt with agent capabilities
+- `task.md` - Initial task description
+- `screen.md` - Current screen state
+- `command_output.md` - Command execution results
+
+**Example: Customizing the system prompt**
+
+Create `.7aigent/prompts/system.md`:
+
+```markdown
+You are 7aigent, an AI assistant specializing in {{domain}}.
+
+{{read_only_files}}{{no_access_files}}Guidelines:
+- Work step by step
+- Check your work
+{{additional_guidelines}}
+
+Custom instruction: Always explain trade-offs.
+```
+
+The template system will:
+1. Check for `.7aigent/prompts/<template>.md` in your project
+2. Fall back to the embedded default template if not found
+3. Replace all `{{key}}` placeholders with actual values
+4. Fail with a clear error if required keys are missing
+
+**Template keys**:
+- `system.md`: `read_only_files`, `no_access_files`, `additional_guidelines`
+- `task.md`: `task`
+- `screen.md`: `screen`
+- `command_output.md`: `environment`, `command`, `output`, `exit_code`, `processed`
+
+See [How-to: Customize Prompts](../how-to/customize-prompts.md) for detailed examples.
+
 ## Sandbox Configuration
 
 ### Shell Prefix (IMPLEMENTED V1)
