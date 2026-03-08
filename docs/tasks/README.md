@@ -25,7 +25,7 @@ Each task file contains:
 ## Task Lifecycle
 
 1. **Task Definition**: Create task file with problem, context, scenarios. Stop here.
-2. **Design**: Work through design workflow, add design section to task file
+- [x] 28. Add project documentation README
 3. **Implementation**: Write code, update plan checklist as you go
 4. **Completion**: Mark task as complete in the master task list below
 
@@ -81,6 +81,10 @@ These tasks are for designing and implementing the agent:
 ### Documentation
 
 - [ ] [18 - Refactor documentation structure](./18-refactor-documentation-structure.md) - Reorganize docs for better navigation
+
+### User Experience
+
+- [ ] [28 - Implement init command](./28-implement-init-command.md) - Replace outdated init with interactive setup that creates proper directory structure and uses agent to configure project-specific settings
 
 ### Testing
 
