@@ -983,29 +983,31 @@ def test_create_with_subdirectory_creates_parent_directories(editor, temp_projec
 # ====================
 
 
-@timeout(10)
-def test_peek_enforces_300_line_hard_limit(editor, temp_project_dir):
-    """Requirement: peek must enforce 300 line hard limit and fail when exceeded.
+@timeout(30)
+def test_peek_enforces_3000_line_hard_limit(editor, temp_project_dir):
+    """Requirement: peek must enforce 3000 line hard limit and fail when exceeded.
 
     Limit protects against accidentally reading huge amounts of data.
+    The executor caps matches per file, so we spread matches across many files
+    to accumulate enough total lines to exceed the 3000-line limit.
     """
-    # Create file with many matches that will exceed 300 lines with context
-    # Need enough to exceed MAX_MATCHES_PER_FILE (50) * avg_lines_per_window (>6)
+    # Each file gets 50 matches; with context 40 each window is ~80 lines,
+    # so one file contributes ~4000 lines — well over the 3000-line limit.
     large_file = temp_project_dir / "large.py"
     lines = []
-    for i in range(200):  # More matches to ensure we exceed 300 lines
+    for i in range(50):
         lines.append(f"# MATCH line {i}")
-        for j in range(10):  # Many lines between matches
-            lines.append(f"x{j} = {i}")
+        for j in range(100):  # 100 lines between each match
+            lines.append(f"padding_{j} = {i}")
     large_file.write_text("\n".join(lines))
 
-    # Peek with large context that will exceed 300 lines
-    response = editor.handle_command(CommandText("peek /MATCH/ in *.py | context 10"))
+    # Peek with large context — windows will overlap and accumulate > 3000 lines
+    response = editor.handle_command(CommandText("peek /MATCH/ in *.py | context 40"))
 
     # Should hit limit and fail
-    assert not response.processed, "peek should fail when exceeding 300 line limit"
+    assert not response.processed, "peek should fail when exceeding 3000 line limit"
     assert (
-        "limit" in response.output.lower() or "300" in response.output
+        "limit" in response.output.lower() or "3000" in response.output
     ), "Error should mention limit"
 
 

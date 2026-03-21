@@ -19,7 +19,7 @@ from orchestrator.environments.editor.summarizer import Summarizer
 from orchestrator.environments.editor.windows import Window, WindowManager
 
 # Limits
-PEEK_HARD_LIMIT = 300  # Max lines for peek command
+PEEK_HARD_LIMIT = 3000  # Max lines for peek command
 MAX_TOTAL_LINES = 3000  # Max total lines across all active views
 MAX_QUERIES = 50  # Max active queries
 
@@ -184,7 +184,7 @@ class EditorEnvironment(DeclarativeEnvironment):
           glob / file — files to search, or exact file path for line matchers
           operations — optional pipeline of expand/filter steps (see Operations)
 
-        Hard limit of 300 lines per peek — the command is rejected if the result
+        Hard limit of 3000 lines per peek — the command is rejected if the result
         would exceed it. Refine the query with filter or limit operations.
         Results are not stored and do not appear on subsequent screens.
         """
