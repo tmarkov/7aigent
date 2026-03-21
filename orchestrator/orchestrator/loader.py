@@ -39,10 +39,14 @@ def load_all_environments(
         Immutable mapping of environment names to environment instances
 
     This function:
-    1. Loads built-in environments (bash, python, editor)
-    2. Loads ad-hoc environments from project_dir/env/
+    1. Loads built-in environments (bash, python, editor, system)
+    2. Loads ad-hoc environments from project_dir/env/*/environment.py
     3. Validates each ad-hoc environment before loading
     4. Logs validation errors to stderr but continues loading other environments
+
+    Ad-hoc environments are discovered from directories under project_dir/env/.
+    Each directory must contain an environment.py file with an environment class.
+    Directories with only help.md (override-only) are skipped.
 
     Examples:
         >>> from pathlib import Path
@@ -64,24 +68,32 @@ def load_all_environments(
 
     # System environment first (appears first in screen)
     environments[EnvironmentName("system")] = SystemEnvironment(project_dir)
-    environments[EnvironmentName("bash")] = BashEnvironment()
-    environments[EnvironmentName("python")] = PythonEnvironment()
+    environments[EnvironmentName("bash")] = BashEnvironment(project_dir)
+    environments[EnvironmentName("python")] = PythonEnvironment(project_dir)
     environments[EnvironmentName("editor")] = EditorEnvironment(project_dir)
 
-    # Load ad-hoc environments from project_dir/env/
+    # Load ad-hoc environments from project_dir/env/*/environment.py
     env_dir = project_dir / "env"
     if env_dir.exists() and env_dir.is_dir():
-        for module_path in env_dir.glob("*.py"):
-            name = module_path.stem
+        for subdir in sorted(env_dir.iterdir()):
+            if not subdir.is_dir():
+                continue
 
-            # Skip __init__.py and other special files
-            if name.startswith("_"):
+            env_file = subdir / "environment.py"
+            if not env_file.exists():
+                # Override-only directory (just help.md) — skip
+                continue
+
+            name = subdir.name
+
+            # Skip hidden directories
+            if name.startswith("_") or name.startswith("."):
                 continue
 
             try:
                 # Load module
                 spec = importlib.util.spec_from_file_location(
-                    f"adhoc_env.{name}", module_path
+                    f"adhoc_env.{name}", env_file
                 )
                 if spec is None or spec.loader is None:
                     print(
@@ -98,7 +110,7 @@ def load_all_environments(
                 if env_class is None:
                     print(
                         f"Error loading environment '{name}': "
-                        f"No environment class found in {module_path}",
+                        f"No environment class found in {env_file}",
                         file=sys.stderr,
                     )
                     continue
@@ -114,8 +126,8 @@ def load_all_environments(
                         print(f"  - {error}", file=sys.stderr)
                     continue
 
-                # Instantiate environment
-                environments[EnvironmentName(name)] = env_class()
+                # Instantiate environment with project_dir
+                environments[EnvironmentName(name)] = env_class(project_dir)
                 print(f"Loaded ad-hoc environment: {name}", file=sys.stderr)
 
             except Exception as e:
@@ -167,7 +179,7 @@ def validate_environment_class(env_class: type) -> list[str]:
     1. Has handle_command method with correct signature
     2. Has get_screen method with correct signature
     3. Has shutdown method (optional) with correct signature if present
-    4. Methods have correct type annotations
+    4. Constructor accepts project_dir: Path parameter
 
     Args:
         env_class: Class to validate
@@ -264,5 +276,17 @@ def validate_environment_class(env_class: type) -> list[str]:
                     errors.append(
                         f"shutdown should return None, got {sig.return_annotation}"
                     )
+
+    # Check constructor accepts project_dir parameter
+    try:
+        init_sig = inspect.signature(env_class.__init__)
+        init_params = list(init_sig.parameters.keys())
+        if "project_dir" not in init_params:
+            errors.append(
+                "Constructor must accept 'project_dir: Path' parameter "
+                "(used to pass the project directory at instantiation)"
+            )
+    except (ValueError, TypeError):
+        pass  # Can't inspect constructor — skip check
 
     return errors

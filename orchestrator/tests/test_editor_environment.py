@@ -234,7 +234,7 @@ def test_editor_environment_initializes_with_empty_state(editor):
     assert header["total_lines"] == 0, "Should start with 0 lines"
 
     # Should have help text for commands
-    assert "Commands:" in screen.content, "Should display command help"
+    assert "### view" in screen.content, "Should display command help"
 
 
 @timeout(10)
@@ -2120,7 +2120,7 @@ def test_screen_displays_command_help_footer(editor):
     screen = editor.get_screen()
 
     # Should have Commands section
-    assert "Commands:" in screen.content, "Screen should show command help section"
+    assert "### view" in screen.content, "Screen should show command help section"
 
     # Should mention key command types
     assert "view" in screen.content, "Should mention view command"

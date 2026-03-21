@@ -5,6 +5,8 @@ query protocol. Summaries are generated per <editor> tag, covering all windows
 opened within that tag.
 """
 
+from textwrap import dedent
+
 from orchestrator.auxiliary import request_auxiliary_llm_query
 from orchestrator.environments.editor.windows import Window
 
@@ -38,12 +40,16 @@ class Summarizer:
         focus = self._infer_focus(patterns)
         context = self._format_windows(windows)
 
-        prompt = f"""Summarize these code sections in 2-3 sentences.
-{focus}
+        prompt = dedent(
+            f"""You are given the following snippets:
 
-{context}
+        {context}
 
-Format: Clear sentences explaining what this code does."""
+        Please summarize them (in up to 50 lines).
+        
+        {focus}
+        """
+        )
 
         # Request auxiliary LLM via orchestrator.auxiliary
         try:

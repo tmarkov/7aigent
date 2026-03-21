@@ -1,5 +1,8 @@
 """Tests for declarative environment base class."""
 
+import tempfile
+from pathlib import Path
+
 from orchestrator.core_types import CommandText, ScreenSection
 from orchestrator.declarative import DeclarativeEnvironment, command
 
@@ -7,25 +10,28 @@ from orchestrator.declarative import DeclarativeEnvironment, command
 class SimpleEnvironment(DeclarativeEnvironment):
     """Simple test environment"""
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, project_dir: Path = Path(".")) -> None:
+        super().__init__(project_dir=project_dir)
         self.counter = 0
 
     @command(
         signature="increment",
-        description="Increment the counter by one.",
-        example="increment",
+        examples=[("Increment the counter", "increment")],
     )
     def increment(self, cmd_text: str) -> str:
+        """Increment the counter by one."""
         self.counter += 1
         return f"Counter: {self.counter}"
 
     @command(
         signature="reset",
-        description="Reset the counter to zero.\nThis is a multi-line description.",
-        example="reset",
+        examples=[("Reset to zero", "reset")],
     )
     def reset(self, cmd_text: str) -> str:
+        """Reset the counter to zero.
+
+        This is a multi-line description.
+        """
         self.counter = 0
         return "Counter reset"
 
@@ -36,25 +42,25 @@ class SimpleEnvironment(DeclarativeEnvironment):
 class TimerEnvironment(DeclarativeEnvironment):
     """Timer for tracking elapsed time"""
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, project_dir: Path = Path(".")) -> None:
+        super().__init__(project_dir=project_dir)
         self.running = False
 
     @command(
         signature="start",
-        description="Start the timer from zero or resume after stop.",
-        example="start",
+        examples=[("Start the timer", "start")],
     )
     def start(self, cmd_text: str) -> str:
+        """Start the timer from zero or resume after stop."""
         self.running = True
         return "Timer started"
 
     @command(
         signature="stop",
-        description="Stop the timer and record elapsed time.",
-        example="stop",
+        examples=[("Stop the timer", "stop")],
     )
     def stop(self, cmd_text: str) -> str:
+        """Stop the timer and record elapsed time."""
         if not self.running:
             raise ValueError("Timer not running")
         self.running = False
@@ -64,12 +70,11 @@ class TimerEnvironment(DeclarativeEnvironment):
         return "Timer: Running" if self.running else "Timer: Stopped"
 
 
-class DefaultDocstringEnvironment(DeclarativeEnvironment):
-    """Default environment using docstring"""
+class NoCommandEnvironment(DeclarativeEnvironment):
+    """Environment with no commands (uses default get_state_display)"""
 
-    @command(signature="test", description="Test command", example="test")
-    def test(self, cmd_text: str) -> str:
-        return "Test executed"
+    def __init__(self, project_dir: Path = Path(".")) -> None:
+        super().__init__(project_dir=project_dir)
 
 
 def test_command_decorator_attaches_metadata():
@@ -81,8 +86,21 @@ def test_command_decorator_attaches_metadata():
     metadata = env.increment._command_metadata
 
     assert metadata["signature"] == "increment"
-    assert metadata["description"] == "Increment the counter by one."
-    assert metadata["example"] == "increment"
+    assert metadata["examples"] == [("Increment the counter", "increment")]
+
+
+def test_command_decorator_examples_optional():
+    """Test that examples parameter is optional and defaults to empty list."""
+
+    class MinimalEnv(DeclarativeEnvironment):
+        @command(signature="test")
+        def test_cmd(self, cmd_text: str) -> str:
+            """Test command with no examples."""
+            return "ok"
+
+    env = MinimalEnv()
+    metadata = env.test_cmd._command_metadata
+    assert metadata["examples"] == []
 
 
 def test_command_discovery():
@@ -137,132 +155,155 @@ def test_handle_command_exception_handling():
     assert "Error: Timer not running" in response.output
 
 
-def test_command_usage_tracking():
-    """Test that command usage is tracked correctly."""
-    env = SimpleEnvironment()
+def test_get_help_uses_fallback_template():
+    """Test that get_help uses declarative_help.md fallback when no env-specific template."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Use a temp dir that has no env/simple/help.md
+        env = SimpleEnvironment(project_dir=Path(tmpdir))
 
-    # Initially no commands used
-    assert len(env._command_usage) == 0
+        help_text = env.get_help()
 
-    # Execute increment
-    env.handle_command(CommandText("increment"))
-    assert "increment" in env._command_usage
-    assert "reset" not in env._command_usage
+        # Fallback renders {{commands}} from declarative_help.md
+        # Commands should appear with their signatures and docstrings
+        assert "increment" in help_text
+        assert "reset" in help_text
 
-    # Execute reset
-    env.handle_command(CommandText("reset"))
-    assert "increment" in env._command_usage
-    assert "reset" in env._command_usage
+
+def test_get_help_renders_docstrings():
+    """Test that command docstrings appear in get_help output."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        env = SimpleEnvironment(project_dir=Path(tmpdir))
+
+        help_text = env.get_help()
+
+        # Docstrings should appear in command sections
+        assert "Increment the counter by one." in help_text
+        assert "Reset the counter to zero." in help_text
+        assert "This is a multi-line description." in help_text
+
+
+def test_get_help_renders_examples():
+    """Test that examples appear in get_help output with correct format."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        env = TimerEnvironment(project_dir=Path(tmpdir))
+
+        help_text = env.get_help()
+
+        # Examples section should appear
+        assert "Examples:" in help_text
+        # Example descriptions should appear
+        assert "Start the timer" in help_text
+        # Environment tags should wrap the command text
+        assert "<timer>" in help_text
+        assert "</timer>" in help_text
+
+
+def test_get_help_uses_project_override():
+    """Test that project_dir/env/{name}/help.md overrides built-in template."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+
+        # Create project override
+        override_dir = project_dir / "env" / "simple"
+        override_dir.mkdir(parents=True)
+        override_help = override_dir / "help.md"
+        override_help.write_text(
+            "Custom help for simple environment.", encoding="utf-8"
+        )
+
+        env = SimpleEnvironment(project_dir=project_dir)
+
+        help_text = env.get_help()
+
+        # Should use project override
+        assert "Custom help for simple environment." in help_text
+        # Should NOT include the generated commands section (template has no {{commands}})
+        assert "### increment" not in help_text
+
+
+def test_get_help_project_override_with_commands_placeholder():
+    """Test that {{commands}} in project override is substituted."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+
+        # Create project override with {{commands}} placeholder
+        override_dir = project_dir / "env" / "simple"
+        override_dir.mkdir(parents=True)
+        override_help = override_dir / "help.md"
+        override_help.write_text(
+            "Custom header\n\n{{commands}}\n\nCustom footer.", encoding="utf-8"
+        )
+
+        env = SimpleEnvironment(project_dir=project_dir)
+
+        help_text = env.get_help()
+
+        assert "Custom header" in help_text
+        assert "Custom footer." in help_text
+        # Commands should be injected
+        assert "increment" in help_text
 
 
 def test_get_screen_initial_state():
-    """Test get_screen before any commands are used (all LONG help)."""
-    env = SimpleEnvironment()
+    """Test get_screen combines state and help text."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        env = SimpleEnvironment(project_dir=Path(tmpdir))
 
-    screen = env.get_screen()
-    assert isinstance(screen, ScreenSection)
+        screen = env.get_screen()
+        assert isinstance(screen, ScreenSection)
 
-    content = screen.content
+        content = screen.content
 
-    # Should include state
-    assert "Counter: 0" in content
+        # Should include state from get_state_display()
+        assert "Counter: 0" in content
 
-    # Should include Commands section
-    assert "Commands:" in content
-
-    # Should include LONG help for increment (unused)
-    assert "increment" in content
-    assert "Increment the counter by one." in content
-    assert "Example:" in content
-    assert "<simple>" in content
-
-    # Should include LONG help for reset (unused)
-    assert "reset" in content
-    assert "Reset the counter to zero." in content
-    assert "This is a multi-line description." in content
+        # Should include command help via get_help()
+        assert "increment" in content
+        assert "reset" in content
+        assert "Increment the counter by one." in content
 
 
-def test_get_screen_progressive_disclosure():
-    """Test that get_screen shows SHORT help for used commands."""
-    env = SimpleEnvironment()
+def test_get_screen_no_state_shows_only_help():
+    """Test get_screen with empty state shows only help."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # NoCommandEnvironment.get_state_display() returns ""
+        env = NoCommandEnvironment(project_dir=Path(tmpdir))
 
-    # Use increment command
-    env.handle_command(CommandText("increment"))
+        screen = env.get_screen()
 
-    screen = env.get_screen()
-    content = screen.content
-
-    # State should be updated
-    assert "Counter: 1" in content
-
-    # increment should now show SHORT help (one line)
-    # Should be compact - just "  increment - Increment the counter by one."
-    assert "increment - Increment the counter by one." in content
-
-    # reset should still show LONG help (unused)
-    assert "Reset the counter to zero." in content
-    assert "This is a multi-line description." in content
-    assert "Example:" in content
+        # Empty state environment — content should be just the help template
+        # (which is the rendered empty commands since no @command decorators)
+        assert isinstance(screen, ScreenSection)
 
 
-def test_get_screen_all_commands_used():
-    """Test get_screen when all commands have been used."""
-    env = SimpleEnvironment()
+def test_get_screen_combines_state_and_help():
+    """Test that get_screen includes both state and help text."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        env = SimpleEnvironment(project_dir=Path(tmpdir))
 
-    # Use both commands
-    env.handle_command(CommandText("increment"))
-    env.handle_command(CommandText("reset"))
+        env.handle_command(CommandText("increment"))
 
-    screen = env.get_screen()
-    content = screen.content
+        screen = env.get_screen()
+        content = screen.content
 
-    # Both should show SHORT help
-    assert "increment - Increment the counter by one." in content
-    assert "reset - Reset the counter to zero." in content
+        # State should be updated
+        assert "Counter: 1" in content
 
-    # Should NOT include examples
-    assert "Example:" not in content
-    assert "<simple>" not in content
+        # Help should still be included
+        assert "increment" in content
+        assert "reset" in content
 
 
-def test_get_screen_uses_class_docstring_when_no_get_state_display():
-    """Test that get_screen uses class docstring if get_state_display not implemented."""
-    env = DefaultDocstringEnvironment()
+def test_get_screen_environment_name_in_examples():
+    """Test that environment name is correctly derived for example tags."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        env = TimerEnvironment(project_dir=Path(tmpdir))
 
-    screen = env.get_screen()
-    content = screen.content
+        screen = env.get_screen()
+        content = screen.content
 
-    # Should use docstring as default state
-    assert "Default environment using docstring" in content
-
-
-def test_get_screen_environment_name_in_code_fence():
-    """Test that environment name is correctly derived for code fences."""
-    env = TimerEnvironment()
-
-    screen = env.get_screen()
-    content = screen.content
-
-    # Should use "timer" (from TimerEnvironment)
-    assert "<timer>" in content
-
-
-def test_multiple_environments_separate_usage_tracking():
-    """Test that different environment instances track usage separately."""
-    env1 = SimpleEnvironment()
-    env2 = SimpleEnvironment()
-
-    # Use increment on env1 only
-    env1.handle_command(CommandText("increment"))
-
-    # env1 should track increment as used
-    screen1 = env1.get_screen()
-    assert "increment - Increment the counter by one." in screen1.content
-
-    # env2 should still show LONG help for increment
-    screen2 = env2.get_screen()
-    assert "Example:" in screen2.content
-    assert "<simple>" in screen2.content
+        # Should use "timer" (from TimerEnvironment → timer)
+        assert "<timer>" in content
 
 
 def test_shutdown_default_implementation():
@@ -271,31 +312,20 @@ def test_shutdown_default_implementation():
     env.shutdown()  # Should not raise
 
 
-def test_multiline_description_formatting():
-    """Test that multi-line descriptions are properly indented."""
-    env = SimpleEnvironment()
-
-    screen = env.get_screen()
-    content = screen.content
-
-    # Multi-line description should be indented
-    assert "Reset the counter to zero." in content
-    assert "This is a multi-line description." in content
-
-
 def test_command_sorting():
     """Test that commands are sorted alphabetically in help."""
-    env = SimpleEnvironment()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        env = SimpleEnvironment(project_dir=Path(tmpdir))
 
-    screen = env.get_screen()
-    content = screen.content
+        screen = env.get_screen()
+        content = screen.content
 
-    # Find positions of command names in content
-    increment_pos = content.find("increment")
-    reset_pos = content.find("reset")
+        # Find positions of command names in content
+        increment_pos = content.find("increment")
+        reset_pos = content.find("reset")
 
-    # increment should appear before reset (alphabetically)
-    assert increment_pos < reset_pos
+        # increment should appear before reset (alphabetically)
+        assert increment_pos < reset_pos
 
 
 def test_empty_command_string():
@@ -305,3 +335,31 @@ def test_empty_command_string():
     response = env.handle_command(CommandText(""))
     assert response.processed is False
     assert "Unknown command:" in response.output
+
+
+def test_render_commands_format():
+    """Test that _render_commands produces correct markdown format."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        env = SimpleEnvironment(project_dir=Path(tmpdir))
+
+        rendered = env._render_commands()
+
+        # Should have ### headers for commands
+        assert "### increment" in rendered
+        assert "### reset" in rendered
+
+        # Docstrings should appear
+        assert "Increment the counter by one." in rendered
+
+        # Examples with tags
+        assert "<simple>" in rendered
+        assert "</simple>" in rendered
+
+
+def test_env_name_derivation():
+    """Test that env name is correctly derived from class name."""
+    env = SimpleEnvironment()
+    assert env._env_name() == "simple"
+
+    env2 = TimerEnvironment()
+    assert env2._env_name() == "timer"

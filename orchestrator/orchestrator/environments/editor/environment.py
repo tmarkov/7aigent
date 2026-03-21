@@ -50,7 +50,7 @@ class EditorEnvironment(DeclarativeEnvironment):
         Args:
             project_dir: Root directory for file operations
         """
-        super().__init__()
+        super().__init__(project_dir=project_dir)
         self._project_dir = project_dir
 
         # New components
@@ -71,11 +71,34 @@ class EditorEnvironment(DeclarativeEnvironment):
 
     @command(
         signature="view <label> <matcher> in <glob> | <operations>",
-        description="Create persistent query-based view.\n\nMatchers:\n  /pattern/ in <glob> - Search for pattern\n\nOperations:\n  context N - Expand N lines up/down\n  while-indent - Expand while indented\n  until /pattern/ - Expand until pattern\n  filter /pattern/ - Keep only matching windows\n  limit N - Keep first N windows\n\nExamples: context 5, while-indent, until /^class/, filter /TODO/, limit 10",
-        example="view secrets /sops\\.secrets/ in **/*.nix | context 3",
+        examples=[
+            (
+                "Search for pattern with context",
+                "view secrets /sops\\.secrets/ in **/*.nix | context 3",
+            ),
+            (
+                "View a file with line context",
+                "view main /def main/ in src/**/*.py | context 5",
+            ),
+        ],
     )
     def _handle_view(self, cmd: str) -> CommandResponse:
-        """Handle view command."""
+        """Create a persistent query whose results appear on every screen refresh.
+
+        Parameters:
+          label      — alphanumeric identifier; reusing a label overwrites the
+                       existing view with the same name
+          matcher    — pattern matcher (see Matchers reference below)
+          glob       — file glob passed to the matcher (e.g. **/*.py)
+          operations — optional pipeline of expand/filter steps (see Operations)
+
+        The view is stored and re-executed on every screen refresh, so it always
+        reflects the latest file content without any manual refresh step.
+
+        Limits: up to 50 active queries; total lines across all views capped at
+        3000 — the command is rejected if adding this view would exceed the cap.
+        Close unused views to free the budget.
+        """
         try:
             # Parse query
             ast = self._parser.parse_view(cmd)
@@ -143,11 +166,28 @@ class EditorEnvironment(DeclarativeEnvironment):
 
     @command(
         signature="peek <matcher> in <glob> | <operations>",
-        description="Transient read (300 line limit, not stored).\n\nMatchers:\n  /pattern/ in <glob> - Search for pattern\n  line N in <file> - Specific line\n  line N-M in <file> - Line range\n\nOperations: Same as view",
-        example="peek line 155 in file.c | context 10",
+        examples=[
+            (
+                "Peek at a specific line with context",
+                "peek line 155 in file.c | context 10",
+            ),
+            ("Search for pattern (transient)", "peek /TODO/ in **/*.py | limit 20"),
+        ],
     )
     def _handle_peek(self, cmd: str) -> CommandResponse:
-        """Handle peek command."""
+        """Read file content transiently — results appear in the response only, not on screen.
+
+        Parameters:
+          matcher    — pattern or line matcher (see Matchers reference below);
+                       line matchers (line N, line N-M) are available in peek but
+                       not in view
+          glob / file — files to search, or exact file path for line matchers
+          operations — optional pipeline of expand/filter steps (see Operations)
+
+        Hard limit of 300 lines per peek — the command is rejected if the result
+        would exceed it. Refine the query with filter or limit operations.
+        Results are not stored and do not appear on subsequent screens.
+        """
         try:
             # Parse query
             ast = self._parser.parse_peek(cmd)
@@ -184,11 +224,29 @@ class EditorEnvironment(DeclarativeEnvironment):
 
     @command(
         signature="edit <file> <start>-<end>",
-        description="Edit visible lines.\n\nLines must be visible in a view.\nContent verification ensures file hasn't changed.",
-        example="edit src/main.py 45-52\nnew content here",
+        examples=[
+            (
+                "Replace lines 45-52 in a file",
+                "edit src/main.py 45-52\nnew content here\nmore lines",
+            ),
+        ],
     )
     def _handle_edit(self, cmd_lines: list[str]) -> CommandResponse:
-        """Handle edit command."""
+        """Replace a range of lines in a file with new content.
+
+        Parameters:
+          file       — path relative to the project directory
+          start-end  — 1-based inclusive line range to replace
+          content    — replacement lines, written on the lines following the
+                       edit command (multiline command)
+
+        The target lines must be currently visible in an active view. This
+        prevents editing stale content: if the file has changed since the view
+        was last generated the edit is rejected — refresh the view first.
+
+        The specified line range is replaced verbatim by the content lines.
+        Providing zero content lines deletes the range.
+        """
         if not cmd_lines:
             return CommandResponse(output="No edit command provided", processed=False)
 
@@ -253,17 +311,23 @@ class EditorEnvironment(DeclarativeEnvironment):
         )
 
     @command(
-        signature="close pattern <glob>",
-        description="Remove all queries matching label pattern\nExample:\n<editor>\nclose pattern hypothesis_1_*\n</editor>",
-        example='close pattern "hypothesis_1_*"',
+        signature="close label <name> | close pattern <glob> | close all",
+        examples=[
+            ("Close a specific query by label", "close label my_view"),
+            ("Close queries matching a pattern", "close pattern hypothesis_1_*"),
+            ("Close all active queries", "close all"),
+        ],
     )
     def _handle_close(self, cmd: str) -> CommandResponse:
-        """Handle all close command variants.
+        """Remove one or more active queries to free screen space and line budget.
 
-        Supports:
-        - close label <name>
-        - close pattern <glob>
-        - close all
+        Three variants:
+          close label <name>    — remove the query with this exact label
+          close pattern <glob>  — remove all queries whose label matches the glob
+          close all             — remove every active query
+
+        Closing queries frees their line budget (counted toward the 3000-line
+        total cap), making room for new or larger views.
         """
         import fnmatch
 
@@ -314,11 +378,21 @@ class EditorEnvironment(DeclarativeEnvironment):
 
     @command(
         signature="create <file>",
-        description="Create new file with content",
-        example="create src/new.py\nprint('hello')\n",
+        examples=[
+            ("Create a new Python file", "create src/new.py\nprint('hello')\n"),
+        ],
     )
     def _handle_create(self, cmd_lines: list[str]) -> CommandResponse:
-        """Handle create command."""
+        """Create a new file with initial content.
+
+        Parameters:
+          file    — path relative to the project directory (first line of command)
+          content — file content, written on the lines following the create
+                    command (multiline command); omit for an empty file
+
+        The file must not already exist. Parent directories are created
+        automatically. The path must be within the project directory.
+        """
         if not cmd_lines:
             return CommandResponse(output="No create command provided", processed=False)
 

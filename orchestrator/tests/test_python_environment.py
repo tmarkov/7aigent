@@ -1,11 +1,39 @@
 """Tests for Python environment."""
 
+import os
 import tempfile
+from pathlib import Path
 
 from orchestrator.core_types import CommandText
 from orchestrator.environments.python import PythonEnvironment
 
 from . import timeout
+
+
+def _parse_variables(screen_content: str) -> dict[str, str]:
+    """Parse variable section of a Python environment screen into {name: type}.
+
+    Returns an ordered dict reflecting the display order (most-recent-use first).
+    Private variables and the '(no variables)' placeholder are excluded.
+    """
+    variables: dict[str, str] = {}
+    in_section = False
+    for line in screen_content.split("\n"):
+        if "Variables" in line:
+            in_section = True
+            continue
+        if not in_section:
+            continue
+        stripped = line.strip()
+        if not stripped or stripped.startswith("("):
+            continue
+        # A non-indented non-blank line signals the end of the variables section
+        if line and not line[0].isspace():
+            break
+        if ":" in stripped:
+            name, _, type_name = stripped.partition(":")
+            variables[name.strip()] = type_name.strip()
+    return variables
 
 
 class TestPythonEnvironment:
@@ -73,33 +101,34 @@ class TestPythonEnvironment:
             screen = env.get_screen()
 
             # Verify display with types
-            assert "a: int" in screen.content, "Must show variable with type"
-            assert "b: str" in screen.content, "Must show string variable"
+            variables = _parse_variables(screen.content)
+            assert variables.get("a") == "int", "Must show variable with type"
+            assert variables.get("b") == "str", "Must show string variable"
             assert (
-                "_private" not in screen.content
+                "_private" not in variables
             ), "Must exclude private variables (starting with _)"
 
             # Use 'a' to move it to front (LRU ordering)
             env.handle_command(CommandText("print(a)"))
             screen = env.get_screen()
-            lines = screen.content.split("\n")
-            var_lines = [
-                line for line in lines if line.strip().startswith(("a:", "b:"))
-            ]
-            assert (
-                var_lines[0].strip().startswith("a:")
+            variables = _parse_variables(screen.content)
+            var_names = list(variables.keys())
+            assert var_names.index("a") < var_names.index(
+                "b"
             ), "Most recently used variable should be first"
 
             # Delete variable
             env.handle_command(CommandText("del a"))
             screen = env.get_screen()
-            assert "a:" not in screen.content, "Deleted variable must be removed"
+            variables = _parse_variables(screen.content)
+            assert "a" not in variables, "Deleted variable must be removed"
 
             # Change variable type
             env.handle_command(CommandText("b = 123"))
             screen = env.get_screen()
-            assert "b: int" in screen.content, "Type change must be reflected"
-            assert "b: str" not in screen.content, "Old type must not be shown"
+            variables = _parse_variables(screen.content)
+            assert variables.get("b") == "int", "Type change must be reflected"
+            assert variables.get("b") != "str", "Old type must not be shown"
         finally:
             env.shutdown()
 
@@ -123,17 +152,8 @@ class TestPythonEnvironment:
             env.handle_command(CommandText("result = b + c"))
 
             screen = env.get_screen()
-            lines = screen.content.split("\n")
-
-            # Find variable lines
-            var_lines = [
-                line
-                for line in lines
-                if line.strip().startswith(("a:", "b:", "c:", "result:"))
-            ]
-
-            # Extract variable names in order
-            var_names = [line.split(":")[0].strip() for line in var_lines]
+            variables = _parse_variables(screen.content)
+            var_names = list(variables.keys())
 
             # result, b, and c should all appear before 'a' (recently used)
             result_idx = var_names.index("result")
@@ -189,18 +209,19 @@ class TestPythonEnvironment:
         """
         env = PythonEnvironment()
         try:
-            # Execute command to initialize
+            initial_cwd = os.getcwd()
             env.handle_command(CommandText("x = 1"))
 
-            # Get screen
+            # Working directory must appear in screen after first use
             screen = env.get_screen()
-            assert "Working directory:" in screen.content, "Must show working directory"
+            assert (
+                initial_cwd in screen.content
+            ), "Working directory must appear in screen after first use"
 
-            # Change working directory
+            # Change working directory — screen must reflect the new path
             with tempfile.TemporaryDirectory() as tmpdir:
                 env.handle_command(CommandText(f"import os; os.chdir('{tmpdir}')"))
 
-                # Verify in screen
                 screen = env.get_screen()
                 assert (
                     tmpdir in screen.content
@@ -210,30 +231,32 @@ class TestPythonEnvironment:
 
     @timeout(10)
     def test_python_environment_help_text_always_shown(self) -> None:
-        """Help text must always be shown (freeform environment design).
+        """Requirement: Help text must always appear in screen, before and after first use.
 
         Requirements tested:
         1. Help shown before first use
         2. Help shown after first use
         3. Help shown after many uses
-        4. Help text is consistent
+        4. Help text is consistent across calls
         """
         env = PythonEnvironment()
         try:
-            expected_help = (
-                "Any Python code. Variables and imports persist across commands."
-            )
+            # Retrieve help text via public API rather than hardcoding template strings
+            help_text = env.get_help()
+            assert help_text.strip(), "get_help() must return non-empty content"
 
             # Before first use
             screen_before = env.get_screen()
             assert (
-                expected_help in screen_before.content
+                help_text in screen_before.content
             ), "Help must be shown before first use"
 
             # After first use
             env.handle_command(CommandText("x = 1"))
             screen_after = env.get_screen()
-            assert expected_help in screen_after.content, "Help must be shown after use"
+            assert (
+                help_text in screen_after.content
+            ), "Help must be shown after first use"
 
             # After many uses
             env.handle_command(CommandText("y = 2"))
@@ -241,7 +264,7 @@ class TestPythonEnvironment:
             env.handle_command(CommandText("print(z)"))
             screen_later = env.get_screen()
             assert (
-                expected_help in screen_later.content
+                help_text in screen_later.content
             ), "Help must persist after many commands"
         finally:
             env.shutdown()
@@ -258,26 +281,27 @@ class TestPythonEnvironment:
         5. Shutdown can be called before starting process (graceful)
         6. Shutdown can be called multiple times (idempotent)
         """
-        # Create environment - process should not be started yet
+        # Before first use — screen contains only help (no active process state)
         env = PythonEnvironment()
-        assert env._process is None, "Process should not start on initialization"
-
-        # Execute a command - should start process
-        env.handle_command(CommandText("x = 1"))
-        assert env._process is not None, "Process should start on first command"
-        assert env._process.isalive(), "Process should be running"
-
-        # Shutdown should terminate process
-        env.shutdown()
+        help_text = env.get_help()
+        screen = env.get_screen()
         assert (
-            env._process is None or not env._process.isalive()
-        ), "Shutdown must terminate process"
+            screen.content.strip() == help_text.strip()
+        ), "Screen before first use must contain only help (process not started yet)"
 
-        # Shutdown before starting process (graceful)
+        # First command starts process and produces output
+        response = env.handle_command(CommandText("40 + 2"))
+        assert response.processed is True, "First command must succeed"
+        assert "42" in response.output, "Process must start and execute command"
+
+        # Shutdown terminates process (must not raise)
+        env.shutdown()
+
+        # Shutdown before starting process is graceful (must not raise)
         env2 = PythonEnvironment()
-        env2.shutdown()  # Should not raise
+        env2.shutdown()
 
-        # Shutdown can be called multiple times
+        # Shutdown is idempotent (multiple calls are safe)
         env3 = PythonEnvironment()
         env3.handle_command(CommandText("x = 1"))
         env3.shutdown()
@@ -343,12 +367,51 @@ class TestPythonEnvironment:
 
             # Variable reassignment with type change
             env.handle_command(CommandText("x = 42"))
-            screen = env.get_screen()
-            assert "x: int" in screen.content, "Should show int type"
+            variables = _parse_variables(env.get_screen().content)
+            assert variables.get("x") == "int", "Should show int type"
 
             env.handle_command(CommandText("x = 'hello'"))
-            screen = env.get_screen()
-            assert "x: str" in screen.content, "Should show str type after reassignment"
-            assert "x: int" not in screen.content, "Should not show old int type"
+            variables = _parse_variables(env.get_screen().content)
+            assert (
+                variables.get("x") == "str"
+            ), "Should show str type after reassignment"
         finally:
             env.shutdown()
+
+    @timeout(10)
+    def test_python_environment_get_help_loads_builtin_template(self) -> None:
+        """Requirement: get_help() must return the built-in Python help template content.
+
+        The help template must contain python-tagged example blocks so the agent
+        can see concrete examples of how to use the environment.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env = PythonEnvironment(project_dir=Path(tmpdir))
+            help_text = env.get_help()
+
+            assert help_text.strip(), "get_help() must return non-empty content"
+            assert "<python>" in help_text, "Help must contain python example blocks"
+            assert "</python>" in help_text, "Help must close python example blocks"
+
+    @timeout(10)
+    def test_python_environment_get_help_uses_project_override(self) -> None:
+        """Requirement: project_dir/env/python/help.md must override the built-in help.
+
+        Projects must be able to supply custom Python help tailored to their
+        conventions; the override must appear in both get_help() and get_screen().
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir)
+            override_dir = project_dir / "env" / "python"
+            override_dir.mkdir(parents=True)
+            (override_dir / "help.md").write_text(
+                "Project-specific Python help for this repo.", encoding="utf-8"
+            )
+
+            env = PythonEnvironment(project_dir=project_dir)
+
+            help_text = env.get_help()
+            assert "Project-specific Python help for this repo." in help_text
+
+            screen = env.get_screen()
+            assert "Project-specific Python help for this repo." in screen.content

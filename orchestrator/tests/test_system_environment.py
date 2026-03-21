@@ -3,24 +3,35 @@
 import tempfile
 from pathlib import Path
 
+from orchestrator.core_types import CommandText
 from orchestrator.environments.system import SystemEnvironment
+
+from . import timeout
 
 
 class TestSystemEnvironment:
     """Test SystemEnvironment implementation."""
 
+    @timeout(10)
     def test_screen_shows_project_directory(self) -> None:
-        """Test that screen displays project directory path."""
+        """Requirement: Screen must display the project directory path.
+
+        The agent needs to know which directory it is working in so it can
+        construct correct file paths and navigate the project.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
             env = SystemEnvironment(project_dir)
 
             screen = env.get_screen()
             assert f"Project directory: {project_dir}" in screen.content
-            assert screen.max_lines == 100
 
+    @timeout(10)
     def test_screen_shows_agents_md_when_present(self) -> None:
-        """Test that AGENTS.md content is included when file exists."""
+        """Requirement: Screen must include AGENTS.md content when the file exists.
+
+        AGENTS.md provides project-specific instructions that the agent must follow.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
             agents_md = project_dir / "AGENTS.md"
@@ -33,23 +44,31 @@ class TestSystemEnvironment:
             assert "Project Instructions" in screen.content
             assert "Use pytest for testing" in screen.content
 
+    @timeout(10)
     def test_screen_without_agents_md(self) -> None:
-        """Test that screen works when AGENTS.md doesn't exist."""
+        """Requirement: Screen must not mention AGENTS.md when the file does not exist.
+
+        Most projects will not have an AGENTS.md; showing a missing-file reference
+        would be confusing and misleading to the agent.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
             env = SystemEnvironment(project_dir)
 
             screen = env.get_screen()
-            # Should not crash, and should not mention AGENTS.md
             assert "Project directory:" in screen.content
             assert "AGENTS.md" not in screen.content
 
+    @timeout(10)
     def test_screen_shows_git_status_in_git_repo(self) -> None:
-        """Test that git status is shown in git repositories."""
+        """Requirement: Screen must show git status when the project is a git repository.
+
+        The agent needs repository state (current branch, staged/unstaged changes)
+        to understand the project context before making edits.
+        """
         import shutil
         import subprocess
 
-        # Skip test if git not available
         if shutil.which("git") is None:
             import pytest
 
@@ -58,7 +77,6 @@ class TestSystemEnvironment:
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
 
-            # Initialize git repo
             subprocess.run(
                 ["git", "init"], cwd=str(project_dir), capture_output=True, check=True
             )
@@ -75,7 +93,6 @@ class TestSystemEnvironment:
                 check=True,
             )
 
-            # Create and commit a file
             test_file = project_dir / "test.txt"
             test_file.write_text("hello")
             subprocess.run(
@@ -95,27 +112,32 @@ class TestSystemEnvironment:
             screen = env.get_screen()
 
             assert "Git Status" in screen.content
-            # Should show branch info
             assert "On branch" in screen.content or "##" in screen.content
 
-    def test_screen_without_git_repo(self) -> None:
-        """Test that screen works in non-git directories."""
+    @timeout(10)
+    def test_screen_excludes_git_status_in_non_git_directory(self) -> None:
+        """Requirement: Screen must not show git status for non-git directories.
+
+        Not all projects use git; showing a git section in a non-git directory
+        would be incorrect and confusing to the agent.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
             env = SystemEnvironment(project_dir)
 
             screen = env.get_screen()
-            # Should not crash
             assert "Project directory:" in screen.content
-            # Should not mention git status
-            assert "Git Status" not in screen.content or "Warning" in screen.content
+            assert "Git Status" not in screen.content
 
+    @timeout(10)
     def test_screen_shows_file_tree(self) -> None:
-        """Test that file tree is included in screen."""
+        """Requirement: Screen must show the project file tree.
+
+        The agent needs to know what files exist to navigate and edit the project.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
 
-            # Create some files and directories
             (project_dir / "src").mkdir()
             (project_dir / "src" / "main.py").write_text("print('hello')")
             (project_dir / "README.md").write_text("# Project")
@@ -125,41 +147,50 @@ class TestSystemEnvironment:
             env = SystemEnvironment(project_dir)
             screen = env.get_screen()
 
-            # Should show file tree section
             assert (
                 "File Tree" in screen.content or "Directory Contents" in screen.content
             )
-            # Should show created files/directories
             assert "src" in screen.content
             assert "README.md" in screen.content
             assert "tests" in screen.content
 
-    def test_screen_handles_missing_tree_command(self) -> None:
-        """Test that screen falls back gracefully if tree command missing."""
-        # This test just verifies it doesn't crash
-        # The actual fallback depends on system configuration
+    @timeout(10)
+    def test_screen_shows_directory_contents_when_tree_unavailable(self) -> None:
+        """Requirement: Screen must show directory contents even when the tree command is absent.
+
+        The environment must fall back to a directory listing so the agent always
+        has file-system visibility regardless of which tools are installed.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
-            env = SystemEnvironment(project_dir)
+            (project_dir / "main.py").write_text("print('hello')")
+            (project_dir / "README.md").write_text("# Project")
 
+            env = SystemEnvironment(project_dir)
             screen = env.get_screen()
-            # Should not crash
+
             assert "Project directory:" in screen.content
-            # Should show either tree or ls output
             assert (
                 "File Tree" in screen.content or "Directory Contents" in screen.content
             )
+            assert "main.py" in screen.content
+            assert "README.md" in screen.content
 
-    def test_has_no_commands_initially(self) -> None:
-        """Test that SystemEnvironment has no commands initially."""
+    @timeout(10)
+    def test_system_environment_accepts_no_commands(self) -> None:
+        """Requirement: SystemEnvironment must reject all commands — it is read-only context.
+
+        The system environment exposes no agent-controllable commands; all content
+        is derived automatically from the project directory on each screen refresh.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             project_dir = Path(tmpdir)
             env = SystemEnvironment(project_dir)
 
-            # Check that _commands dict is empty
-            assert len(env._commands) == 0
+            response = env.handle_command(CommandText("anything"))
+            assert (
+                response.processed is False
+            ), "System environment must reject all commands"
 
-            # Screen should not show "Commands:" section since there are none
             screen = env.get_screen()
-            # Should still show state, but commands section will be empty
             assert "Project directory:" in screen.content

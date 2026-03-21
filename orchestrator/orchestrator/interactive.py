@@ -1,6 +1,7 @@
 """Interactive environment base class for wrapping persistent processes."""
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Optional
 
 import pexpect
@@ -18,6 +19,7 @@ class InteractiveEnvironment(ABC):
     - Output capture with truncation
     - Auto-restart on process termination
     - Clean shutdown handling
+    - Help template loading from co-located help.md files
 
     Subclasses must implement:
     - _get_spawn_command(): Return command and args for process
@@ -29,14 +31,21 @@ class InteractiveEnvironment(ABC):
     - _format_output(raw_output): Process output before returning to user
     - _on_restart(): Called when process restarts after termination
     - _handle_eof(exception): Custom EOF handling
+    - get_help(): Override to provide help text without a help.md file
+
+    Help template cascade:
+    1. project_dir/env/{env_name}/help.md  (project override)
+    2. package/environments/{env_name}/help.md  (built-in help)
+    3. FileNotFoundError if neither exists
 
     Example usage:
 
         class GdbEnvironment(InteractiveEnvironment):
-            def __init__(self):
+            def __init__(self, project_dir: Path = Path(".")) -> None:
                 super().__init__(
                     prompt_marker="(gdb) ",
-                    name="gdb"
+                    name="gdb",
+                    project_dir=project_dir,
                 )
 
             def _get_spawn_command(self) -> tuple[str, list[str]]:
@@ -67,6 +76,7 @@ class InteractiveEnvironment(ABC):
         name: str,
         max_output_size: int = MAX_OUTPUT_SIZE,
         timeout: Optional[int] = TIMEOUT,
+        project_dir: Path = Path("."),
     ) -> None:
         """
         Initialize interactive environment.
@@ -76,11 +86,13 @@ class InteractiveEnvironment(ABC):
             name: Environment name for error messages
             max_output_size: Maximum output bytes before truncation
             timeout: Command timeout in seconds (None = infinite)
+            project_dir: Project root directory for help template lookup
         """
         self._prompt_marker = prompt_marker
         self._name = name
         self._max_output_size = max_output_size
         self._timeout = timeout
+        self._project_dir = project_dir
 
         self._process: Optional[pexpect.spawn] = None
         self._used = False
@@ -338,6 +350,61 @@ class InteractiveEnvironment(ABC):
         """
         self._process.send(command + "\n")
 
+    def _env_name(self) -> str:
+        """
+        Get environment name derived from class name.
+
+        Returns:
+            Lowercase name with 'Environment' suffix removed
+            (e.g., 'BashEnvironment' -> 'bash')
+        """
+        return self.__class__.__name__.replace("Environment", "").lower()
+
+    def _load_help_template(self) -> str:
+        """
+        Load help template with cascade fallback.
+
+        Cascade order:
+        1. project_dir/env/{env_name}/help.md  (project override)
+        2. package/environments/{env_name}/help.md  (built-in)
+        3. FileNotFoundError if neither exists
+
+        Returns:
+            Template content as string
+
+        Raises:
+            FileNotFoundError: If no help template is found
+        """
+        env_name = self._env_name()
+        module_dir = Path(__file__).parent
+
+        # 1. Project-level override
+        project_override = self._project_dir / "env" / env_name / "help.md"
+        if project_override.exists():
+            return project_override.read_text(encoding="utf-8")
+
+        # 2. Package-provided help
+        package_help = module_dir / "environments" / env_name / "help.md"
+        if package_help.exists():
+            return package_help.read_text(encoding="utf-8")
+
+        raise FileNotFoundError(
+            f"No help.md found for environment '{env_name}'. "
+            f"Checked: {project_override}, {package_help}"
+        )
+
+    def get_help(self) -> str:
+        """
+        Return help template as-is (no substitution for interactive environments).
+
+        Returns:
+            Help text from the environment's help.md file, or empty string if not found
+        """
+        try:
+            return self._load_help_template()
+        except FileNotFoundError:
+            return ""
+
     def get_screen(self) -> ScreenSection:
         """
         Get current environment state for display.
@@ -345,9 +412,17 @@ class InteractiveEnvironment(ABC):
         Returns:
             Screen section with state and help text
 
-        Calls get_state_display() to get environment-specific content.
+        Calls get_state_display() to get environment-specific state, then
+        appends help text from the help.md template.
         """
-        content = self.get_state_display()
+        state = self.get_state_display()
+        help_text = self.get_help()
+        if state.strip() and help_text.strip():
+            content = f"{state}\n\n{help_text}"
+        elif state.strip():
+            content = state
+        else:
+            content = help_text
         return ScreenSection(content=content, max_lines=50)
 
     def shutdown(self) -> None:
