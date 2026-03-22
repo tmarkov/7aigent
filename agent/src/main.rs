@@ -5,11 +5,12 @@ use agent::{
     config::ConfigLoader,
     container::ContainerManager,
     format::{
-        format_event_with_context, format_llm_call_list, format_session_summary, DisplayMode,
+        format_llm_call_after, format_llm_call_context, format_llm_call_list, format_llm_replies,
+        format_session_summary,
     },
     llm::openai::OpenAiCompatibleClient,
     llm::retry::RetryClient,
-    types::{Event, SessionId, SessionManager, SessionMetadata, SessionStatus},
+    types::{SessionId, SessionManager, SessionMetadata, SessionStatus},
     ui, Agent,
 };
 use anyhow::{Context, Result};
@@ -39,11 +40,10 @@ async fn run() -> Result<()> {
         Some(Commands::Inspect {
             session_id,
             call,
-            raw,
-            list_calls,
-            context,
+            replies,
+            after,
         }) => {
-            handle_inspect(&project_dir, session_id, call, raw, list_calls, context)?;
+            handle_inspect(&project_dir, session_id, call, replies, after)?;
         }
         Some(Commands::Resume { session_id }) => {
             handle_resume(&project_dir, session_id).await?;
@@ -145,45 +145,32 @@ fn handle_inspect(
     project_dir: &Path,
     session_id: u64,
     call: Option<usize>,
-    raw: bool,
-    list_calls: bool,
-    context: bool,
+    replies: bool,
+    after: Option<usize>,
 ) -> Result<()> {
     let session_id = SessionId::from_u64(session_id);
     let session = SessionMetadata::load(project_dir, session_id)?;
     let events = session.load_events()?;
 
-    if list_calls {
-        // List all LLM calls
-        println!("{}", format_session_summary(&session));
-        println!("\n=== LLM Calls ===\n");
-        print!("{}", format_llm_call_list(&events));
-    } else if let Some(call_id) = call {
-        // Show specific LLM call
-        let llm_call = events
-            .iter()
-            .find(|e| matches!(e, Event::LlmCall { call_id: id, .. } if *id == call_id));
-
-        if let Some(event) = llm_call {
-            let mode = if raw {
-                DisplayMode::Raw
-            } else {
-                DisplayMode::Inspect
-            };
-            print!("{}", format_event_with_context(event, mode, context));
-        } else {
-            anyhow::bail!("LLM call {} not found", call_id);
+    match (call, replies, after) {
+        (None, false, None) => {
+            // Default: list LLM calls
+            print!("{}", format_llm_call_list(&events));
         }
-    } else {
-        // Default: show full conversation
-        println!("{}", format_session_summary(&session));
-        println!("\n=== Conversation ===\n");
-
-        for event in &events {
-            print!(
-                "{}",
-                format_event_with_context(event, DisplayMode::Inspect, context)
-            );
+        (None, true, None) => {
+            // Show all LLM replies in sequence
+            print!("{}", format_llm_replies(&events));
+        }
+        (Some(n), _, None) => {
+            // Show full context for call N
+            print!("{}", format_llm_call_context(&events, n)?);
+        }
+        (None, _, Some(n)) => {
+            // Show reply + commands + screen after call N
+            print!("{}", format_llm_call_after(&events, n)?);
+        }
+        _ => {
+            anyhow::bail!("--call and --after are mutually exclusive; use one at a time");
         }
     }
 

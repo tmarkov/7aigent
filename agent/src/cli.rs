@@ -47,21 +47,17 @@ pub enum Commands {
         /// Session ID to inspect
         session_id: u64,
 
-        /// Show specific LLM call by ID
-        #[arg(long, value_name = "ID")]
+        /// Show full input context + LLM reply for call N
+        #[arg(long, value_name = "N")]
         call: Option<usize>,
 
-        /// Show raw JSON output
+        /// Show all LLM replies in sequence
         #[arg(long)]
-        raw: bool,
+        replies: bool,
 
-        /// List all LLM calls with IDs and costs
-        #[arg(long)]
-        list_calls: bool,
-
-        /// Show full context (prompt messages) for LLM calls
-        #[arg(long)]
-        context: bool,
+        /// Show LLM reply + commands + screen after call N
+        #[arg(long, value_name = "N")]
+        after: Option<usize>,
     },
 
     /// Initialize a new project with a .7aigent.toml config file
@@ -151,21 +147,19 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_inspect() {
+    fn test_parse_inspect_defaults_to_no_flags() {
         let cli = Cli::parse_from(["7aigent", "inspect", "42"]);
         match cli.command {
             Some(Commands::Inspect {
                 session_id,
                 call,
-                raw,
-                list_calls,
-                context,
+                replies,
+                after,
             }) => {
                 assert_eq!(session_id, 42);
                 assert!(call.is_none());
-                assert!(!raw);
-                assert!(!list_calls);
-                assert!(!context);
+                assert!(!replies);
+                assert!(after.is_none());
             }
             _ => panic!("Expected Inspect command"),
         }
@@ -173,54 +167,48 @@ mod tests {
 
     #[test]
     fn test_parse_inspect_with_call() {
-        let cli = Cli::parse_from(["7aigent", "inspect", "42", "--call", "0", "--raw"]);
+        let cli = Cli::parse_from(["7aigent", "inspect", "42", "--call", "3"]);
         match cli.command {
             Some(Commands::Inspect {
                 session_id,
                 call,
-                raw,
-                list_calls,
-                context,
+                replies,
+                after,
             }) => {
                 assert_eq!(session_id, 42);
-                assert_eq!(call, Some(0));
-                assert!(raw);
-                assert!(!list_calls);
-                assert!(!context);
+                assert_eq!(call, Some(3));
+                assert!(!replies);
+                assert!(after.is_none());
             }
             _ => panic!("Expected Inspect command"),
         }
     }
 
     #[test]
-    fn test_parse_inspect_list_calls() {
-        let cli = Cli::parse_from(["7aigent", "inspect", "42", "--list-calls"]);
+    fn test_parse_inspect_replies() {
+        let cli = Cli::parse_from(["7aigent", "inspect", "42", "--replies"]);
         match cli.command {
             Some(Commands::Inspect {
                 session_id,
-                list_calls,
+                replies,
                 ..
             }) => {
                 assert_eq!(session_id, 42);
-                assert!(list_calls);
+                assert!(replies);
             }
             _ => panic!("Expected Inspect command"),
         }
     }
 
     #[test]
-    fn test_parse_inspect_with_context() {
-        let cli = Cli::parse_from(["7aigent", "inspect", "42", "--call", "0", "--context"]);
+    fn test_parse_inspect_with_after() {
+        let cli = Cli::parse_from(["7aigent", "inspect", "42", "--after", "3"]);
         match cli.command {
             Some(Commands::Inspect {
-                session_id,
-                call,
-                context,
-                ..
+                session_id, after, ..
             }) => {
                 assert_eq!(session_id, 42);
-                assert_eq!(call, Some(0));
-                assert!(context);
+                assert_eq!(after, Some(3));
             }
             _ => panic!("Expected Inspect command"),
         }
