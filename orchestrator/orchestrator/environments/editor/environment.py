@@ -72,18 +72,28 @@ class EditorEnvironment(DeclarativeEnvironment):
     @command(
         signature="view <label> <matcher> in <glob> | <operations>",
         examples=[
+            ("View all sections headings in a markdown file", "view /^# / in file.md"),
             (
-                "Search for pattern with context",
-                "view secrets /sops\\.secrets/ in **/*.nix | context 3",
+                "View a section in a markdown file",
+                "view /^# Introduction/ in file.md | until /^# /",
             ),
             (
-                "View a file with line context",
-                "view main /def main/ in src/**/*.py | context 5",
+                "View all mentions of John in any text file with 3 lines of context",
+                "view /John/ in **/*.txt | context 3",
+            ),
+            (
+                "Show all python functions using function `foobar`",
+                "view /foobar\(.*\)/ in **/*.py | up-until /def.*\(.*\).*:/ | while-indent",
+            ),
+            (
+                "Show all python functions using function `foobar` (alternative)",
+                "view /def.*\(.*\).*:/ in **/*.py | while-indent | filter /foobar\(.*\)/",
             ),
         ],
     )
     def _handle_view(self, cmd: str) -> CommandResponse:
         """Create a persistent query whose results appear on every screen refresh.
+        Use pattern-matching to select the text you want to show on screen.
 
         Parameters:
           label      — alphanumeric identifier; reusing a label overwrites the
