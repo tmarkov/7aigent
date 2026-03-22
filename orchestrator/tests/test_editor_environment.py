@@ -31,7 +31,7 @@ from . import timeout
 class ParsedView:
     """Structured representation of a view from screen output."""
 
-    label: str
+    labels: list[str]
     filepath: str
     start_line: int
     end_line: int
@@ -61,65 +61,75 @@ def parse_screen_views(screen_content: str) -> list[ParsedView]:
     """Parse screen content into structured view data.
 
     Requirement: Screen output must follow structured format with:
-    - File headers: filepath (N views, M lines):
-    - View headers: [label] lines X-Y (Z lines)
-    - Content lines: line_num  content
+    - File headers: #### filepath (N windows, M lines):
+    - Label lines: [label1, label2]
+    - Content lines:   NNNN  content
+    - Gap lines: ... (N more lines) or ...
     """
     views = []
     lines = screen_content.split("\n")
 
-    current_file = None
+    current_file: str | None = None
+    current_labels: list[str] | None = None
+    content_lines: list[str] = []
+    seen_line_nums: list[int] = []
+
+    def flush_view() -> None:
+        if current_file is not None and current_labels is not None and seen_line_nums:
+            views.append(
+                ParsedView(
+                    labels=current_labels,
+                    filepath=current_file,
+                    start_line=seen_line_nums[0],
+                    end_line=seen_line_nums[-1],
+                    line_count=len(content_lines),
+                    content_lines=list(content_lines),
+                )
+            )
+
     i = 0
     while i < len(lines):
         line = lines[i]
 
-        # Look for file header: "filepath (N views, M lines):"
-        file_match = re.match(r"^(.+?)\s+\(\d+ views, \d+ lines\):$", line)
+        # File header: "#### /path/to/file (N windows, M lines):"
+        file_match = re.match(r"^#{1,6} (.+?)\s+\(\d+ windows?,\s*\d+ lines\):$", line)
         if file_match:
+            flush_view()
             current_file = file_match.group(1)
+            current_labels = None
+            content_lines = []
+            seen_line_nums = []
             i += 1
             continue
 
-        # Look for view header: "  [label] lines X-Y (Z lines)"
-        view_match = re.match(r"^\s+\[(.+?)\] lines (\d+)-(\d+) \((\d+) lines\)$", line)
-        if view_match and current_file:
-            label = view_match.group(1)
-            start_line = int(view_match.group(2))
-            end_line = int(view_match.group(3))
-            line_count = int(view_match.group(4))
-
-            # Collect content lines
+        # Label line: "[label1, label2]"
+        label_match = re.match(r"^\[(.+?)\]$", line)
+        if label_match and current_file is not None:
+            flush_view()
+            current_labels = [lbl.strip() for lbl in label_match.group(1).split(",")]
             content_lines = []
+            seen_line_nums = []
             i += 1
-            while i < len(lines):
-                content_match = re.match(r"^\s+(\d+)\s+(.*)$", lines[i])
-                if content_match:
-                    content_lines.append(content_match.group(2))
-                    i += 1
-                else:
-                    break
+            continue
 
-            views.append(
-                ParsedView(
-                    label=label,
-                    filepath=current_file,
-                    start_line=start_line,
-                    end_line=end_line,
-                    line_count=line_count,
-                    content_lines=content_lines,
-                )
-            )
+        # Content line: "  NNNN  content" (2 leading spaces, 4-wide line num, 2 spaces)
+        content_match = re.match(r"^  \s*(\d+)  (.*)$", line)
+        if content_match and current_file is not None and current_labels is not None:
+            seen_line_nums.append(int(content_match.group(1)))
+            content_lines.append(content_match.group(2))
+            i += 1
             continue
 
         i += 1
 
+    flush_view()
     return views
 
 
 def find_view_by_label(views: list[ParsedView], label: str) -> Optional[ParsedView]:
-    """Find view with matching label."""
+    """Find view whose label list contains the given label."""
     for view in views:
-        if view.label == label:
+        if label in view.labels:
             return view
     return None
 
@@ -258,7 +268,7 @@ def test_view_command_creates_persistent_labeled_query(editor, sample_py_file):
     assert len(views) == 1, "Should have 1 view on screen"
 
     view = views[0]
-    assert view.label == "hello_fn", "View should have correct label"
+    assert "hello_fn" in view.labels, "View should have correct label"
     assert "def hello():" in "\n".join(
         view.content_lines
     ), "View should contain matched content"
@@ -612,7 +622,7 @@ def test_operation_filter_keeps_only_windows_containing_pattern(editor, sample_p
     # Should have at least 1 view with filtered content
     assert len(views) >= 1, "Should have at least 1 filtered view"
 
-    labels = {v.label for v in views}
+    labels = {label for v in views for label in v.labels}
     assert "filtered" in labels, "Should find filtered view"
 
     # Verify both functions with print are present (may be merged)
@@ -830,7 +840,7 @@ def test_close_pattern_removes_all_queries_matching_glob_pattern(
 
     views2 = parse_screen_views(screen2.content)
     # Only 'other' should remain
-    labels = {v.label for v in views2}
+    labels = {label for v in views2 for label in v.labels}
     assert "h1_creds" not in labels, "h1_creds should be removed"
     assert "h1_secrets" not in labels, "h1_secrets should be removed"
     assert "other" in labels, "other should remain"
@@ -1093,7 +1103,7 @@ def test_window_merging_combines_overlapping_views_in_same_file(
     # Both labels should be mentioned
     merged_view = views[0]
     assert (
-        "v1" in merged_view.label or "v2" in merged_view.label
+        "v1" in merged_view.labels or "v2" in merged_view.labels
     ), "Should include labels"
 
 
@@ -1577,7 +1587,7 @@ def test_multiple_labeled_views_display_together_on_screen(editor, sample_py_fil
     views = parse_screen_views(screen.content)
     assert len(views) == 2, "Should parse 2 views from screen"
 
-    labels = {v.label for v in views}
+    labels = {label for v in views for label in v.labels}
     assert "v1" in labels, "Should find v1 view"
     assert "v2" in labels, "Should find v2 view"
 

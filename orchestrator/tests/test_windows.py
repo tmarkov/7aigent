@@ -3,7 +3,12 @@
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from orchestrator.environments.editor.windows import View, Window, WindowManager
+from orchestrator.environments.editor.windows import (
+    FILE_HEADING,
+    View,
+    Window,
+    WindowManager,
+)
 
 
 class TestWindowManager:
@@ -186,7 +191,7 @@ class TestWindowManager:
         output = mgr.format_for_screen([view], total_queries=1)
 
         assert str(filepath) in output
-        assert "lines 1-2" in output
+        assert FILE_HEADING in output
         assert "[test]" in output
         assert "def foo():" in output
         assert "return 42" in output
@@ -208,8 +213,6 @@ class TestWindowManager:
 
         output = mgr.format_for_screen([v1, v2], total_queries=2)
 
-        assert "lines 1-3" in output
-        assert "lines 10-12" in output
         assert "[q1]" in output
         assert "[q2]" in output
         assert "2 queries, 6/3000 lines" in output

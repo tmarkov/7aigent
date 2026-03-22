@@ -8,6 +8,10 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
+# Markdown heading level for file sections in the screen display.
+# Change this string to adjust heading depth (e.g. "##", "###", "####").
+FILE_HEADING = "####"
+
 
 @dataclass
 class Window:
@@ -176,12 +180,31 @@ class WindowManager:
             # File doesn't exist or can't be read
             return [f"[Error reading {filepath}]"]
 
-    def format_for_screen(self, views: list[View], total_queries: int = 0) -> str:
+    def format_for_screen(
+        self,
+        views: list[View],
+        total_queries: int = 0,
+        label_order: dict[str, float] | None = None,
+    ) -> str:
         """Format views for screen display.
+
+        Views are grouped by file. Within each file, windows appear in line order.
+        A ``[label1, label2]`` annotation line is shown whenever the contributing
+        labels change between consecutive windows.  Gaps between non-adjacent
+        windows are shown as ``... (N more lines)`` and trailing content as ``...``.
+
+        Files are sorted so the most recently viewed file appears last.  When
+        ``label_order`` is provided it maps each label to a numeric sequence value
+        (e.g. ``created_at`` timestamp); the sort key for each file is the
+        descending-sorted list of sequence values for all labels that contribute
+        windows to that file, compared lexicographically.  Files with no labels in
+        ``label_order`` sort before all others.  When ``label_order`` is ``None``
+        files are sorted alphabetically.
 
         Args:
             views: List of views to display
             total_queries: Total number of active queries
+            label_order: Optional mapping of label → sequence value for ordering.
 
         Returns:
             Formatted string for screen display
@@ -192,56 +215,77 @@ class WindowManager:
             >>> output = mgr.format_for_screen([v], 1)
             >>> "test.py" in output
             True
-            >>> "10-12" in output
+            >>> "[q1]" in output
             True
         """
         if not views:
-            total_lines = 0
-            header = f"Views ({total_queries} queries, {total_lines}/3000 lines):"
+            header = f"Views ({total_queries} queries, 0/3000 lines):"
             return header + "\n  (no matches)"
 
-        # Calculate total lines
         total_lines = sum(v.line_count for v in views)
-
-        # Header
         header = f"Views ({total_queries} queries, {total_lines}/3000 lines):"
-        lines = [header, ""]
+        out = [header]
 
         # Group by file
-        by_file = defaultdict(list)
+        by_file: dict[Path, list[View]] = defaultdict(list)
         for v in views:
             by_file[v.filepath].append(v)
 
-        # Format each file's views
-        for filepath in sorted(by_file.keys(), key=str):
-            file_views = sorted(by_file[filepath], key=lambda v: v.start_line)
-            file_total_lines = sum(v.line_count for v in file_views)
+        # Determine file order
+        if label_order is not None:
 
-            # File header
-            lines.append(
-                f"{filepath} ({len(file_views)} views, {file_total_lines} lines):"
+            def _file_key(filepath: Path) -> list[float]:
+                labels = {lbl for v in by_file[filepath] for lbl in v.labels}
+                seqs = [label_order.get(lbl, -1.0) for lbl in labels]
+                return sorted(seqs, reverse=True)
+
+            sorted_files = sorted(by_file.keys(), key=_file_key)
+        else:
+            sorted_files = sorted(by_file.keys(), key=str)
+
+        for filepath in sorted_files:
+            file_views = sorted(by_file[filepath], key=lambda v: v.start_line)
+            window_count = len(file_views)
+            file_lines = sum(v.line_count for v in file_views)
+
+            out.append("")
+            out.append(
+                f"{FILE_HEADING} {filepath}"
+                f" ({window_count} window{'s' if window_count != 1 else ''},"
+                f" {file_lines} lines):"
             )
 
-            # Each view
-            for view in file_views:
-                # View header with labels
-                labels_str = ", ".join(view.labels)
-                lines.append(
-                    f"  [{labels_str}] lines {view.start_line}-{view.end_line} ({view.line_count} lines)"
-                )
+            current_labels: list[str] | None = None
 
-                # View content (indented)
-                for i, line in enumerate(view.lines):
-                    line_num = view.start_line + i
-                    # Truncate very long lines
+            for i, view in enumerate(file_views):
+                if i == 0:
+                    # Label annotation always shown for first window
+                    if view.labels != current_labels:
+                        out.append(f"[{', '.join(view.labels)}]")
+                        current_labels = view.labels
+                    # Leading gap: content exists before this window
+                    if view.start_line > 1:
+                        out.append(f"     ... ({view.start_line - 1} more lines)")
+                else:
+                    # Gap between previous and current window
+                    gap = view.start_line - file_views[i - 1].end_line - 1
+                    if gap > 0:
+                        out.append(f"     ... ({gap} more lines)")
+                    # Label annotation on change
+                    if view.labels != current_labels:
+                        out.append(f"[{', '.join(view.labels)}]")
+                        current_labels = view.labels
+
+                # Window content
+                for j, line in enumerate(view.lines):
+                    line_num = view.start_line + j
                     display_line = line[:200] if len(line) > 200 else line
-                    lines.append(f"   {line_num:4d}  {display_line}")
+                    out.append(f"  {line_num:4d}  {display_line}")
 
-                lines.append("")  # Blank line after each view
+            # Trailing indicator: more content may follow last window
+            out.append("     ...")
 
-            lines.append("")  # Blank line after each file
-
-        return "\n".join(lines).rstrip()
+        return "\n".join(out).rstrip()
 
     def calculate_total_lines(self, views: list[View]) -> int:
         """Calculate total lines across all views.

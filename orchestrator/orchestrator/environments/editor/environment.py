@@ -461,9 +461,14 @@ class EditorEnvironment(DeclarativeEnvironment):
         # Merge and deduplicate
         views = self._window_manager.merge_overlapping(all_windows)
 
+        # Build label → creation-time map for file ordering (most recent last)
+        label_order = {
+            label: query.created_at for label, query in self._active_queries.items()
+        }
+
         # Format for screen
         return self._window_manager.format_for_screen(
-            views, total_queries=len(self._active_queries)
+            views, total_queries=len(self._active_queries), label_order=label_order
         )
 
     def generate_tag_summary(self) -> str:
