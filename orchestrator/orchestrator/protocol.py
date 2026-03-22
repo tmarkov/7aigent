@@ -243,18 +243,17 @@ class Environment(Protocol):
 
         Implementation notes:
             - Called frequently, must be fast (no expensive computation)
-            - Content will be truncated if exceeds max_lines
             - Should show the most relevant state information
             - Return minimal content (name + description) before first use
             - Don't include large outputs - those should go to files
 
         Example (before first use):
             >>> env.get_screen()
-            ScreenSection(content='Bash shell (ready)', max_lines=50)
+            ScreenSection(content='Bash shell (ready)')
 
         Example (after use):
             >>> env.get_screen()
-            ScreenSection(content='Working directory: /home/user\\nLast exit code: 0\\n...', max_lines=50)
+            ScreenSection(content='Working directory: /home/user\\nLast exit code: 0\\n...')
         """
         ...
 

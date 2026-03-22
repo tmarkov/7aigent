@@ -423,7 +423,7 @@ class InteractiveEnvironment(ABC):
             content = state
         else:
             content = help_text
-        return ScreenSection(content=content, max_lines=50)
+        return ScreenSection(content=content)
 
     def shutdown(self) -> None:
         """Clean up process on orchestrator shutdown."""

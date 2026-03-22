@@ -386,7 +386,6 @@ def test_sandbox_screen_command():
             assert "bash" in screen, "Screen missing bash section"
             bash_section = screen["bash"]
             assert "content" in bash_section, "Bash section missing content"
-            assert "max_lines" in bash_section, "Bash section missing max_lines"
 
             # The bash screen shows working directory and status, not command history
             # This is expected behavior - screen shows current state, not output

@@ -258,7 +258,6 @@ pub struct ScreenState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScreenSection {
     pub content: String,
-    pub max_lines: usize,
 }
 
 /// Events that occur during a session

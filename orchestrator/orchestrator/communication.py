@@ -112,8 +112,8 @@ def send_response(
                 ... (optional environment-specific fields like exit_code for bash)
             },
             "screen": {
-                "bash": {"content": "...", "max_lines": 50},
-                "python": {"content": "...", "max_lines": 50}
+                "bash": {"content": "..."},
+                "python": {"content": "..."}
             }
         }
 
@@ -122,7 +122,7 @@ def send_response(
         >>> sys.stdout = io.StringIO()
         >>> send_response(
         ...     CommandResponse(output="hello", processed=True),
-        ...     {EnvironmentName("bash"): ScreenSection("Ready", max_lines=50)}
+        ...     {EnvironmentName("bash"): ScreenSection("Ready")}
         ... )
         >>> output = sys.stdout.getvalue()
         >>> "hello" in output
@@ -145,8 +145,7 @@ def send_response(
     message = {
         "response": response_dict,
         "screen": {
-            name.value: {"content": section.content, "max_lines": section.max_lines}
-            for name, section in screen.items()
+            name.value: {"content": section.content} for name, section in screen.items()
         },
     }
 

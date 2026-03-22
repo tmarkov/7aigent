@@ -539,20 +539,15 @@ class EditorEnvironment(DeclarativeEnvironment):
             f"Found {len(windows)} windows ({total_lines}/{PEEK_HARD_LIMIT} lines):\n"
         )
 
-        for w in windows[:10]:  # Show first 10
+        for w in windows:
             lines.append(
                 f"{w.filepath.relative_to(self._project_dir)} lines {w.start_line}-{w.end_line}:"
             )
-            for i, line in enumerate(w.lines[:50]):  # Show first 50 lines per window
+            for i, line in enumerate(w.lines):
                 line_num = w.start_line + i
                 display_line = line[:200] if len(line) > 200 else line
                 lines.append(f"  {line_num:4d}  {display_line}")
-            if len(w.lines) > 50:
-                lines.append(f"  ... ({len(w.lines) - 50} more lines)")
             lines.append("")
-
-        if len(windows) > 10:
-            lines.append(f"... and {len(windows) - 10} more windows")
 
         return "\n".join(lines)
 

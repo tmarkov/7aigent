@@ -73,7 +73,7 @@ class TimerEnvironment:
 
     def get_screen(self) -> ScreenSection:
         status = "Running" if self._running else "Stopped"
-        return ScreenSection(content=f"Timer: {status}", max_lines=10)
+        return ScreenSection(content=f"Timer: {status}")
 
     def shutdown(self) -> None:
         pass
@@ -193,7 +193,7 @@ def test_validate_environment_class_requires_project_dir():
             return CommandResponse("ok", processed=True)
 
         def get_screen(self) -> ScreenSection:
-            return ScreenSection(content="ok", max_lines=10)
+            return ScreenSection(content="ok")
 
         def shutdown(self) -> None:
             pass

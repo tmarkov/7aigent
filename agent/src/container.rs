@@ -313,7 +313,7 @@ impl Drop for ContainerHandle {
 ///
 /// Note: The orchestrator doesn't send step and timestamp in the screen message.
 /// These are added by the agent when saving to session.
-/// The raw format is: {"bash": {"content": "...", "max_lines": 50}, ...}
+/// The raw format is: {"bash": {"content": "..."}, ...}
 fn parse_screen(screen_value: &serde_json::Value) -> Result<ScreenState> {
     let sections_obj = screen_value
         .as_object()
@@ -326,11 +326,7 @@ fn parse_screen(screen_value: &serde_json::Value) -> Result<ScreenState> {
             .ok_or(ContainerError::InvalidMessage)?
             .to_string();
 
-        let max_lines = section_value["max_lines"]
-            .as_u64()
-            .ok_or(ContainerError::InvalidMessage)? as usize;
-
-        sections.insert(env_name.clone(), ScreenSection { content, max_lines });
+        sections.insert(env_name.clone(), ScreenSection { content });
     }
 
     // Create ScreenState with timestamp (step field removed in new design)
@@ -348,8 +344,7 @@ mod tests {
     fn test_parse_screen() {
         let screen_json = serde_json::json!({
             "bash": {
-                "content": "$ ls\nfile1.txt\nfile2.txt\n",
-                "max_lines": 50
+                "content": "$ ls\nfile1.txt\nfile2.txt\n"
             }
         });
 
@@ -359,7 +354,6 @@ mod tests {
 
         let bash_section = &screen.sections["bash"];
         assert_eq!(bash_section.content, "$ ls\nfile1.txt\nfile2.txt\n");
-        assert_eq!(bash_section.max_lines, 50);
     }
 
     #[test]
@@ -373,21 +367,7 @@ mod tests {
     #[test]
     fn test_parse_screen_missing_content() {
         let screen_json = serde_json::json!({
-            "bash": {
-                "max_lines": 50
-            }
-        });
-
-        let result = parse_screen(&screen_json);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_parse_screen_missing_max_lines() {
-        let screen_json = serde_json::json!({
-            "bash": {
-                "content": "test"
-            }
+            "bash": {}
         });
 
         let result = parse_screen(&screen_json);

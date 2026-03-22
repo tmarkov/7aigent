@@ -251,7 +251,7 @@ class DeclarativeEnvironment:
         state = self.get_state_display()
         help_text = self.get_help()
         content = f"{state}\n\n{help_text}" if state.strip() else help_text
-        return ScreenSection(content=content, max_lines=100)
+        return ScreenSection(content=content)
 
     def get_state_display(self) -> str:
         """

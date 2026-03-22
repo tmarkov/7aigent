@@ -355,7 +355,6 @@ mod tests {
             env.to_string(),
             ScreenSection {
                 content: content.to_string(),
-                max_lines: 50,
             },
         );
         ScreenState {

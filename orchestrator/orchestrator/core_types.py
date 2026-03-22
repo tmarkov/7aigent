@@ -104,18 +104,12 @@ class ScreenSection:
     orchestrator collects these sections and presents them to the agent after
     every command.
 
-    The content will be truncated if it exceeds max_lines. Environments should
-    return the most relevant state information within this limit.
-
     Attributes:
         content: Text content to display (may contain newlines)
-        max_lines: Maximum number of lines to display (default: 50)
 
     Examples:
         >>> ScreenSection("Working directory: /home/user\\nLast exit code: 0")
-        ScreenSection(content='Working directory: /home/user\\nLast exit code: 0', max_lines=50)
-        >>> ScreenSection("Python REPL (ready)", max_lines=10)
-        ScreenSection(content='Python REPL (ready)', max_lines=10)
+        ScreenSection(content='Working directory: /home/user\\nLast exit code: 0')
 
     Notes:
         - Environments should show minimal content before first use to avoid
@@ -125,10 +119,3 @@ class ScreenSection:
     """
 
     content: str
-    max_lines: int = 50
-
-    def __post_init__(self) -> None:
-        """Validate that max_lines is positive."""
-        # Use object.__setattr__ since dataclass is frozen
-        if self.max_lines <= 0:
-            raise ValueError(f"max_lines must be positive, got {self.max_lines}")

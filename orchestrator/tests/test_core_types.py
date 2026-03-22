@@ -179,34 +179,17 @@ class TestScreenSection:
     """Tests for ScreenSection dataclass."""
 
     # Property-based tests
-    @given(st.text(), st.integers(min_value=1, max_value=1000))
-    def test_any_content_and_positive_max_lines(
-        self, content: str, max_lines: int
-    ) -> None:
-        """Any content and positive max_lines should be accepted."""
-        section = ScreenSection(content, max_lines)
-        assert section.content == content
-        assert section.max_lines == max_lines
-
     @given(st.text())
-    def test_default_max_lines(self, content: str) -> None:
-        """Default max_lines should be 50."""
+    def test_any_content_accepted(self, content: str) -> None:
+        """Any content should be accepted."""
         section = ScreenSection(content)
         assert section.content == content
-        assert section.max_lines == 50
 
     # Example-based tests
     def test_simple_screen_section(self) -> None:
         """Simple screen section."""
         section = ScreenSection("Working directory: /home/user\nLast exit code: 0")
         assert section.content == "Working directory: /home/user\nLast exit code: 0"
-        assert section.max_lines == 50
-
-    def test_custom_max_lines(self) -> None:
-        """Custom max_lines value."""
-        section = ScreenSection("Python REPL (ready)", max_lines=10)
-        assert section.content == "Python REPL (ready)"
-        assert section.max_lines == 10
 
     def test_empty_content(self) -> None:
         """Empty content is valid."""
@@ -221,33 +204,11 @@ class TestScreenSection:
         section = ScreenSection(content)
         assert section.content == content
 
-    def test_zero_max_lines_rejected(self) -> None:
-        """max_lines must be positive."""
-        with pytest.raises(ValueError, match="max_lines must be positive"):
-            ScreenSection("content", max_lines=0)
-
-    def test_negative_max_lines_rejected(self) -> None:
-        """Negative max_lines should be rejected."""
-        with pytest.raises(ValueError, match="max_lines must be positive"):
-            ScreenSection("content", max_lines=-1)
-
-    def test_large_max_lines_accepted(self) -> None:
-        """Large max_lines values are accepted."""
-        section = ScreenSection("content", max_lines=10000)
-        assert section.max_lines == 10000
-
     def test_frozen_dataclass(self) -> None:
         """ScreenSection should be immutable."""
-        section = ScreenSection("content", 10)
+        section = ScreenSection("content")
         with pytest.raises(AttributeError):
             section.content = "new content"  # type: ignore[misc]
-        with pytest.raises(AttributeError):
-            section.max_lines = 20  # type: ignore[misc]
-
-    def test_validation_error_includes_value(self) -> None:
-        """Validation error should include the invalid value."""
-        with pytest.raises(ValueError, match="-5"):
-            ScreenSection("content", max_lines=-5)
 
 
 class TestDataclassImmutability:
@@ -282,14 +243,14 @@ class TestDataclassImmutability:
         assert EnvironmentName("bash") == EnvironmentName("bash")
         assert CommandText("ls") == CommandText("ls")
         assert CommandResponse("out", True) == CommandResponse("out", True)
-        assert ScreenSection("c", 10) == ScreenSection("c", 10)
+        assert ScreenSection("c") == ScreenSection("c")
 
     def test_dataclass_inequality(self) -> None:
         """Dataclasses with different values should not be equal."""
         assert EnvironmentName("bash") != EnvironmentName("python")
         assert CommandText("ls") != CommandText("pwd")
         assert CommandResponse("out", True) != CommandResponse("out", False)
-        assert ScreenSection("c", 10) != ScreenSection("c", 20)
+        assert ScreenSection("c") != ScreenSection("d")
 
     def test_frozen_dataclasses_are_hashable(self) -> None:
         """Frozen dataclasses should be hashable."""
@@ -303,5 +264,5 @@ class TestDataclassImmutability:
         # CommandResponse is not frozen, so not hashable
         # (needed to allow adding environment-specific fields like exit_code)
 
-        screen_set = {ScreenSection("a", 10), ScreenSection("b", 20)}
+        screen_set = {ScreenSection("a"), ScreenSection("b")}
         assert len(screen_set) == 2

@@ -110,7 +110,7 @@ class TestSendResponse:
         sys.stdout = io.StringIO()
 
         response = CommandResponse(output="hello", processed=True)
-        screen = {EnvironmentName("bash"): ScreenSection("Ready", max_lines=50)}
+        screen = {EnvironmentName("bash"): ScreenSection("Ready")}
 
         send_response(response, screen)
 
@@ -123,14 +123,13 @@ class TestSendResponse:
         assert data["response"]["processed"] is True
         assert "bash" in data["screen"]
         assert data["screen"]["bash"]["content"] == "Ready"
-        assert data["screen"]["bash"]["max_lines"] == 50
 
     def test_failed_response(self) -> None:
         """Test sending a failed response."""
         sys.stdout = io.StringIO()
 
         response = CommandResponse(output="Error: file not found", processed=False)
-        screen = {EnvironmentName("bash"): ScreenSection("Ready", max_lines=50)}
+        screen = {EnvironmentName("bash"): ScreenSection("Ready")}
 
         send_response(response, screen)
 
@@ -145,8 +144,8 @@ class TestSendResponse:
 
         response = CommandResponse(output="done", processed=True)
         screen = {
-            EnvironmentName("bash"): ScreenSection("Bash ready", max_lines=50),
-            EnvironmentName("python"): ScreenSection("Python ready", max_lines=30),
+            EnvironmentName("bash"): ScreenSection("Bash ready"),
+            EnvironmentName("python"): ScreenSection("Python ready"),
         }
 
         send_response(response, screen)
@@ -155,8 +154,6 @@ class TestSendResponse:
         data = json.loads(output)
         assert "bash" in data["screen"]
         assert "python" in data["screen"]
-        assert data["screen"]["bash"]["max_lines"] == 50
-        assert data["screen"]["python"]["max_lines"] == 30
 
 
 class TestSendErrorResponse:

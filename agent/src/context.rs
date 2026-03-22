@@ -281,14 +281,12 @@ mod tests {
             "bash".to_string(),
             ScreenSection {
                 content: "$ ls\nfile1.txt\nfile2.txt\n".to_string(),
-                max_lines: 50,
             },
         );
         sections.insert(
             "python".to_string(),
             ScreenSection {
                 content: ">>> x = 42\n>>> print(x)\n42\n".to_string(),
-                max_lines: 50,
             },
         );
 
