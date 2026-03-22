@@ -303,6 +303,14 @@ pub enum Event {
         request: CompletionRequest,
         response: CompletionResponse,
     },
+    /// A simulated assistant message from the initial messages config.
+    ///
+    /// Stored as an event so it is included in the LLM context when building
+    /// conversation history, giving the agent the intended bootstrapped context.
+    SimulatedAssistantMessage {
+        timestamp: DateTime<Utc>,
+        content: String,
+    },
 }
 
 impl Event {
@@ -314,6 +322,7 @@ impl Event {
             Event::CommandExecution { timestamp, .. } => *timestamp,
             Event::SessionEnd { timestamp, .. } => *timestamp,
             Event::AuxiliaryLlmQuery { timestamp, .. } => *timestamp,
+            Event::SimulatedAssistantMessage { timestamp, .. } => *timestamp,
         }
     }
 }

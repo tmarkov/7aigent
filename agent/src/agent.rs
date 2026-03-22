@@ -224,10 +224,16 @@ impl<C: LlmClient> Agent<C> {
 
                         // Execute each simulated message
                         for (msg_idx, simulated_content) in messages.iter().enumerate() {
-                            // Print simulated message (not saved as event - it's just for display)
                             println!("=== ASSISTANT (Initial {}) ===", msg_idx + 1);
                             println!("{}", simulated_content);
                             println!();
+
+                            // Save as event so it appears in LLM context for subsequent calls
+                            let sim_event = Event::SimulatedAssistantMessage {
+                                timestamp: Utc::now(),
+                                content: simulated_content.clone(),
+                            };
+                            self.session.append_event(&sim_event)?;
 
                             // Parse commands from simulated message (same as regular LLM responses)
                             let commands = parse_commands(simulated_content)
@@ -550,6 +556,13 @@ fn build_llm_messages_from_events(
             }
             Event::AuxiliaryLlmQuery { .. } => {
                 // Don't include auxiliary queries in main conversation context
+            }
+            Event::SimulatedAssistantMessage { content, timestamp } => {
+                messages.push(Message {
+                    role: MessageRole::Assistant,
+                    content: content.clone(),
+                    timestamp: *timestamp,
+                });
             }
         }
     }

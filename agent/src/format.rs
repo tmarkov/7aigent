@@ -74,6 +74,9 @@ fn format_event_pretty(event: &Event) -> String {
             out.push_str(&format!("Response: {}\n", response.content));
             out
         }
+        Event::SimulatedAssistantMessage { content, .. } => {
+            format!("=== ASSISTANT (simulated) ===\n{}\n", content)
+        }
     }
 }
 
