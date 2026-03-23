@@ -16,7 +16,7 @@ from orchestrator.declarative import DeclarativeEnvironment, command
 from orchestrator.environments.editor.executor import QueryExecutor
 from orchestrator.environments.editor.parser import ParseError, QueryParser
 from orchestrator.environments.editor.summarizer import Summarizer
-from orchestrator.environments.editor.windows import Window, WindowManager
+from orchestrator.environments.editor.windows import View, Window, WindowManager
 
 # Limits
 PEEK_HARD_LIMIT = 3000  # Max lines for peek command
@@ -66,8 +66,8 @@ class EditorEnvironment(DeclarativeEnvironment):
         self._tag_windows: list[Window] = []
         self._tag_patterns: list[str] = []
 
-        # Cached windows for edit verification
-        self._cached_windows: list[Window] = []
+        # Cached windows for edit verification (stores merged views after get_state_display)
+        self._cached_windows: list[Window | View] = []
 
     @command(
         signature="view <label> <matcher> in <glob> | <operations>",
@@ -465,11 +465,14 @@ class EditorEnvironment(DeclarativeEnvironment):
         for label in queries_to_remove:
             del self._active_queries[label]
 
-        # Cache for edit verification
-        self._cached_windows = all_windows
-
         # Merge and deduplicate
         views = self._window_manager.merge_overlapping(all_windows)
+
+        # Cache merged views for edit verification.
+        # Merged views span the full visible range, so edits spanning multiple
+        # query windows (e.g. from a /^/ pattern that creates one window per line)
+        # are correctly allowed when all lines are visible on screen.
+        self._cached_windows = views
 
         # Build label → creation-time map for file ordering (most recent last)
         label_order = {
