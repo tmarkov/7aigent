@@ -191,12 +191,16 @@ except Exception as e:
         .expect("Failed to write test script");
 
     // Spawn the test script
-    let orchestrator_path = std::env::current_dir()
-        .unwrap()
-        .join("orchestrator")
-        .to_str()
-        .unwrap()
-        .to_string();
+    // Use ORCHESTRATOR_PATH from the build environment if available (e.g. Nix build),
+    // otherwise fall back to the repo-relative path for local development.
+    let orchestrator_path = std::env::var("ORCHESTRATOR_PATH").unwrap_or_else(|_| {
+        std::env::current_dir()
+            .unwrap()
+            .join("orchestrator")
+            .to_str()
+            .unwrap()
+            .to_string()
+    });
 
     let mut child = Command::new("python3")
         .arg(workspace.join("test_orchestrator.py"))

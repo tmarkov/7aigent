@@ -43,6 +43,9 @@ orchestrator-tui = "orchestrator.tui:main"
 where = ["."]
 include = ["orchestrator*"]
 
+[tool.setuptools.package-data]
+orchestrator = ["templates/*"]
+
 [tool.black]
 line-length = 88
 target-version = ["py313"]

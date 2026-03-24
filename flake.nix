@@ -30,7 +30,7 @@
         };
 
         # Naersk lib for building Rust projects
-        naersk-lib = pkgs.callPackage naersk { };
+        naersk-lib = naersk.lib.${system};
 
         # Python environment with required packages
         pythonEnv = pkgs.python313.withPackages (
@@ -153,9 +153,11 @@
           ''
           + pre-commit-check.shellHook;
         };
+
         packages = rec {
           # Build the agent (Rust) with embedded sandbox
           agent = pkgs.callPackage ./agent {
+            inherit naersk-lib;
             sandbox = sandbox;
           };
 
@@ -174,20 +176,26 @@
             ];
 
             # Propagated build inputs (runtime dependencies)
-            propagatedBuildInputs = with pkgs.python313Packages; [
-              pexpect
-              textual
-            ] ++ (with pkgs; [
-              ripgrep  # Required by editor environment for pattern search
-            ]);
+            propagatedBuildInputs =
+              with pkgs.python313Packages;
+              [
+                pexpect
+                textual
+              ]
+              ++ (with pkgs; [
+                ripgrep # Required by editor environment for pattern search
+              ]);
 
             # Check inputs (test and lint dependencies)
-            nativeCheckInputs = with pkgs.python313Packages; [
-              pytest
-              hypothesis
-            ] ++ (with pkgs; [
-              ripgrep  # Required for editor environment tests
-            ]);
+            nativeCheckInputs =
+              with pkgs.python313Packages;
+              [
+                pytest
+                hypothesis
+              ]
+              ++ (with pkgs; [
+                ripgrep # Required for editor environment tests
+              ]);
 
             # Run checks (tests and linters)
             checkPhase = ''
