@@ -112,8 +112,8 @@ def parse_screen_views(screen_content: str) -> list[ParsedView]:
             i += 1
             continue
 
-        # Content line: "  NNNN  content" (2 leading spaces, 4-wide line num, 2 spaces)
-        content_match = re.match(r"^  \s*(\d+)  (.*)$", line)
+        # Content line: "  NNNN  content" (2 leading spaces, 4-wide line num, spaces, bar)
+        content_match = re.match(r"^  \s*(\d+) \|(.*)$", line)
         if content_match and current_file is not None and current_labels is not None:
             seen_line_nums.append(int(content_match.group(1)))
             content_lines.append(content_match.group(2))

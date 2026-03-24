@@ -280,7 +280,7 @@ class WindowManager:
                 for j, line in enumerate(view.lines):
                     line_num = view.start_line + j
                     display_line = line[:200] if len(line) > 200 else line
-                    out.append(f"  {line_num:4d}  {display_line}")
+                    out.append(f"  {line_num:4d} |{display_line}")
 
             # Trailing indicator: more content may follow last window
             out.append("     ...")

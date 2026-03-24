@@ -564,7 +564,7 @@ class EditorEnvironment(DeclarativeEnvironment):
             for i, line in enumerate(w.lines):
                 line_num = w.start_line + i
                 display_line = line[:200] if len(line) > 200 else line
-                lines.append(f"  {line_num:4d}  {display_line}")
+                lines.append(f"  {line_num:4d} |{display_line}")
             lines.append("")
 
         return "\n".join(lines)
