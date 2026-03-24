@@ -88,7 +88,7 @@ class TimerEnvironment:
         else:
             status = f"Timer (stopped)\n  Total: {self._elapsed:.2f}s"
 
-        return ScreenSection(content=status, max_lines=10)
+        return ScreenSection(content=status)
 
     def shutdown(self) -> None:
         """Clean up timer environment."""
