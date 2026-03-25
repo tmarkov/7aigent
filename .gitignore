@@ -34,5 +34,7 @@ build/
 Thumbs.db
 
 # Development/testing artifacts
+env
+!env/timer
 test_orchestrator.sh
 examples
