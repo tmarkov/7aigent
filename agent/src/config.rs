@@ -74,6 +74,9 @@ impl Config {
         if other.llm.system_prompt_suffix.is_some() {
             self.llm.system_prompt_suffix = other.llm.system_prompt_suffix;
         }
+        if other.llm.reasoning_effort.is_some() {
+            self.llm.reasoning_effort = other.llm.reasoning_effort;
+        }
 
         // Merge pricing (other overrides)
         for (model, pricing) in other.llm.pricing {
@@ -148,6 +151,9 @@ pub struct LlmConfig {
     /// Custom system prompt suffix
     pub system_prompt_suffix: Option<String>,
 
+    /// Reasoning effort for models that support it (default: medium)
+    pub reasoning_effort: Option<crate::llm::ReasoningEffort>,
+
     /// Model pricing (input_per_1k, output_per_1k)
     #[serde(default)]
     pub pricing: HashMap<String, TokenPricing>,
@@ -209,6 +215,7 @@ impl Default for LlmConfig {
             temperature: Some(0.7),
             max_tokens: Some(4096),
             system_prompt_suffix: None,
+            reasoning_effort: Some(crate::llm::ReasoningEffort::Medium),
             pricing,
         }
     }
@@ -436,6 +443,7 @@ mod tests {
                 temperature: Some(0.7),
                 max_tokens: Some(4096),
                 system_prompt_suffix: None,
+                reasoning_effort: None,
                 pricing: HashMap::new(),
             },
             sandbox: SandboxConfig::default(),

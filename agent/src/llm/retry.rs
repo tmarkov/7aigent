@@ -163,6 +163,7 @@ mod tests {
             model: "gpt-4".to_string(),
             max_tokens: Some(100),
             temperature: None,
+            reasoning_effort: None,
         };
 
         let result = retry_client.complete(request).await;
@@ -180,6 +181,7 @@ mod tests {
             model: "gpt-4".to_string(),
             max_tokens: Some(100),
             temperature: None,
+            reasoning_effort: None,
         };
 
         let result = retry_client.complete(request).await;
@@ -197,6 +199,7 @@ mod tests {
             model: "gpt-4".to_string(),
             max_tokens: Some(100),
             temperature: None,
+            reasoning_effort: None,
         };
 
         let result = retry_client.complete(request).await;

@@ -134,6 +134,7 @@ impl<C: LlmClient> Agent<C> {
             model: self.config.llm.model.clone(),
             max_tokens: Some(5000), // Limit auxiliary responses
             temperature: self.config.llm.temperature,
+            reasoning_effort: self.config.llm.reasoning_effort,
         };
 
         // Call LLM
@@ -326,6 +327,7 @@ impl<C: LlmClient> Agent<C> {
                 model: self.config.llm.model.clone(),
                 max_tokens: self.config.llm.max_tokens.map(|t| t as u32),
                 temperature: self.config.llm.temperature,
+                reasoning_effort: self.config.llm.reasoning_effort,
             };
 
             let estimated_cost = self

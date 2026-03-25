@@ -66,6 +66,7 @@ mod tests {
             model: "test-model".to_string(),
             max_tokens: Some(100),
             temperature: Some(0.7),
+            reasoning_effort: None,
         };
 
         let response = mock.complete(request.clone()).await.unwrap();

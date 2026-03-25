@@ -101,6 +101,7 @@ sys.stderr.flush()
         model: "gpt-4".to_string(),
         max_tokens: Some(5000),
         temperature: Some(0.7),
+        reasoning_effort: None,
     };
 
     let llm_response = mock_llm.complete(llm_request).await.unwrap();

@@ -147,6 +147,19 @@ pub struct CompletionResponse {
     pub finish_reason: FinishReason,
 }
 
+/// Reasoning effort level for models that support it (e.g., o-series models).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    None,
+    Minimal,
+    Low,
+    #[default]
+    Medium,
+    High,
+    XHigh,
+}
+
 /// Request to the LLM.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CompletionRequest {
@@ -158,6 +171,8 @@ pub struct CompletionRequest {
     pub max_tokens: Option<u32>,
     /// Temperature (0.0 - 2.0).
     pub temperature: Option<f32>,
+    /// Reasoning effort for models that support it (e.g., o1, o3).
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 impl Clone for LlmError {

@@ -323,6 +323,7 @@ mod tests {
                 model: "test".to_string(),
                 max_tokens: None,
                 temperature: None,
+                reasoning_effort: None,
             },
             response: CompletionResponse {
                 content: content.to_string(),
@@ -417,6 +418,7 @@ mod tests {
                 model: "test".to_string(),
                 max_tokens: None,
                 temperature: None,
+                reasoning_effort: None,
             },
             response: CompletionResponse {
                 content: "Hello, world!".to_string(),

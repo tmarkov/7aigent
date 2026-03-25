@@ -3,7 +3,7 @@
 use super::cost::TokenPricing;
 use super::{
     CompletionRequest, CompletionResponse, FinishReason, LlmClient, LlmError, LlmMessage,
-    TokenUsage,
+    ReasoningEffort, TokenUsage,
 };
 use reqwest::{header, Client};
 use rust_decimal::Decimal;
@@ -98,6 +98,7 @@ impl LlmClient for OpenAiCompatibleClient {
             messages: request.messages,
             max_tokens: request.max_tokens,
             temperature: request.temperature,
+            reasoning_effort: request.reasoning_effort,
         };
 
         let response = self
@@ -189,6 +190,8 @@ struct OpenAiRequest {
     max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<ReasoningEffort>,
 }
 
 /// OpenAI API response format.
@@ -271,6 +274,7 @@ mod tests {
             model: "gpt-4".to_string(),
             max_tokens: Some(100),
             temperature: None,
+            reasoning_effort: None,
         };
 
         let cost = client.estimate_cost(&request).unwrap();
