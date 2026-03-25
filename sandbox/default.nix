@@ -15,6 +15,9 @@ let
     # For FHS compatibility
     glibc
 
+    # For SSL certs
+    cacert
+
     # Nix tools for shell_prefix support (nix develop, etc.)
     nix
 
@@ -69,7 +72,7 @@ exec ${pkgs.bubblewrap}/bin/bwrap \
   --die-with-parent \
   \
   `# Mount /nix/store read-only (all packages available)` \
-  --ro-bind /nix/store /nix/store \
+  --ro-bind /nix /nix \
   \
   `# Mount project directory read-write` \
   --bind "''${PROJECT_DIR}" /workspace \
