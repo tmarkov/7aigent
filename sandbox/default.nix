@@ -3,6 +3,15 @@
 }:
 
 let
+  # Init script: sets up home directory with a .bashrc that ensures pexpect's
+  # prompt marker (<<<PROMPT>>>) survives sub-shell initialization (e.g. nix develop).
+  # Must stay in sync with BashEnvironment.PROMPT_MARKER in the orchestrator.
+  sandboxInit = pkgs.writeShellScript "sandbox-init" ''
+    mkdir -p /tmp/home
+    printf "PROMPT_COMMAND='PS1=\"<<<PROMPT>>>\"'\n" > /tmp/home/.bashrc
+    exec ${orchestrator}/bin/orchestrator
+  '';
+
   # All packages available in the sandbox (minimal set)
   sandboxPackages = with pkgs; [
     # Essential for orchestrator
@@ -105,8 +114,8 @@ exec ${pkgs.bubblewrap}/bin/bwrap \
   `# User-provided extra arguments` \
   "''$@" \
   \
-  `# Execute orchestrator` \
-  ${orchestrator}/bin/orchestrator
+  `# Run init script: sets up home dir/.bashrc, then execs orchestrator` \
+  ${sandboxInit}
 EOF
 
     chmod +x $out/bin/7aigent-sandbox
