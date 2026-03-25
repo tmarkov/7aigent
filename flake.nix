@@ -149,7 +149,6 @@
             echo "🔒 Bubblewrap: $(bwrap --version)"
             echo ""
             echo "Development environment loaded!"
-            echo "Run 'pre-commit install' to set up git hooks"
           ''
           + pre-commit-check.shellHook;
         };
