@@ -8,6 +8,7 @@ use agent::{
         format_llm_call_after, format_llm_call_context, format_llm_call_list, format_llm_replies,
         format_session_summary,
     },
+    interactive,
     llm::openai::OpenAiCompatibleClient,
     llm::retry::RetryClient,
     types::{SessionId, SessionManager, SessionMetadata, SessionStatus},
@@ -48,13 +49,15 @@ async fn run() -> Result<()> {
         Some(Commands::Resume { session_id }) => {
             handle_resume(&project_dir, session_id).await?;
         }
-        None => {
-            // New task
-            let task = cli
-                .task
-                .context("Task is required (this should be caught by CLI validation)")?;
-            handle_new_task(&project_dir, &task).await?;
-        }
+        None => match cli.task {
+            Some(task) => {
+                handle_new_task(&project_dir, &task).await?;
+            }
+            None => {
+                // No task and no subcommand → enter interactive mode
+                interactive::run_interactive(&project_dir).await?;
+            }
+        },
     }
 
     Ok(())

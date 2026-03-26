@@ -85,7 +85,7 @@ These tasks are for designing and implementing the agent:
 ### User Experience
 
 - [ ] [28 - Implement init command](./28-implement-init-command.md) - Replace outdated init with interactive setup that creates proper directory structure and uses agent to configure project-specific settings
-- [ ] [29 - Implement interactive mode](./29-implement-interactive-mode.md) - Add interactive REPL mode for multi-turn conversations with the agent
+- [x] [29 - Implement interactive mode](./29-implement-interactive-mode.md) - Add interactive REPL mode for multi-turn conversations with the agent
 
 ### Testing
 

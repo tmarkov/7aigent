@@ -74,13 +74,10 @@ impl Cli {
         Cli::parse()
     }
 
-    /// Validate that the CLI arguments are consistent
+    /// Validate that the CLI arguments are consistent.
+    ///
+    /// Running with no arguments is valid and enters interactive mode.
     pub fn validate(&self) -> anyhow::Result<()> {
-        // Either a task or a subcommand must be provided
-        if self.task.is_none() && self.command.is_none() {
-            anyhow::bail!("Either provide a task or use a subcommand (--help for usage)");
-        }
-
         // Can't provide both a task and a subcommand
         if self.task.is_some() && self.command.is_some() {
             anyhow::bail!("Cannot provide both a task and a subcommand");
@@ -237,9 +234,10 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_no_args_fails() {
+    fn test_validate_no_args_succeeds_for_interactive_mode() {
+        // Requirement: Running with no arguments must succeed (enters interactive mode).
         let cli = Cli::parse_from(["7aigent"]);
-        assert!(cli.validate().is_err());
+        assert!(cli.validate().is_ok());
     }
 
     #[test]

@@ -23,6 +23,14 @@ use std::collections::HashMap;
 use std::io::{self, Write as IoWrite};
 use std::path::{Path, PathBuf};
 
+/// Outcome of the core agent loop.
+enum LoopOutcome {
+    /// Agent produced no commands — task is complete.
+    Completed,
+    /// User declined to continue after a budget warning.
+    Paused,
+}
+
 /// Main agent that manages LLM interaction and command execution
 pub struct Agent<C: LlmClient> {
     /// Session metadata and tracking
@@ -168,128 +176,190 @@ impl<C: LlmClient> Agent<C> {
         Ok(llm_response.content)
     }
 
-    /// Run the main agent loop until task completion or error
+    /// Run the main agent loop until task completion or error.
+    ///
+    /// For single-shot (non-interactive) execution: initialises the session on
+    /// first run, runs the agent loop, prints a completion summary, and emits
+    /// a `SessionEnd` event.
     pub async fn run(&mut self) -> Result<()> {
         println!("Starting task: {}", self.session.task);
         println!();
 
-        // Load existing events to check if this is a new session or resume
         let events = self.session.load_events()?;
-        let is_new_session = events.is_empty();
+        if events.is_empty() {
+            self.run_initialization().await?;
+        }
 
-        // On first run, emit system prompt and task events
-        if is_new_session {
-            let system_prompt_content = crate::context::build_system_prompt(
-                &self.config,
-                &self.config.sandbox,
-                &self.session.project_dir,
-            )
-            .content;
-            let task_content =
-                crate::context::format_task(&self.session.task, &self.session.project_dir).content;
+        match self.run_loop().await? {
+            LoopOutcome::Completed => {
+                println!();
+                print!("{}", format_completion_summary(&self.session));
+                println!();
 
-            // Create and emit system prompt event
-            let system_event = Event::SystemPrompt {
-                timestamp: Utc::now(),
-                content: system_prompt_content,
-            };
-            print!("{}", format_event(&system_event, DisplayMode::Runtime));
-            self.session.append_event(&system_event)?;
+                let end_event = Event::SessionEnd {
+                    timestamp: Utc::now(),
+                    status: SessionStatus::Completed,
+                    reason: None,
+                };
+                self.session.append_event(&end_event)?;
+            }
+            LoopOutcome::Paused => {
+                // Session status and persistence already handled inside run_loop.
+            }
+        }
 
-            // Create and emit task event
+        Ok(())
+    }
+
+    /// Run a single interactive turn with the given task.
+    ///
+    /// On the first call (empty session) performs full session initialisation.
+    /// On subsequent calls appends the task as a new `TaskMessage` and runs the
+    /// agent loop.  Does *not* emit `SessionEnd` so the session stays active for
+    /// further turns.
+    pub async fn run_turn(&mut self, task: &str) -> Result<()> {
+        let events = self.session.load_events()?;
+
+        if events.is_empty() {
+            self.run_initialization().await?;
+        } else {
+            let task_content = crate::context::format_task(task, &self.session.project_dir).content;
             let task_event = Event::TaskMessage {
                 timestamp: Utc::now(),
                 content: task_content,
             };
             print!("{}", format_event(&task_event, DisplayMode::Runtime));
             self.session.append_event(&task_event)?;
-
-            // Load and execute initial messages from config if available
-            let init_file_path = self.get_initial_messages_path();
-
-            if let Some(path) = init_file_path {
-                if path.exists() {
-                    println!(
-                        "[Initialization] Loading initial messages from: {}",
-                        path.display()
-                    );
-
-                    let messages =
-                        load_initial_messages(&path).context("Failed to load initial messages")?;
-
-                    if messages.is_empty() {
-                        println!("  No messages found in file");
-                    } else {
-                        println!("  Loaded {} initial message(s)", messages.len());
-                        println!();
-
-                        // Execute each simulated message
-                        for (msg_idx, simulated_content) in messages.iter().enumerate() {
-                            println!("=== ASSISTANT (Initial {}) ===", msg_idx + 1);
-                            println!("{}", simulated_content);
-                            println!();
-
-                            // Save as event so it appears in LLM context for subsequent calls
-                            let sim_event = Event::SimulatedAssistantMessage {
-                                timestamp: Utc::now(),
-                                content: simulated_content.clone(),
-                            };
-                            self.session.append_event(&sim_event)?;
-
-                            // Parse commands from simulated message (same as regular LLM responses)
-                            let commands = parse_commands(simulated_content)
-                                .context("Failed to parse simulated message")?;
-
-                            // Execute each command (same as main loop)
-                            for (idx, cmd) in commands.iter().enumerate() {
-                                println!("  [{}] Executing {} command...", idx + 1, cmd.env);
-
-                                self.container
-                                    .send_command(&cmd.env, &cmd.command)
-                                    .context("Failed to send command to orchestrator")?;
-
-                                let (cmd_response, mut screen_state) =
-                                    self.receive_with_aux_handling().await?;
-
-                                // Print command output
-                                println!();
-                                println!("=== ORCHESTRATOR ({}) ===", cmd.env);
-                                println!("{}", cmd_response.output);
-                                println!();
-
-                                // Update screen timestamp
-                                screen_state.timestamp = Utc::now();
-
-                                // Create and emit command execution event
-                                let cmd_event = Event::CommandExecution {
-                                    timestamp: Utc::now(),
-                                    environment: cmd.env.clone(),
-                                    command: cmd.command.clone(),
-                                    output: cmd_response.output,
-                                    processed: cmd_response.processed,
-                                    exit_code: cmd_response.exit_code,
-                                    screen: screen_state,
-                                };
-                                self.session.append_event(&cmd_event)?;
-                            }
-
-                            println!();
-                        }
-                    }
-                } else {
-                    println!(
-                        "[Initialization] Initial messages file not found: {}",
-                        path.display()
-                    );
-                }
-            } else {
-                println!("[Initialization] No initial messages configured");
-            }
-
-            println!("[Initialization] Complete. Starting main loop...");
-            println!();
         }
 
+        match self.run_loop().await? {
+            LoopOutcome::Completed => {
+                println!(
+                    "Turn complete. Session total: ${:.4}",
+                    self.session.total_cost
+                );
+                println!();
+            }
+            LoopOutcome::Paused => {
+                // Session status and persistence already handled inside run_loop.
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Initialise a new session: emit the system prompt and task events, then
+    /// execute any configured initial messages.
+    async fn run_initialization(&mut self) -> Result<()> {
+        let system_prompt_content = crate::context::build_system_prompt(
+            &self.config,
+            &self.config.sandbox,
+            &self.session.project_dir,
+        )
+        .content;
+
+        let system_event = Event::SystemPrompt {
+            timestamp: Utc::now(),
+            content: system_prompt_content,
+        };
+        print!("{}", format_event(&system_event, DisplayMode::Runtime));
+        self.session.append_event(&system_event)?;
+
+        let task_content =
+            crate::context::format_task(&self.session.task, &self.session.project_dir).content;
+        let task_event = Event::TaskMessage {
+            timestamp: Utc::now(),
+            content: task_content,
+        };
+        print!("{}", format_event(&task_event, DisplayMode::Runtime));
+        self.session.append_event(&task_event)?;
+
+        let init_file_path = self.get_initial_messages_path();
+
+        if let Some(path) = init_file_path {
+            if path.exists() {
+                println!(
+                    "[Initialization] Loading initial messages from: {}",
+                    path.display()
+                );
+
+                let messages =
+                    load_initial_messages(&path).context("Failed to load initial messages")?;
+
+                if messages.is_empty() {
+                    println!("  No messages found in file");
+                } else {
+                    println!("  Loaded {} initial message(s)", messages.len());
+                    println!();
+
+                    for (msg_idx, simulated_content) in messages.iter().enumerate() {
+                        println!("=== ASSISTANT (Initial {}) ===", msg_idx + 1);
+                        println!("{}", simulated_content);
+                        println!();
+
+                        let sim_event = Event::SimulatedAssistantMessage {
+                            timestamp: Utc::now(),
+                            content: simulated_content.clone(),
+                        };
+                        self.session.append_event(&sim_event)?;
+
+                        let commands = parse_commands(simulated_content)
+                            .context("Failed to parse simulated message")?;
+
+                        for (idx, cmd) in commands.iter().enumerate() {
+                            println!("  [{}] Executing {} command...", idx + 1, cmd.env);
+
+                            self.container
+                                .send_command(&cmd.env, &cmd.command)
+                                .context("Failed to send command to orchestrator")?;
+
+                            let (cmd_response, mut screen_state) =
+                                self.receive_with_aux_handling().await?;
+
+                            println!();
+                            println!("=== ORCHESTRATOR ({}) ===", cmd.env);
+                            println!("{}", cmd_response.output);
+                            println!();
+
+                            screen_state.timestamp = Utc::now();
+
+                            let cmd_event = Event::CommandExecution {
+                                timestamp: Utc::now(),
+                                environment: cmd.env.clone(),
+                                command: cmd.command.clone(),
+                                output: cmd_response.output,
+                                processed: cmd_response.processed,
+                                exit_code: cmd_response.exit_code,
+                                screen: screen_state,
+                            };
+                            self.session.append_event(&cmd_event)?;
+                        }
+
+                        println!();
+                    }
+                }
+            } else {
+                println!(
+                    "[Initialization] Initial messages file not found: {}",
+                    path.display()
+                );
+            }
+        } else {
+            println!("[Initialization] No initial messages configured");
+        }
+
+        println!("[Initialization] Complete. Starting main loop...");
+        println!();
+
+        Ok(())
+    }
+
+    /// Core agent loop: call the LLM, execute returned commands, repeat.
+    ///
+    /// Returns once the agent produces no commands (task complete) or the user
+    /// declines to exceed the budget warning threshold.  Session status is
+    /// updated internally for the `Paused` and `Failed` cases.
+    async fn run_loop(&mut self) -> Result<LoopOutcome> {
         loop {
             // Load all events to build context
             let events = self.session.load_events()?;
@@ -335,11 +405,8 @@ impl<C: LlmClient> Agent<C> {
                 .estimate_cost(&request)
                 .context("Failed to estimate cost")?;
 
-            // Check budget before making LLM call
             match check_budget(self.session.total_cost, estimated_cost, &self.config.budget) {
-                BudgetCheckResult::Ok => {
-                    // Continue without prompting
-                }
+                BudgetCheckResult::Ok => {}
                 BudgetCheckResult::WarningThreshold { projected, limit } => {
                     println!(
                         "WARNING: Next LLM call estimated at ${:.2}, approaching session limit of ${:.2}",
@@ -358,7 +425,7 @@ impl<C: LlmClient> Agent<C> {
                         println!("Stopping agent");
                         self.session.status = SessionStatus::Paused;
                         self.session.save()?;
-                        return Ok(());
+                        return Ok(LoopOutcome::Paused);
                     }
                 }
                 BudgetCheckResult::ExceedsPerCall { limit, .. } => {
@@ -406,18 +473,8 @@ impl<C: LlmClient> Agent<C> {
             let commands = parse_commands(&response.content).context("Failed to parse commands")?;
 
             if commands.is_empty() {
-                // No commands means agent is done
-                println!();
-                print!("{}", format_completion_summary(&self.session));
-                println!();
-
-                let end_event = Event::SessionEnd {
-                    timestamp: Utc::now(),
-                    status: SessionStatus::Completed,
-                    reason: None,
-                };
-                self.session.append_event(&end_event)?;
-                break;
+                // No commands means agent considers task complete.
+                return Ok(LoopOutcome::Completed);
             }
 
             // Execute each command
@@ -430,16 +487,13 @@ impl<C: LlmClient> Agent<C> {
 
                 let (cmd_response, mut screen_state) = self.receive_with_aux_handling().await?;
 
-                // Print command output
                 println!();
                 println!("=== ORCHESTRATOR ({}) ===", cmd.env);
                 println!("{}", cmd_response.output);
                 println!();
 
-                // Update screen timestamp
                 screen_state.timestamp = Utc::now();
 
-                // Create and emit command execution event
                 let cmd_event = Event::CommandExecution {
                     timestamp: Utc::now(),
                     environment: cmd.env.clone(),
@@ -455,8 +509,6 @@ impl<C: LlmClient> Agent<C> {
             println!("  Session total: ${:.4}", self.session.total_cost);
             println!();
         }
-
-        Ok(())
     }
 
     /// Get a reference to the session
