@@ -186,7 +186,15 @@ async fn handle_resume(project_dir: &Path, session_id: u64) -> Result<()> {
     let mut session = SessionMetadata::load(project_dir, session_id)?;
 
     if session.status == SessionStatus::Completed {
-        anyhow::bail!("Session {} is already completed", session.id);
+        // Completed sessions can be resumed in interactive mode
+        println!(
+            "Session {} is completed. Switching to interactive mode.",
+            session.id
+        );
+        println!("You can continue the conversation or give new tasks.");
+        println!();
+        interactive::run_interactive_with_session(project_dir, Some(session)).await?;
+        return Ok(());
     }
 
     if session.status == SessionStatus::Failed {

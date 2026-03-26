@@ -87,16 +87,60 @@ fn create_agent_session(
     Agent::new(session, config, container, llm_client)
 }
 
+/// Load an existing session for interactive mode.
+///
+/// Loads configuration, loads the existing session, spawns the container, and
+/// returns a ready-to-use `Agent`. Used when resuming a completed session.
+fn load_agent_session(
+    project_dir: &Path,
+    session: crate::types::SessionMetadata,
+) -> Result<Agent<RetryClient<OpenAiCompatibleClient>>> {
+    let config = ConfigLoader::load()?;
+    let llm_config = config.llm.validate()?;
+    let base_client = OpenAiCompatibleClient::new(llm_config)?;
+    let llm_client = RetryClient::new(base_client);
+
+    let container_manager = ContainerManager::new()?;
+    let container = container_manager
+        .spawn_container(project_dir, &config.sandbox)
+        .context("Failed to start container")?;
+
+    Agent::new(session, config, container, llm_client)
+}
+
 /// Run the 7aigent interactive REPL.
 ///
 /// Prompts for tasks, runs the agent for each, and handles meta-commands.
 /// Maintains a single agent session (and container) across turns until the
 /// user explicitly clears the context or exits.
 pub async fn run_interactive(project_dir: &Path) -> Result<()> {
+    run_interactive_with_session(project_dir, None).await
+}
+
+/// Run the 7aigent interactive REPL with an optional pre-existing session.
+///
+/// If a session is provided, it will be used as the active session.
+/// This is used when resuming a completed session in interactive mode.
+pub async fn run_interactive_with_session(
+    project_dir: &Path,
+    initial_session: Option<crate::types::SessionMetadata>,
+) -> Result<()> {
     println!("7aigent interactive mode. Type 'help' for commands, 'exit' to quit.");
     println!();
 
-    let mut active_agent: Option<Agent<RetryClient<OpenAiCompatibleClient>>> = None;
+    // If an initial session is provided, create an agent from it
+    let mut active_agent: Option<Agent<RetryClient<OpenAiCompatibleClient>>> = match initial_session
+    {
+        Some(session) => {
+            println!("Resuming session {}", session.id);
+            println!("Task: {}", session.task);
+            println!("Status: {:?}", session.status);
+            println!();
+            Some(load_agent_session(project_dir, session)?)
+        }
+        None => None,
+    };
+
     let stdin = io::stdin();
 
     loop {
