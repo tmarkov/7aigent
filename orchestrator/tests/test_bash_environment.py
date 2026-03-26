@@ -350,6 +350,48 @@ class TestBashEnvironment:
             assert "<bash>" in help_text, "Help must contain bash example blocks"
             assert "</bash>" in help_text, "Help must close bash example blocks"
 
+    @timeout(15)
+    def test_bash_environment_large_heredoc_command(self) -> None:
+        """Large heredoc commands must complete without hanging.
+
+        pexpect.send() calls os.write() once, which on a PTY with canonical
+        mode can silently return fewer bytes than requested when the command
+        exceeds N_TTY_BUF_SIZE (4096 bytes on Linux). This drops everything
+        after the buffer fills up — including the heredoc EOF terminator —
+        causing bash to hang waiting for it indefinitely.
+
+        Requirements tested:
+        1. Heredoc commands larger than 4096 bytes complete successfully
+        2. All lines of file content are written (no truncation)
+        3. Command returns a response (no hang)
+        """
+        env = BashEnvironment()
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                # Build a heredoc command larger than 4096 bytes.
+                # 100 lines × ~50 bytes each ≈ 5000 bytes total command.
+                content_lines = [f"line_{i:03d}: {'x' * 40}" for i in range(100)]
+                content = "\n".join(content_lines)
+                output_file = f"{tmpdir}/out.txt"
+
+                cmd = f"cat > {output_file} << 'HEREDOC'\n{content}\nHEREDOC"
+
+                # Must complete within timeout (not hang)
+                response = env.handle_command(CommandText(cmd))
+                assert response.processed is True, "Large heredoc command must succeed"
+
+                # Verify all 100 lines were written (nothing was truncated)
+                response = env.handle_command(CommandText(f"wc -l {output_file}"))
+                assert "100" in response.output, "All 100 lines must be written to file"
+
+                response = env.handle_command(CommandText(f"head -1 {output_file}"))
+                assert "line_000" in response.output, "First line must be correct"
+
+                response = env.handle_command(CommandText(f"tail -1 {output_file}"))
+                assert "line_099" in response.output, "Last line must be correct"
+        finally:
+            env.shutdown()
+
     @timeout(10)
     def test_bash_environment_get_help_uses_project_override(self) -> None:
         """Requirement: project_dir/env/bash/help.md must override the built-in help.

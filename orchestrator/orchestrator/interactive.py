@@ -340,15 +340,22 @@ class InteractiveEnvironment(ABC):
 
     def _send_command(self, command: str) -> None:
         """
-        Send command to process.
+        Send command to process, one line at a time.
 
         Args:
             command: The command to send
 
         Override this for custom command sending logic (like multi-line handling).
-        Default implementation sends command + newline.
+
+        Sends each line separately to avoid exceeding the PTY canonical mode
+        buffer limit (N_TTY_BUF_SIZE = 4096 bytes on Linux). A single large
+        send() call may silently truncate data when the command exceeds the
+        buffer, causing pexpect to hang waiting for a prompt that never arrives
+        (e.g., when bash is stuck waiting for a heredoc terminator that was
+        never sent because it was dropped in the truncated portion).
         """
-        self._process.send(command + "\n")
+        for line in command.splitlines() or [""]:
+            self._process.send(line + "\n")
 
     def _env_name(self) -> str:
         """
