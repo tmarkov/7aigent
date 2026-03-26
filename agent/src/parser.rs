@@ -34,28 +34,70 @@ fn environment_tag_regex() -> &'static Regex {
     })
 }
 
+/// Returns true if the line is a bare XML opening tag, e.g. `<bash>`.
+fn is_xml_open_tag(s: &str) -> bool {
+    s.len() > 2
+        && s.starts_with('<')
+        && s.ends_with('>')
+        && !s.starts_with("</")
+        && s[1..s.len() - 1]
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_')
+}
+
+/// Returns true if the line is a bare XML closing tag, e.g. `</bash>`.
+fn is_xml_close_tag(s: &str) -> bool {
+    s.len() > 3
+        && s.starts_with("</")
+        && s.ends_with('>')
+        && s[2..s.len() - 1]
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_')
+}
+
 /// Extract text from all `# Commands` sections in the response.
 ///
 /// A commands section starts at a line that is exactly `# Commands` (or
 /// `# Commands` followed only by whitespace) and ends at the next `^# `
 /// heading or the end of the string.
+///
+/// Section-boundary detection is suppressed inside fenced code blocks
+/// (triple-backtick delimited) and inside XML environment tags, so that
+/// Markdown headings appearing in heredoc content or code examples do not
+/// prematurely terminate an active section.
 fn extract_commands_sections(response: &str) -> String {
     let mut result = String::new();
     let mut in_commands_section = false;
+    let mut in_code_block = false;
+    let mut in_xml_tag = false;
 
     for line in response.lines() {
         let trimmed = line.trim_end();
 
-        if trimmed == "# Commands" || trimmed.starts_with("# Commands ") {
-            in_commands_section = true;
-            // Don't include the heading line itself
-            continue;
+        // Toggle fenced code block state.
+        if trimmed.starts_with("```") {
+            in_code_block = !in_code_block;
         }
 
-        // Any other `# ` heading ends the current section
-        if trimmed.starts_with("# ") {
-            in_commands_section = false;
-            continue;
+        // Track XML environment tag boundaries (only meaningful outside code blocks).
+        if !in_code_block {
+            if is_xml_open_tag(trimmed) {
+                in_xml_tag = true;
+            } else if is_xml_close_tag(trimmed) {
+                in_xml_tag = false;
+            }
+        }
+
+        // Section headings are only recognised outside code blocks and XML tags.
+        if !in_code_block && !in_xml_tag {
+            if trimmed == "# Commands" || trimmed.starts_with("# Commands ") {
+                in_commands_section = true;
+                continue;
+            }
+            if trimmed.starts_with("# ") {
+                in_commands_section = false;
+                continue;
+            }
         }
 
         if in_commands_section {
@@ -444,6 +486,54 @@ No further action is needed.
 
         let commands = parse_commands(response).unwrap();
         assert_eq!(commands.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_commands_heading_inside_xml_tag_not_section_terminator() {
+        // Requirement: An H1 heading that appears inside an XML env tag (e.g. inside
+        // a bash heredoc) must not terminate the active # Commands section.
+
+        let response =
+            "# Commands\n\n<bash>\ncat > task.md << 'EOF'\n# Task: do something\nEOF\n</bash>\n";
+
+        let commands = parse_commands(response).unwrap();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].env, "bash");
+        assert_eq!(
+            commands[0].command,
+            "cat > task.md << 'EOF'\n# Task: do something\nEOF"
+        );
+    }
+
+    #[test]
+    fn test_parse_commands_heading_inside_code_block_not_section_terminator() {
+        // Requirement: An H1 heading inside a fenced code block must not terminate
+        // the active # Commands section.
+
+        let response = r#"
+# Commands
+
+<bash>
+echo hello
+</bash>
+
+Some prose with a fenced block:
+
+```
+# This heading is inside a code fence
+```
+
+<editor>
+view README.md /^#/
+</editor>
+"#;
+
+        let commands = parse_commands(response).unwrap();
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0].env, "bash");
+        assert_eq!(commands[0].command, "echo hello");
+        assert_eq!(commands[1].env, "editor");
+        assert_eq!(commands[1].command, "view README.md /^#/");
     }
 
     #[test]
