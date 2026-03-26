@@ -1,17 +1,47 @@
-Let's start by examining the project README to understand what this project is about:
+# Consideration
+
+We are given a project with several README.md files, and a flake.nix.
+We should start with a general exploration, and see what they're about.
+To do that, let's start by viewing the readme sections and the flake.
+
+# Commands
 
 <editor>
-view README.md /^#/ /^#/
+view readme_sections /^#/ in **/README.md
 </editor>
+
+<editor>
+view nix_flake /./ in flake.nix
+</editor>
+
 ---
-Now let's check the main documentation to understand the architecture:
 
-<editor>
-view CLAUDE.md /^#/ /^#/
-</editor>
+# Reflection
+
+We see that the flake provides a custom development environment.
+Let's activate it.
+
+# Commands
+
+<bash>
+nix --extra-experimental-features 'nix-command flakes' develop
+</bash>
+
 ---
-Let's see what the main agent code looks like:
+
+# Reflection
+
+Perfect! The development environment started successfully.
+
+Now, let's take a look at the coding and testing conventions.
+
+# Commands
 
 <editor>
-search "pub struct Agent" agent/src/*.rs
+view coding_style /./ in docs/reference/coding-style.md
 </editor>
+
+<editor>
+view testing-strategy /./ in docs/development/testing.md
+</editor>
+

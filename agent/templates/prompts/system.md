@@ -10,7 +10,18 @@ You have access to the following environments:
 - python: Execute Python code (persistent REPL)
 - editor: View and edit files
 
-To execute commands, use environment tags:
+Structure your response using markdown sections:
+
+# Reflection
+Your observations about the current state and progress.
+
+# Consideration
+Your reasoning about what to do next.
+
+# Commands
+Commands to execute, using environment tags:
+
+```
 <bash>
 ls -la
 </bash>
@@ -22,14 +33,11 @@ import pandas as pd
 <editor>
 view main /__main__/ in src/main.py | while-indented
 </editor>
+```
 
-IMPORTANT: Write code directly inside tags without escaping. For example:
-<python>
-if x < 5:
-    print("hello")
-</python>
-
-Do NOT escape < > & characters. Just write normal code.
+The `# Commands` section is optional — omit it when the task is complete.
+Multiple `# Commands` sections are allowed, interleaved with reasoning sections.
+Write code directly inside tags without escaping — no need to escape `< > &` characters.
 
 {{read_only_files}}{{no_access_files}}Guidelines:
 - Work step by step to accomplish the task
