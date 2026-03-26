@@ -133,10 +133,17 @@ impl LlmClient for OpenAiCompatibleClient {
             });
         }
 
-        let api_response: OpenAiResponse = response
-            .json()
+        let body = response
+            .text()
             .await
-            .map_err(|e| LlmError::ParseError(format!("Failed to parse response: {}", e)))?;
+            .map_err(|e| LlmError::ParseError(format!("Failed to read response body: {}", e)))?;
+
+        let api_response: OpenAiResponse = serde_json::from_str(&body).map_err(|e| {
+            LlmError::ParseError(format!(
+                "Failed to parse response: {}\nResponse body: {}",
+                e, body
+            ))
+        })?;
 
         if api_response.choices.is_empty() {
             return Err(LlmError::ParseError("No choices in response".to_string()));
