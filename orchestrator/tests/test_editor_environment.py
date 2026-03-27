@@ -2138,3 +2138,288 @@ def test_screen_displays_command_help_footer(editor):
     assert "view" in screen.content, "Should mention view command"
     assert "peek" in screen.content, "Should mention peek command"
     assert "close" in screen.content, "Should mention close command"
+
+
+# ====================
+# Sed Command Tests
+# ====================
+
+
+@timeout(10)
+def test_sed_single_file_replacement(editor, temp_project_dir):
+    """Requirement: sed must replace patterns in visible lines of a single file."""
+    # Create test file
+    test_file = temp_project_dir / "test.py"
+    test_file.write_text(
+        "def hello():\n    # TODO: Fix this\n    x = 1\n    # TODO: Add error handling\n    return x\n"
+    )
+
+    # Create view showing TODO lines
+    editor.handle_command(CommandText("view todos /TODO/ in test.py | context 1"))
+    editor.get_screen()  # Cache windows
+
+    # Replace TODO with DONE
+    response = editor.handle_command(CommandText("sed todos /TODO/DONE/g"))
+    assert response.processed, f"sed should succeed: {response.output}"
+    assert (
+        "Replaced 2 occurrence" in response.output
+    ), f"Should report 2 replacements: {response.output}"
+
+    # Verify file was modified
+    content = test_file.read_text()
+    assert "DONE" in content, "File should contain DONE"
+    assert "TODO" not in content, "File should not contain TODO"
+
+
+@timeout(10)
+def test_sed_multi_file_replacement(editor, temp_project_dir):
+    """Requirement: sed must replace patterns across multiple files."""
+    # Create test files
+    (temp_project_dir / "file1.py").write_text("from old_module import foo\n")
+    (temp_project_dir / "file2.py").write_text("from old_module import bar\n")
+    (temp_project_dir / "file3.py").write_text("from old_module import baz\n")
+
+    # Create view showing imports
+    editor.handle_command(CommandText("view imports /from old_module/ in *.py"))
+    editor.get_screen()  # Cache windows
+
+    # Replace old_module with new_module
+    response = editor.handle_command(
+        CommandText("sed imports /old_module/new_module/g")
+    )
+    assert response.processed, f"sed should succeed: {response.output}"
+    assert (
+        "Replaced 3 occurrence" in response.output
+    ), f"Should report 3 replacements: {response.output}"
+    assert "file1.py" in response.output, "Should mention file1.py"
+    assert "file2.py" in response.output, "Should mention file2.py"
+    assert "file3.py" in response.output, "Should mention file3.py"
+
+    # Verify all files were modified
+    assert "new_module" in (temp_project_dir / "file1.py").read_text()
+    assert "new_module" in (temp_project_dir / "file2.py").read_text()
+    assert "new_module" in (temp_project_dir / "file3.py").read_text()
+
+
+@timeout(10)
+def test_sed_capture_groups(editor, temp_project_dir):
+    """Requirement: sed must support capture groups ($1, $2, etc.) in replacement."""
+    # Create test file
+    test_file = temp_project_dir / "test.py"
+    test_file.write_text("process_data(arg1, arg2)\nprocess_data(x, y)\n")
+
+    # Create view
+    editor.handle_command(
+        CommandText("view calls /process_data\(/ in test.py | context 1")
+    )
+    editor.get_screen()  # Cache windows
+
+    # Replace with capture groups
+    response = editor.handle_command(
+        CommandText(
+            "sed calls /process_data\((\w+),\s*(\w+)\)/process_data(input=$1, output=$2)/g"
+        )
+    )
+    assert response.processed, f"sed should succeed: {response.output}"
+
+    # Verify file was modified with capture groups
+    content = test_file.read_text()
+    assert "input=arg1" in content, "Should have input=arg1"
+    assert "output=arg2" in content, "Should have output=arg2"
+
+
+@timeout(10)
+def test_sed_nonexistent_label_error(editor):
+    """Requirement: sed must fail with clear error for non-existent label."""
+    response = editor.handle_command(CommandText("sed nonexistent /old/new/g"))
+    assert not response.processed, "sed should fail for non-existent label"
+    assert (
+        "No view found" in response.output or "not found" in response.output.lower()
+    ), f"Error should mention label not found: {response.output}"
+
+
+@timeout(10)
+def test_sed_invalid_regex_error(editor, temp_project_dir):
+    """Requirement: sed must fail with clear error for invalid regex pattern."""
+    # Create a view first
+    test_file = temp_project_dir / "test.py"
+    test_file.write_text("def test():\n    pass\n")
+    editor.handle_command(CommandText("view test /def/ in test.py"))
+    editor.get_screen()
+
+    # Invalid regex: unclosed bracket
+    response = editor.handle_command(CommandText("sed test /[abc/new/"))
+    assert not response.processed, "sed should fail for invalid regex"
+    assert (
+        "Invalid regex" in response.output or "pattern" in response.output.lower()
+    ), f"Error should mention invalid pattern: {response.output}"
+
+
+@timeout(10)
+def test_sed_empty_view_error(editor, temp_project_dir):
+    """Requirement: sed must fail gracefully when view has no visible lines."""
+    # Create file but with no matching pattern
+    test_file = temp_project_dir / "test.py"
+    test_file.write_text("def test():\n    pass\n")
+
+    # Create view that matches nothing
+    editor.handle_command(CommandText("view empty /NONEXISTENT_PATTERN/ in test.py"))
+    editor.get_screen()
+
+    # Try to sed on empty view - should fail because label doesn't exist
+    # (queries with no matches are auto-removed)
+    response = editor.handle_command(CommandText("sed empty /old/new/"))
+    assert not response.processed, "sed should fail for empty view"
+
+
+@timeout(10)
+def test_sed_only_visible_lines_modified(editor, temp_project_dir):
+    """Requirement: sed must only modify lines visible in the view, not other occurrences."""
+    # Create file with TODO in multiple places
+    test_file = temp_project_dir / "test.py"
+    test_file.write_text(
+        "# TODO: First\n"  # Line 1 - visible
+        "def foo():\n"  # Line 2
+        "    pass\n"  # Line 3
+        "# TODO: Second\n"  # Line 4 - NOT visible
+        "def bar():\n"  # Line 5
+        "    pass\n"  # Line 6
+    )
+
+    # Create view that only shows line 1
+    editor.handle_command(CommandText("view todos /# TODO: First/ in test.py"))
+    editor.get_screen()
+
+    # Replace TODO with DONE
+    response = editor.handle_command(CommandText("sed todos /TODO/DONE/g"))
+    assert response.processed, f"sed should succeed: {response.output}"
+
+    content = test_file.read_text()
+    # Line 1 should be modified
+    assert "DONE: First" in content, "Visible TODO should be replaced"
+    # Line 4 should NOT be modified
+    assert "TODO: Second" in content, "Hidden TODO should NOT be replaced"
+
+
+@timeout(10)
+def test_sed_case_insensitive_flag(editor, temp_project_dir):
+    """Requirement: sed with 'i' flag must perform case-insensitive replacement."""
+    # Create test file
+    test_file = temp_project_dir / "test.py"
+    test_file.write_text("def Hello():\n    print('hello')\n    HELLO = 1\n")
+
+    # Create view
+    editor.handle_command(CommandText("view test /(?i)hello/ in test.py"))
+    editor.get_screen()
+
+    # Replace with case-insensitive flag
+    response = editor.handle_command(CommandText("sed test /hello/world/gi"))
+    assert response.processed, f"sed should succeed: {response.output}"
+
+    content = test_file.read_text()
+    assert "world" in content.lower(), "Should have world (case-insensitive)"
+
+
+@timeout(10)
+def test_sed_first_occurrence_only(editor, temp_project_dir):
+    """Requirement: sed without 'g' flag must replace only first occurrence per line."""
+    # Create test file with multiple occurrences on same line
+    test_file = temp_project_dir / "test.py"
+    test_file.write_text("x = foo + foo + foo\n")
+
+    # Create view
+    editor.handle_command(CommandText("view test /foo/ in test.py"))
+    editor.get_screen()
+
+    # Replace without 'g' flag (only first occurrence)
+    response = editor.handle_command(CommandText("sed test /foo/bar/"))
+    assert response.processed, f"sed should succeed: {response.output}"
+
+    content = test_file.read_text()
+    # Should have "bar + foo + foo" (only first replaced)
+    assert content.count("bar") == 1, "Should have exactly one 'bar'"
+    assert content.count("foo") == 2, "Should have exactly two 'foo' remaining"
+
+
+@timeout(10)
+def test_sed_global_flag_replaces_all(editor, temp_project_dir):
+    """Requirement: sed with 'g' flag must replace all occurrences per line."""
+    # Create test file with multiple occurrences on same line
+    test_file = temp_project_dir / "test.py"
+    test_file.write_text("x = foo + foo + foo\n")
+
+    # Create view
+    editor.handle_command(CommandText("view test /foo/ in test.py"))
+    editor.get_screen()
+
+    # Replace with 'g' flag (all occurrences)
+    response = editor.handle_command(CommandText("sed test /foo/bar/g"))
+    assert response.processed, f"sed should succeed: {response.output}"
+
+    content = test_file.read_text()
+    # Should have "bar + bar + bar" (all replaced)
+    assert content.count("bar") == 3, "Should have three 'bar'"
+    assert "foo" not in content, "Should have no 'foo' remaining"
+
+
+@timeout(10)
+def test_sed_no_matches_in_visible_lines(editor, temp_project_dir):
+    """Requirement: sed must report when pattern not found in visible lines."""
+    # Create test file
+    test_file = temp_project_dir / "test.py"
+    test_file.write_text("def hello():\n    pass\n")
+
+    # Create view
+    editor.handle_command(CommandText("view test /def/ in test.py"))
+    editor.get_screen()
+
+    # Try to replace pattern that doesn't exist in visible lines
+    response = editor.handle_command(CommandText("sed test /NONEXISTENT/new/"))
+    assert response.processed, "sed should succeed even with no matches"
+    assert (
+        "No occurrences" in response.output or "No matches" in response.output.lower()
+    ), f"Should report no occurrences: {response.output}"
+
+
+@timeout(10)
+def test_sed_escaped_slash_in_pattern(editor, temp_project_dir):
+    """Requirement: sed must handle escaped slashes in pattern."""
+    # Create test file with path
+    test_file = temp_project_dir / "test.py"
+    test_file.write_text("path = '/home/user/file'\n")
+
+    # Create view
+    editor.handle_command(CommandText("view test /home/ in test.py"))
+    editor.get_screen()
+
+    # Replace with escaped slash
+    response = editor.handle_command(CommandText(r"sed test /\/home\/user/var\/data/g"))
+    assert response.processed, f"sed should succeed: {response.output}"
+
+    content = test_file.read_text()
+    assert "var/data" in content, "Should have replaced path"
+
+
+@timeout(10)
+def test_sed_merged_view_ranges(editor, temp_project_dir):
+    """Requirement: sed must work correctly when view has merged overlapping ranges."""
+    # Create test file
+    test_file = temp_project_dir / "test.py"
+    test_file.write_text(
+        "def foo():\n"  # Line 1
+        "    x = 1\n"  # Line 2
+        "    return x\n"  # Line 3
+        "\n"  # Line 4
+        "def bar():\n"  # Line 5
+        "    y = 2\n"  # Line 6
+        "    return y\n"  # Line 7
+    )
+
+    # Create overlapping views that will merge
+    editor.handle_command(CommandText("view v1 /def foo/ in test.py | context 2"))
+    editor.handle_command(CommandText("view v2 /def bar/ in test.py | context 2"))
+    editor.get_screen()
+
+    # Replace using v1 label (should work on merged view)
+    response = editor.handle_command(CommandText("sed v1 /def/DEF/g"))
+    assert response.processed, f"sed should succeed: {response.output}"

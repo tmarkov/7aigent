@@ -612,3 +612,301 @@ class EditorEnvironment(DeclarativeEnvironment):
                 return [line.rstrip("\n") for line in f.readlines()]
         except (OSError, IOError):
             return []
+
+    @command(
+        signature="sed <label> /pattern/replacement/[flags]",
+        examples=[
+            (
+                "Replace TODO with DONE in visible lines",
+                "sed todos /TODO/DONE/g",
+            ),
+            (
+                "Rename a module across multiple files",
+                "sed imports /from old_module/from new_module/g",
+            ),
+            (
+                "Use capture groups to refactor function calls",
+                "sed calls /process_data\((\w+),\s*(\w+)\)/process_data(input=$1, output=$2)/g",
+            ),
+        ],
+    )
+    def _handle_sed(self, cmd: str) -> CommandResponse:
+        """Perform search-and-replace on content visible in a named view.
+
+        Parameters:
+          label       — name of a view whose visible lines will be modified
+          pattern     — regex pattern to search for
+          replacement — replacement text (supports $1, $2, etc. for capture groups)
+          flags       — optional: g (global - replace all occurrences per line),
+                        i (case-insensitive)
+
+        Only lines currently visible in the named view are modified. This ensures
+        safety - you can only change what you can see. Other occurrences of the
+        pattern in the same file but outside the view are unchanged.
+
+        Returns a summary showing:
+          - Number of replacements made
+          - Files modified and which lines were changed
+
+        Examples:
+          sed todos /TODO/DONE/g           — replace all TODO with DONE
+          sed imports /old/new/g           — rename across multiple files
+          sed calls /foo\((\w+)\)/bar($1)/g — use capture groups
+        """
+        # Parse sed command: sed <label> /pattern/replacement/[flags]
+        parsed = self._parse_sed(cmd)
+        if not parsed:
+            return CommandResponse(
+                output="Invalid sed syntax. Expected: sed <label> /pattern/replacement/[flags]",
+                processed=False,
+            )
+
+        label = parsed["label"]
+        pattern = parsed["pattern"]
+        replacement = parsed["replacement"]
+        flags = parsed["flags"]
+
+        # Find windows for the given label
+        label_windows = self._find_windows_for_label(label)
+        if label_windows is None:
+            active_labels = list(self._active_queries.keys())
+            return CommandResponse(
+                output=f"No view found with label '{label}'\n"
+                f"Active views: {', '.join(active_labels) if active_labels else 'none'}",
+                processed=False,
+            )
+
+        if not label_windows:
+            return CommandResponse(
+                output=f"View '{label}' has no visible lines to operate on",
+                processed=False,
+            )
+
+        # Validate regex pattern
+        try:
+            regex_flags = re.IGNORECASE if "i" in flags else 0
+            compiled_pattern = re.compile(pattern, regex_flags)
+        except re.error as e:
+            return CommandResponse(
+                output=f"Invalid regex pattern: {pattern}\nDetails: {e}",
+                processed=False,
+            )
+
+        # Convert $1, $2, etc. to \1, \2, etc. for Python regex
+        py_replacement = self._convert_replacement(replacement)
+
+        # Group windows by file
+        windows_by_file: dict[Path, list[Window | View]] = {}
+        for window in label_windows:
+            filepath = window.filepath
+            if filepath not in windows_by_file:
+                windows_by_file[filepath] = []
+            windows_by_file[filepath].append(window)
+
+        # Process each file
+        changes_by_file: dict[Path, list[int]] = (
+            {}
+        )  # filepath -> list of line numbers changed
+        total_replacements = 0
+
+        for filepath, windows in windows_by_file.items():
+            # Read current file content
+            current_lines = self._read_file_lines(filepath)
+            if not current_lines:
+                continue
+
+            # Collect visible line ranges for this file
+            visible_ranges = []
+            for window in windows:
+                visible_ranges.append((window.start_line, window.end_line))
+
+            # Merge overlapping ranges
+            visible_ranges.sort()
+            merged_ranges = []
+            for start, end in visible_ranges:
+                if merged_ranges and start <= merged_ranges[-1][1] + 1:
+                    merged_ranges[-1] = (
+                        merged_ranges[-1][0],
+                        max(merged_ranges[-1][1], end),
+                    )
+                else:
+                    merged_ranges.append((start, end))
+
+            # Apply substitutions only to visible lines
+            new_lines = current_lines.copy()
+            file_changes = []
+
+            global_replace = "g" in flags
+
+            for start, end in merged_ranges:
+                for line_num in range(start, end + 1):
+                    idx = line_num - 1  # Convert to 0-based
+                    if idx < 0 or idx >= len(new_lines):
+                        continue
+
+                    original_line = new_lines[idx]
+
+                    # Count replacements
+                    if global_replace:
+                        new_line, count = compiled_pattern.subn(
+                            py_replacement, original_line
+                        )
+                    else:
+                        # Replace only first occurrence
+                        new_line, count = compiled_pattern.subn(
+                            py_replacement, original_line, count=1
+                        )
+
+                    if count > 0:
+                        new_lines[idx] = new_line
+                        file_changes.append(line_num)
+                        total_replacements += count
+
+            if file_changes:
+                changes_by_file[filepath] = sorted(set(file_changes))
+
+                # Write modified file
+                try:
+                    filepath.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+                except (OSError, IOError) as e:
+                    return CommandResponse(
+                        output=f"Write failed for {filepath}: {e}",
+                        processed=False,
+                    )
+
+        # Format response
+        if total_replacements == 0:
+            return CommandResponse(
+                output="No occurrences of pattern found in visible lines",
+                processed=True,
+            )
+
+        # Build summary
+        response_lines = [
+            f"Replaced {total_replacements} occurrence(s) in {len(changes_by_file)} file(s)"
+        ]
+
+        for filepath in sorted(changes_by_file.keys()):
+            lines = changes_by_file[filepath]
+            rel_path = filepath.relative_to(self._project_dir)
+            if len(lines) <= 10:
+                response_lines.append(f"  {rel_path}: {', '.join(map(str, lines))}")
+            else:
+                response_lines.append(
+                    f"  {rel_path}: {', '.join(map(str, lines[:10]))}... ({len(lines)} lines)"
+                )
+
+        return CommandResponse(
+            output="\n".join(response_lines),
+            processed=True,
+        )
+
+    def _parse_sed(self, cmd: str) -> Optional[dict]:
+        """Parse sed command.
+
+        Format: sed <label> /pattern/replacement/[flags]
+
+        Returns dict with label, pattern, replacement, flags or None if invalid.
+        """
+        cmd = cmd.strip()
+        if not cmd.startswith("sed "):
+            return None
+
+        rest = cmd[4:].strip()  # Remove "sed "
+
+        # Find label (first word)
+        parts = rest.split(None, 1)
+        if len(parts) < 2:
+            return None
+
+        label = parts[0]
+        pattern_part = parts[1]
+
+        # Parse /pattern/replacement/[flags]
+        if not pattern_part.startswith("/"):
+            return None
+
+        # Find the delimiter positions
+        # Format: /pattern/replacement/[flags]
+        # Pattern and replacement can contain escaped slashes (\/)
+        delimiter = "/"
+
+        # Parse pattern (between first and second unescaped /)
+        pattern_start = 1  # after first /
+        pattern_end = self._find_unescaped(pattern_part, delimiter, pattern_start)
+        if pattern_end is None:
+            return None
+
+        pattern = pattern_part[pattern_start:pattern_end]
+        # Unescape \/ in pattern
+        pattern = pattern.replace("\\/", "/")
+
+        # Parse replacement (between second and third unescaped /)
+        replacement_start = pattern_end + 1
+        replacement_end = self._find_unescaped(
+            pattern_part, delimiter, replacement_start
+        )
+        if replacement_end is None:
+            # Allow replacement without trailing /
+            replacement = pattern_part[replacement_start:]
+            flags = ""
+        else:
+            replacement = pattern_part[replacement_start:replacement_end]
+            # Unescape \/ in replacement
+            replacement = replacement.replace("\\/", "/")
+            flags = pattern_part[replacement_end + 1 :].strip()
+
+        return {
+            "label": label,
+            "pattern": pattern,
+            "replacement": replacement,
+            "flags": flags,
+        }
+
+    def _find_unescaped(self, text: str, char: str, start: int) -> Optional[int]:
+        """Find the first unescaped occurrence of char in text starting from start.
+
+        An escaped character (preceded by \) is not considered a match.
+        """
+        i = start
+        while i < len(text):
+            if text[i] == char and (i == 0 or text[i - 1] != "\\"):
+                return i
+            i += 1
+        return None
+
+    def _convert_replacement(self, replacement: str) -> str:
+        """Convert sed-style replacement ($1, $2, etc.) to Python regex style (\\1, \\2, etc.)."""
+        # Replace $1, $2, ..., $9 with \1, \2, ..., \9
+        result = replacement
+        for i in range(1, 10):
+            result = result.replace(f"${i}", f"\\{i}")
+        return result
+
+    def _find_windows_for_label(self, label: str) -> Optional[list[Window | View]]:
+        """Find all windows/views for a given label.
+
+        Returns:
+            List of windows/views, or None if label doesn't exist.
+            Empty list if label exists but has no visible lines.
+        """
+        # Check if label exists in active queries
+        if label not in self._active_queries:
+            return None
+
+        # Get cached windows (merged views)
+        windows = []
+
+        # The _cached_windows contains merged View objects after get_state_display
+        for window in self._cached_windows:
+            # Check if this window's labels include the target label
+            if hasattr(window, "labels"):
+                # It's a View
+                if label in window.labels:
+                    windows.append(window)
+            else:
+                # It's a Window
+                if window.label == label:
+                    windows.append(window)
+
+        return windows

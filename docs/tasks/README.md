@@ -63,6 +63,7 @@ The orchestrator can work as a standalone tool without an agent. Focus on these 
 - [x] [25 - Implement InteractiveEnvironment base class](./25-implement-interactive-environment.md) - Create base class for interactive processes, refactor bash and python environments ✅ Completed
 - [x] [27 - Implement auxiliary LLM query protocol](./27-implement-auxiliary-llm-queries.md) - Extend protocol for environments to request AI assistance through agent (isolated orchestrator)
 - [x] [26 - Reimplement editor environment with query-based pipeline system](./26-reimplement-editor-environment.md) - Replace snapshot-based views with procedural queries, enable hypothesis testing and multi-file refactoring ✅ Completed
+- [x] [30 - Implement label-based sed for editor environment](./30-implement-label-based-sed.md) - Add sed command for search-replace on visible view content
 
 ### Agent Design and Implementation
 
