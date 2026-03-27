@@ -303,8 +303,7 @@ impl<C: LlmClient> Agent<C> {
                         };
                         self.session.append_event(&sim_event)?;
 
-                        let commands = parse_commands(simulated_content)
-                            .context("Failed to parse simulated message")?;
+                        let commands = parse_commands(simulated_content);
 
                         for (idx, cmd) in commands.iter().enumerate() {
                             println!("  [{}] Executing {} command...", idx + 1, cmd.env);
@@ -470,7 +469,7 @@ impl<C: LlmClient> Agent<C> {
             self.session.append_event(&llm_event)?;
 
             // Parse commands from response
-            let commands = parse_commands(&response.content).context("Failed to parse commands")?;
+            let commands = parse_commands(&response.content);
 
             if commands.is_empty() {
                 // No commands means agent considers task complete.

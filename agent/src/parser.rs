@@ -5,108 +5,32 @@
 //! section; tags anywhere else in the response are ignored.
 
 use crate::types::Command;
-use regex::Regex;
-use std::sync::OnceLock;
-use thiserror::Error;
 
-#[derive(Debug, Error)]
-pub enum ParseError {
-    #[error("Failed to compile regex pattern: {0}")]
-    RegexError(String),
+/// Returns the length of a fence opener if `line` begins with 3–5 backticks.
+fn fence_open_len(line: &str) -> Option<usize> {
+    let count = line.chars().take_while(|&c| c == '`').count();
+    if (3..=5).contains(&count) {
+        Some(count)
+    } else {
+        None
+    }
 }
 
-pub type Result<T> = std::result::Result<T, ParseError>;
-
-/// Get the regex pattern for matching environment tags
-///
-/// Pattern matches: <env>command</env>
-/// Captures: (env, command)
-/// Note: Closing tag must be alone on its own line
-fn environment_tag_regex() -> &'static Regex {
-    static REGEX: OnceLock<Regex> = OnceLock::new();
-    REGEX.get_or_init(|| {
-        // Match environment tags: <env>command</env>
-        // Group 1: environment name (word characters)
-        // Group 2: command content (any characters including newlines)
-        // Note: We match the closing tag separately without backreference
-        // since rust regex doesn't support backreferences
-        Regex::new(r"<(\w+)>\n?([\s\S]*?)\n?</\w+>").expect("Failed to compile regex")
-    })
-}
-
-/// Returns true if the line is a bare XML opening tag, e.g. `<bash>`.
-fn is_xml_open_tag(s: &str) -> bool {
-    s.len() > 2
-        && s.starts_with('<')
-        && s.ends_with('>')
-        && !s.starts_with("</")
-        && s[1..s.len() - 1]
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '_')
-}
-
-/// Returns true if the line is a bare XML closing tag, e.g. `</bash>`.
-fn is_xml_close_tag(s: &str) -> bool {
-    s.len() > 3
-        && s.starts_with("</")
-        && s.ends_with('>')
-        && s[2..s.len() - 1]
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '_')
-}
-
-/// Extract text from all `# Commands` sections in the response.
-///
-/// A commands section starts at a line that is exactly `# Commands` (or
-/// `# Commands` followed only by whitespace) and ends at the next `^# `
-/// heading or the end of the string.
-///
-/// Section-boundary detection is suppressed inside fenced code blocks
-/// (triple-backtick delimited) and inside XML environment tags, so that
-/// Markdown headings appearing in heredoc content or code examples do not
-/// prematurely terminate an active section.
-fn extract_commands_sections(response: &str) -> String {
-    let mut result = String::new();
-    let mut in_commands_section = false;
-    let mut in_code_block = false;
-    let mut in_xml_tag = false;
-
-    for line in response.lines() {
-        let trimmed = line.trim_end();
-
-        // Toggle fenced code block state.
-        if trimmed.starts_with("```") {
-            in_code_block = !in_code_block;
-        }
-
-        // Track XML environment tag boundaries (only meaningful outside code blocks).
-        if !in_code_block {
-            if is_xml_open_tag(trimmed) {
-                in_xml_tag = true;
-            } else if is_xml_close_tag(trimmed) {
-                in_xml_tag = false;
-            }
-        }
-
-        // Section headings are only recognised outside code blocks and XML tags.
-        if !in_code_block && !in_xml_tag {
-            if trimmed == "# Commands" || trimmed.starts_with("# Commands ") {
-                in_commands_section = true;
-                continue;
-            }
-            if trimmed.starts_with("# ") {
-                in_commands_section = false;
-                continue;
-            }
-        }
-
-        if in_commands_section {
-            result.push_str(line);
-            result.push('\n');
+/// If `line` is a bare XML opening tag (`<word>` with nothing else), return the tag name.
+fn xml_open_tag_name(line: &str) -> Option<String> {
+    let s = line.trim_end();
+    if s.len() > 2 && s.starts_with('<') && s.ends_with('>') && !s.starts_with("</") {
+        let name = &s[1..s.len() - 1];
+        if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            return Some(name.to_string());
         }
     }
+    None
+}
 
-    result
+/// Returns true iff `line` (trailing whitespace stripped) is exactly `</name>`.
+fn is_xml_close_tag_for(line: &str, name: &str) -> bool {
+    line.trim_end() == format!("</{}>", name)
 }
 
 /// Parse commands from LLM response
@@ -141,26 +65,74 @@ fn extract_commands_sections(response: &str) -> String {
 ///
 /// let response = "I'll list the files.\n\n# Commands\n\n<bash>\nls -la\n</bash>\n";
 ///
-/// let commands = parse_commands(response).unwrap();
+/// let commands = parse_commands(response);
 /// assert_eq!(commands.len(), 1);
 /// assert_eq!(commands[0].env, "bash");
 /// assert_eq!(commands[0].command, "ls -la");
 /// ```
-pub fn parse_commands(response: &str) -> Result<Vec<Command>> {
-    let mut commands = Vec::new();
-    let re = environment_tag_regex();
-
-    let sections_text = extract_commands_sections(response);
-
-    for cap in re.captures_iter(&sections_text) {
-        let env = cap[1].to_string();
-        // Trim leading/trailing newlines from the command content
-        let command = cap[2].trim().to_string();
-
-        commands.push(Command { env, command });
+pub fn parse_commands(response: &str) -> Vec<Command> {
+    enum State {
+        TopLevel,
+        InCodeBlock { fence_len: usize },
+        InXmlTag { name: String, lines: Vec<String> },
     }
 
-    Ok(commands)
+    let mut commands = Vec::new();
+    let mut state = State::TopLevel;
+    let mut in_commands_section = false;
+
+    for line in response.lines() {
+        state = match state {
+            State::TopLevel => {
+                let trimmed = line.trim_end();
+
+                if trimmed == "# Commands" || trimmed.starts_with("# Commands ") {
+                    in_commands_section = true;
+                    State::TopLevel
+                } else if trimmed.starts_with("# ") {
+                    in_commands_section = false;
+                    State::TopLevel
+                } else if let Some(fl) = fence_open_len(trimmed) {
+                    State::InCodeBlock { fence_len: fl }
+                } else if in_commands_section {
+                    if let Some(name) = xml_open_tag_name(trimmed) {
+                        State::InXmlTag {
+                            name,
+                            lines: Vec::new(),
+                        }
+                    } else {
+                        State::TopLevel
+                    }
+                } else {
+                    State::TopLevel
+                }
+            }
+
+            State::InCodeBlock { fence_len } => {
+                let trimmed = line.trim_end();
+                let backtick_count = trimmed.chars().take_while(|&c| c == '`').count();
+                if backtick_count >= fence_len && backtick_count == trimmed.len() {
+                    State::TopLevel
+                } else {
+                    State::InCodeBlock { fence_len }
+                }
+            }
+
+            State::InXmlTag { name, mut lines } => {
+                let trimmed = line.trim_end();
+                if is_xml_close_tag_for(trimmed, &name) {
+                    let command = lines.join("\n").trim().to_string();
+                    commands.push(Command { env: name, command });
+                    State::TopLevel
+                } else {
+                    lines.push(line.to_string());
+                    State::InXmlTag { name, lines }
+                }
+            }
+        };
+    }
+
+    commands
 }
 
 #[cfg(test)]
@@ -181,7 +153,7 @@ ls -la
 </bash>
 "#;
 
-        let commands = parse_commands(response).unwrap();
+        let commands = parse_commands(response);
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].env, "bash");
         assert_eq!(commands[0].command, "ls -la");
@@ -210,7 +182,7 @@ view src/main.py 1-50
 </editor>
 "#;
 
-        let commands = parse_commands(response).unwrap();
+        let commands = parse_commands(response);
         assert_eq!(commands.len(), 3);
 
         assert_eq!(commands[0].env, "bash");
@@ -238,7 +210,7 @@ hello()
 </python>
 "#;
 
-        let commands = parse_commands(response).unwrap();
+        let commands = parse_commands(response);
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].env, "python");
         assert_eq!(
@@ -253,7 +225,7 @@ hello()
 
         let response = "The task is complete! I've successfully added authentication.";
 
-        let commands = parse_commands(response).unwrap();
+        let commands = parse_commands(response);
         assert_eq!(commands.len(), 0);
     }
 
@@ -268,7 +240,7 @@ hello()
 </bash>
 "#;
 
-        let commands = parse_commands(response).unwrap();
+        let commands = parse_commands(response);
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].env, "bash");
         assert_eq!(commands[0].command, "");
@@ -295,7 +267,7 @@ print(x)
 Some regular markdown like ```inline code``` should be ignored.
 "#;
 
-        let commands = parse_commands(response).unwrap();
+        let commands = parse_commands(response);
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].env, "bash");
         assert_eq!(commands[1].env, "python");
@@ -313,7 +285,7 @@ echo "Use <brackets> and & symbols"
 </bash>
 "#;
 
-        let commands = parse_commands(response).unwrap();
+        let commands = parse_commands(response);
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command,
@@ -335,7 +307,7 @@ def foo():
 </python>
 "#;
 
-        let commands = parse_commands(response).unwrap();
+        let commands = parse_commands(response);
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command,
@@ -368,7 +340,7 @@ view file
 </editor>
 "#;
 
-        let commands = parse_commands(response).unwrap();
+        let commands = parse_commands(response);
         assert_eq!(commands.len(), 4);
         assert_eq!(commands[0].env, "bash");
         assert_eq!(commands[1].env, "python3");
@@ -390,7 +362,7 @@ if 3 < 4:
 </python>
 "#;
 
-        let commands = parse_commands(response).unwrap();
+        let commands = parse_commands(response);
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].env, "python");
         assert_eq!(commands[0].command, "if 3 < 4:\n    print(\"Hello world\")");
@@ -415,7 +387,7 @@ echo "real command"
 </bash>
 "#;
 
-        let commands = parse_commands(response).unwrap();
+        let commands = parse_commands(response);
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].env, "bash");
         assert_eq!(commands[0].command, r#"echo "real command""#);
@@ -448,7 +420,7 @@ print(sys.version)
 </python>
 "#;
 
-        let commands = parse_commands(response).unwrap();
+        let commands = parse_commands(response);
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].env, "bash");
         assert_eq!(commands[0].command, "ls");
@@ -466,7 +438,7 @@ print(sys.version)
 No commands needed right now.
 "#;
 
-        let commands = parse_commands(response).unwrap();
+        let commands = parse_commands(response);
         assert_eq!(commands.len(), 0);
     }
 
@@ -484,7 +456,7 @@ The task is complete. Everything looks good.
 No further action is needed.
 "#;
 
-        let commands = parse_commands(response).unwrap();
+        let commands = parse_commands(response);
         assert_eq!(commands.len(), 0);
     }
 
@@ -496,7 +468,7 @@ No further action is needed.
         let response =
             "# Commands\n\n<bash>\ncat > task.md << 'EOF'\n# Task: do something\nEOF\n</bash>\n";
 
-        let commands = parse_commands(response).unwrap();
+        let commands = parse_commands(response);
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].env, "bash");
         assert_eq!(
@@ -528,7 +500,7 @@ view README.md /^#/
 </editor>
 "#;
 
-        let commands = parse_commands(response).unwrap();
+        let commands = parse_commands(response);
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].env, "bash");
         assert_eq!(commands[0].command, "echo hello");
@@ -559,11 +531,39 @@ view README.md /^#/
 </editor>
 "#;
 
-        let commands = parse_commands(response).unwrap();
+        let commands = parse_commands(response);
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].env, "bash");
         assert_eq!(commands[0].command, "ls");
         assert_eq!(commands[1].env, "editor");
         assert_eq!(commands[1].command, "view README.md /^#/");
+    }
+
+    #[test]
+    fn test_parse_commands_close_tag_in_content_not_terminator() {
+        // Regression: A closing tag for a *different* environment inside a bash heredoc
+        // must be treated as content, not as the terminator for the bash block.
+        // Only </bash> should close a <bash> block.
+
+        let response = "# Commands\n\n<bash>\ncat > example.md << 'EOF'\n</editor>\nEOF\n</bash>\n";
+
+        let commands = parse_commands(response);
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].env, "bash");
+        assert_eq!(
+            commands[0].command,
+            "cat > example.md << 'EOF'\n</editor>\nEOF"
+        );
+    }
+
+    #[test]
+    fn test_parse_commands_xml_tags_inside_code_block_ignored() {
+        // Regression: XML env tags that appear inside a fenced code block in a
+        // # Commands section must not be parsed as commands.
+
+        let response = "# Commands\n\n```\n<bash>\nls\n</bash>\n```\n";
+
+        let commands = parse_commands(response);
+        assert_eq!(commands.len(), 0);
     }
 }
