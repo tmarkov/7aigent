@@ -188,7 +188,15 @@ class EditorEnvironment(DeclarativeEnvironment):
         ],
     )
     def _handle_read_only_peek(self, cmd: str) -> CommandResponse:
-        """Read file content transiently — results appear in the response only, not on screen.
+        """Read file content read-only — results appear in the response only, not on screen.
+
+        Snippets shows this way will not be updated if the file changes, and
+        may be compacted when the coversation history becomes too large.
+
+        They are also opened read-only. Only snippets opened with `view` may be edited.
+
+        On the other hand, contents opened with read-only-peek are better cached
+        by LLM providers, and therefore may be cheaper to process.
 
         Parameters:
           matcher    — pattern or line matcher (see Matchers reference below);
@@ -289,7 +297,10 @@ class EditorEnvironment(DeclarativeEnvironment):
 
         if not containing_window:
             return CommandResponse(
-                output="Can only edit lines visible in a view", processed=False
+                output="Can only edit lines visible in a view. "
+                "Open the relevant file section in a `view` first "
+                "(NOT `read-only-peek`!)",
+                processed=False,
             )
 
         # Verify content matches
@@ -565,9 +576,8 @@ class EditorEnvironment(DeclarativeEnvironment):
                 f"{w.filepath.relative_to(self._project_dir)} lines {w.start_line}-{w.end_line}:"
             )
             for i, line in enumerate(w.lines):
-                line_num = w.start_line + i
                 display_line = line[:200] if len(line) > 200 else line
-                lines.append(f"  {line_num:4d} |{display_line}")
+                lines.append(f"{display_line}")
             lines.append("")
 
         return "\n".join(lines)
