@@ -137,14 +137,17 @@ impl fmt::Display for FinishReason {
 /// Response from an LLM completion.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CompletionResponse {
-    /// Generated content.
-    pub content: String,
+    /// Generated content (may be None if model hit token limits during reasoning).
+    pub content: Option<String>,
     /// Token usage information.
     pub usage: TokenUsage,
     /// Actual cost in USD.
     pub cost: Decimal,
     /// Why the completion finished.
     pub finish_reason: FinishReason,
+    /// Reasoning content (for models that support extended reasoning).
+    #[serde(default)]
+    pub reasoning: Option<String>,
 }
 
 /// Reasoning effort level for models that support it (e.g., o-series models).
@@ -158,6 +161,20 @@ pub enum ReasoningEffort {
     Medium,
     High,
     XHigh,
+}
+
+impl ReasoningEffort {
+    /// Returns the next lower effort level, or None if already at minimum.
+    pub fn lower(self) -> Option<Self> {
+        match self {
+            Self::XHigh => Some(Self::High),
+            Self::High => Some(Self::Medium),
+            Self::Medium => Some(Self::Low),
+            Self::Low => Some(Self::Minimal),
+            Self::Minimal => Some(Self::None),
+            Self::None => None,
+        }
+    }
 }
 
 /// Request to the LLM.

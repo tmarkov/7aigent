@@ -136,10 +136,11 @@ mod tests {
                 Err(self.error.clone())
             } else {
                 Ok(CompletionResponse {
-                    content: "Success".to_string(),
+                    content: Some("Success".to_string()),
                     usage: TokenUsage::new(10, 5),
                     cost: Decimal::ZERO,
                     finish_reason: FinishReason::Stop,
+                    reasoning: None,
                 })
             }
         }

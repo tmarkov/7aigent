@@ -40,7 +40,10 @@ fn format_event_pretty(event: &Event) -> String {
             };
             format!(
                 "[LLM Call {}{}] Cost: ${:.4}\n\n=== ASSISTANT ===\n{}\n",
-                call_id, purpose_str, response.cost, response.content
+                call_id,
+                purpose_str,
+                response.cost,
+                response.content.as_deref().unwrap_or("(no content)")
             )
         }
         Event::CommandExecution {
@@ -71,7 +74,10 @@ fn format_event_pretty(event: &Event) -> String {
             if let Some(ctx) = context {
                 out.push_str(&format!("Context: {}\n", ctx));
             }
-            out.push_str(&format!("Response: {}\n", response.content));
+            out.push_str(&format!(
+                "Response: {}\n",
+                response.content.as_deref().unwrap_or("(no content)")
+            ));
             out
         }
         Event::SimulatedAssistantMessage { content, .. } => {
@@ -188,7 +194,7 @@ pub fn format_llm_replies(events: &[Event]) -> String {
                 "[Call {}] {}\n{}\n\n",
                 call_id,
                 format_timestamp(timestamp),
-                response.content
+                response.content.as_deref().unwrap_or("(no content)")
             ));
         }
     }
@@ -235,7 +241,10 @@ pub fn format_llm_call_context(events: &[Event], call_id: usize) -> anyhow::Resu
                     msg.content
                 ));
             }
-            output.push_str(&format!("=== LLM Reply ===\n{}\n", response.content));
+            output.push_str(&format!(
+                "=== LLM Reply ===\n{}\n",
+                response.content.as_deref().unwrap_or("(no content)")
+            ));
             return Ok(output);
         }
     }
@@ -250,7 +259,7 @@ pub fn format_llm_call_after(events: &[Event], call_id: usize) -> anyhow::Result
         .ok_or_else(|| anyhow::anyhow!("LLM call {} not found", call_id))?;
 
     let response_content = if let Event::LlmCall { response, .. } = &events[call_idx] {
-        &response.content
+        response.content.as_deref().unwrap_or("(no content)")
     } else {
         unreachable!()
     };
@@ -326,7 +335,7 @@ mod tests {
                 reasoning_effort: None,
             },
             response: CompletionResponse {
-                content: content.to_string(),
+                content: Some(content.to_string()),
                 usage: LlmTokenUsage {
                     prompt_tokens: 10,
                     completion_tokens: 5,
@@ -334,6 +343,7 @@ mod tests {
                 },
                 cost: dec!(0.0001),
                 finish_reason: FinishReason::Stop,
+                reasoning: None,
             },
         }
     }
@@ -421,7 +431,7 @@ mod tests {
                 reasoning_effort: None,
             },
             response: CompletionResponse {
-                content: "Hello, world!".to_string(),
+                content: Some("Hello, world!".to_string()),
                 usage: LlmTokenUsage {
                     prompt_tokens: 10,
                     completion_tokens: 5,
@@ -429,6 +439,7 @@ mod tests {
                 },
                 cost: dec!(0.0001),
                 finish_reason: FinishReason::Stop,
+                reasoning: None,
             },
         };
 

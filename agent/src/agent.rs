@@ -12,7 +12,7 @@ use crate::config::Config;
 use crate::container::ContainerHandle;
 use crate::format::{format_completion_summary, format_event, DisplayMode};
 use crate::initial_messages::load_initial_messages;
-use crate::llm::{CompletionRequest, LlmClient, LlmMessage};
+use crate::llm::{CompletionRequest, CompletionResponse, FinishReason, LlmClient, LlmMessage};
 use crate::parser::parse_commands;
 use crate::types::{
     Event, LlmCallPurpose, MessageRole, ScreenState, SessionMetadata, SessionStatus,
@@ -173,7 +173,45 @@ impl<C: LlmClient> Agent<C> {
             llm_response.usage.total_tokens, llm_response.cost
         );
 
-        Ok(llm_response.content)
+        Ok(llm_response.content.unwrap_or_default())
+    }
+
+    /// Call LLM with automatic reasoning degradation on token limit.
+    ///
+    /// If the LLM hits token limits during reasoning (finish_reason == Length
+    /// and content is empty), this method automatically retries with progressively
+    /// lower reasoning effort levels until content is produced or reasoning is disabled.
+    async fn call_llm_with_reasoning_retry(
+        &self,
+        mut request: CompletionRequest,
+    ) -> Result<CompletionResponse> {
+        loop {
+            let response = self
+                .llm_client
+                .complete(request.clone())
+                .await
+                .context("LLM call failed")?;
+
+            // Check if we hit reasoning limit (token limit during reasoning)
+            if response.finish_reason == FinishReason::Length && response.content.is_none() {
+                // Only retry if reasoning_effort is set (not None)
+                if let Some(current_effort) = request.reasoning_effort {
+                    // Try to lower reasoning effort
+                    if let Some(lower_effort) = current_effort.lower() {
+                        println!(
+                            "⚠️  LLM hit token limit during reasoning. Retrying with lower effort: {:?}",
+                            lower_effort
+                        );
+                        request.reasoning_effort = Some(lower_effort);
+                        continue;
+                    }
+                    // If already at None, fall through and return response
+                }
+                // If reasoning_effort wasn't set, fall through and return response
+            }
+
+            return Ok(response);
+        }
     }
 
     /// Run the main agent loop until task completion or error.
@@ -447,15 +485,11 @@ impl<C: LlmClient> Agent<C> {
                 }
             }
 
-            // Call LLM
+            // Call LLM with reasoning degradation retry
             let call_id = self.llm_call_counter;
             self.llm_call_counter += 1;
 
-            let response = self
-                .llm_client
-                .complete(request.clone())
-                .await
-                .context("LLM call failed")?;
+            let response = self.call_llm_with_reasoning_retry(request.clone()).await?;
 
             // Create and emit LLM call event
             let llm_event = Event::LlmCall {
@@ -469,7 +503,7 @@ impl<C: LlmClient> Agent<C> {
             self.session.append_event(&llm_event)?;
 
             // Parse commands from response
-            let commands = parse_commands(&response.content);
+            let commands = parse_commands(response.content.as_deref().unwrap_or(""));
 
             if commands.is_empty() {
                 // No commands means agent considers task complete.
@@ -577,7 +611,7 @@ fn build_llm_messages_from_events(
             } => {
                 messages.push(Message {
                     role: MessageRole::Assistant,
-                    content: response.content.clone(),
+                    content: response.content.clone().unwrap_or_default(),
                     timestamp: *timestamp,
                 });
             }

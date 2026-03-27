@@ -37,10 +37,11 @@ impl LlmClient for MockLlmClient {
 
         // Return mock response
         Ok(CompletionResponse {
-            content: self.response_text.clone(),
+            content: Some(self.response_text.clone()),
             usage: crate::llm::TokenUsage::new(100, 50),
             cost: Decimal::new(15, 4), // $0.0015
             finish_reason: FinishReason::Stop,
+            reasoning: None,
         })
     }
 
@@ -71,7 +72,7 @@ mod tests {
 
         let response = mock.complete(request.clone()).await.unwrap();
 
-        assert_eq!(response.content, "test response");
+        assert_eq!(response.content, Some("test response".to_string()));
         assert_eq!(mock.get_requests().len(), 1);
         assert_eq!(mock.get_requests()[0].model, "test-model");
     }

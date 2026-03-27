@@ -161,6 +161,7 @@ impl LlmClient for OpenAiCompatibleClient {
             usage,
             cost,
             finish_reason: choice.finish_reason,
+            reasoning: choice.message.reasoning.clone(),
         })
     }
 
@@ -216,7 +217,10 @@ struct Choice {
 
 #[derive(Debug, Deserialize)]
 struct ResponseMessage {
-    content: String,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    reasoning: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
