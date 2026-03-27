@@ -1,15 +1,15 @@
 """Query parser for editor environment.
 
-This module parses view and peek commands into AST structures that can be
+This module parses view and read-only-peek commands into AST structures that can be
 executed by the QueryExecutor.
 
 Command syntax:
     view <label> <matcher> in <glob> | <operations>
-    peek <matcher> in <glob> | <operations>
+    read-only-peek <matcher> in <glob> | <operations>
 
 Matchers:
     Pattern: /regex/ in <glob>
-    Line: line N in <file-or-glob> or line N-M in <file-or-glob> (peek only)
+    Line: line N in <file-or-glob> or line N-M in <file-or-glob> (read-only-peek only)
           Supports globs: line 1-100 in *.md, line 50 in **/*.py
 
 Operations:
@@ -44,7 +44,7 @@ class PatternMatcher(Matcher):
 
 @dataclass
 class LineMatcher(Matcher):
-    """Line-based matcher (peek only).
+    """Line-based matcher (read-only-peek only).
 
     Supports both exact file paths and glob patterns.
     Exactly one of filepath or glob must be set.
@@ -145,7 +145,7 @@ class LimitOp(Operation):
 class QueryAST:
     """Parsed query AST."""
 
-    is_view: bool  # True for view, False for peek
+    is_view: bool  # True for view, False for read-only-peek
     label: Optional[str]  # Only for view commands
     matcher: Matcher
     operations: list[Operation]
@@ -158,11 +158,11 @@ class ParseError(Exception):
 
 
 class QueryParser:
-    """Parser for view and peek query commands."""
+    """Parser for view and read-only-peek query commands."""
 
     # Command patterns
     VIEW_PATTERN = re.compile(r"^view\s+(\w+)\s+(.+)$")
-    PEEK_PATTERN = re.compile(r"^peek\s+(.+)$")
+    READ_ONLY_PEEK_PATTERN = re.compile(r"^read-only-peek\s+(.+)$")
 
     @staticmethod
     def _is_glob_pattern(text: str) -> bool:
@@ -229,11 +229,11 @@ class QueryParser:
             is_view=True, label=label, matcher=matcher, operations=operations
         )
 
-    def parse_peek(self, cmd: str) -> QueryAST:
-        """Parse peek command.
+    def parse_read_only_peek(self, cmd: str) -> QueryAST:
+        """Parse read-only-peek command.
 
         Args:
-            cmd: Peek command string (e.g., "peek line 155 in file.c | context 10")
+            cmd: Peek command string (e.g., "read-only-peek line 155 in file.c | context 10")
 
         Returns:
             QueryAST with is_view=False and label=None
@@ -243,22 +243,22 @@ class QueryParser:
 
         Examples:
             >>> parser = QueryParser()
-            >>> ast = parser.parse_peek("peek /TODO/ in **/*.py | limit 10")
+            >>> ast = parser.parse_read_only_peek("read-only-peek /TODO/ in **/*.py | limit 10")
             >>> ast.is_view
             False
             >>> ast.label is None
             True
         """
         # Extract command
-        match = self.PEEK_PATTERN.match(cmd.strip())
+        match = self.READ_ONLY_PEEK_PATTERN.match(cmd.strip())
         if not match:
             raise ParseError(
-                "Invalid peek syntax. Expected: peek <matcher> in <glob> | <operations>"
+                "Invalid read-only-peek syntax. Expected: read-only-peek <matcher> in <glob> | <operations>"
             )
 
         rest = match.group(1)
 
-        # Parse matcher and operations (line matchers allowed in peek)
+        # Parse matcher and operations (line matchers allowed in read-only-peek)
         matcher, operations = self._parse_matcher_and_operations(rest, allow_line=True)
 
         return QueryAST(
@@ -379,7 +379,7 @@ class QueryParser:
             raise ParseError(
                 f"Invalid matcher: {text}\n"
                 "Expected: /pattern/ in <glob>\n"
-                "(Line matchers only allowed in peek commands)"
+                "(Line matchers only allowed in read-only-peek commands)"
             )
 
     def _parse_operations(self, text: str) -> list[Operation]:

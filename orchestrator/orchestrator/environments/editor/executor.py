@@ -63,7 +63,7 @@ class QueryExecutor:
         Examples:
             >>> from orchestrator.environments.editor.parser import QueryParser
             >>> parser = QueryParser()
-            >>> ast = parser.parse_peek("peek /TODO/ in **/*.py | limit 5")
+            >>> ast = parser.parse_read_only_peek("read-only-peek /TODO/ in **/*.py | limit 5")
             >>> executor = QueryExecutor(Path("."))
             >>> windows = executor.execute(ast, set())
             >>> isinstance(windows, list)
@@ -91,7 +91,7 @@ class QueryExecutor:
             if isinstance(ast.matcher, PatternMatcher):
                 windows.extend(
                     self._apply_pattern_to_file(
-                        filepath, ast.matcher.pattern, ast.label or "peek"
+                        filepath, ast.matcher.pattern, ast.label or "read-only-peek"
                     )
                 )
             elif isinstance(ast.matcher, LineMatcher):
@@ -99,7 +99,7 @@ class QueryExecutor:
                     filepath,
                     ast.matcher.start_line,
                     ast.matcher.end_line,
-                    ast.label or "peek",
+                    ast.label or "read-only-peek",
                 )
                 if window:
                     windows.append(window)

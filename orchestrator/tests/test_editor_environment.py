@@ -300,46 +300,52 @@ def test_view_command_with_expansion_pipeline(editor, sample_py_file):
 
 
 @timeout(10)
-def test_peek_command_returns_transient_results_without_persisting(
+def test_read_only_peek_command_returns_transient_results_without_persisting(
     editor, sample_py_file
 ):
-    """Requirement: peek command must return results in response but not create persistent query.
+    """Requirement: read-only-peek command must return results in response but not create persistent query.
 
-    peek is for one-time reads and should not appear on screen.
+    read-only-peek is for one-time reads and should not appear on screen.
     """
-    response = editor.handle_command(CommandText("peek /class Foo/ in *.py"))
-    assert response.processed, "peek should succeed"
+    response = editor.handle_command(CommandText("read-only-peek /class Foo/ in *.py"))
+    assert response.processed, "read-only-peek should succeed"
 
     # Requirement 1: Content must be in response output
-    assert "class Foo:" in response.output, "peek should return matched content"
+    assert (
+        "class Foo:" in response.output
+    ), "read-only-peek should return matched content"
 
     # Requirement 2: Must NOT create persistent query
     screen = editor.get_screen()
     header = parse_screen_header(screen.content)
-    assert header["query_count"] == 0, "peek should not create persistent query"
+    assert (
+        header["query_count"] == 0
+    ), "read-only-peek should not create persistent query"
 
     views = parse_screen_views(screen.content)
-    assert len(views) == 0, "peek should not create screen views"
+    assert len(views) == 0, "read-only-peek should not create screen views"
 
 
 @timeout(10)
-def test_peek_with_line_matcher_returns_specific_lines(editor, sample_py_file):
-    """Requirement: peek must support line matcher (line N or line N-M in file).
+def test_read_only_peek_with_line_matcher_returns_specific_lines(
+    editor, sample_py_file
+):
+    """Requirement: read-only-peek must support line matcher (line N or line N-M in file).
 
-    Line matcher is only available in peek, not view.
+    Line matcher is only available in read-only-peek, not view.
     """
     response = editor.handle_command(
-        CommandText(f"peek line 2 in {sample_py_file.name}")
+        CommandText(f"read-only-peek line 2 in {sample_py_file.name}")
     )
-    assert response.processed, "Line matcher should work in peek"
+    assert response.processed, "Line matcher should work in read-only-peek"
     assert 'print("Hello")' in response.output, "Should return line 2 content"
 
 
 @timeout(10)
-def test_peek_with_line_range_returns_specified_range(editor, sample_py_file):
-    """Requirement: peek line N-M must return all lines in range [N, M] inclusive."""
+def test_read_only_peek_with_line_range_returns_specified_range(editor, sample_py_file):
+    """Requirement: read-only-peek line N-M must return all lines in range [N, M] inclusive."""
     response = editor.handle_command(
-        CommandText(f"peek line 1-4 in {sample_py_file.name}")
+        CommandText(f"read-only-peek line 1-4 in {sample_py_file.name}")
     )
     assert response.processed, "Line range should work"
 
@@ -353,8 +359,10 @@ def test_peek_with_line_range_returns_specified_range(editor, sample_py_file):
 
 
 @timeout(10)
-def test_peek_line_glob_returns_lines_from_multiple_files(editor, temp_project_dir):
-    """Requirement: peek line glob must return specified lines from all matching files."""
+def test_read_only_peek_line_glob_returns_lines_from_multiple_files(
+    editor, temp_project_dir
+):
+    """Requirement: read-only-peek line glob must return specified lines from all matching files."""
     # Create test files
     (temp_project_dir / "file1.md").write_text("# File 1\nLine 2\nLine 3\n")
     (temp_project_dir / "file2.md").write_text(
@@ -362,7 +370,7 @@ def test_peek_line_glob_returns_lines_from_multiple_files(editor, temp_project_d
     )
     (temp_project_dir / "other.txt").write_text("Should not match\n")
 
-    response = editor.handle_command(CommandText("peek line 1-2 in *.md"))
+    response = editor.handle_command(CommandText("read-only-peek line 1-2 in *.md"))
     assert response.processed, "Line glob should work"
 
     # Should contain content from both .md files
@@ -372,12 +380,14 @@ def test_peek_line_glob_returns_lines_from_multiple_files(editor, temp_project_d
 
 
 @timeout(10)
-def test_peek_line_glob_with_context_operation(editor, temp_project_dir):
-    """Requirement: peek line glob must support pipeline operations."""
+def test_read_only_peek_line_glob_with_context_operation(editor, temp_project_dir):
+    """Requirement: read-only-peek line glob must support pipeline operations."""
     (temp_project_dir / "test1.py").write_text("line1\nline2\nline3\nline4\nline5\n")
     (temp_project_dir / "test2.py").write_text("a\nb\nc\nd\ne\n")
 
-    response = editor.handle_command(CommandText("peek line 3 in *.py | context 1"))
+    response = editor.handle_command(
+        CommandText("read-only-peek line 3 in *.py | context 1")
+    )
     assert response.processed, "Line glob with operations should work"
 
     # Should show lines 2-4 from both files
@@ -386,14 +396,14 @@ def test_peek_line_glob_with_context_operation(editor, temp_project_dir):
 
 
 @timeout(10)
-def test_peek_line_glob_recursive_pattern(editor, temp_project_dir):
-    """Requirement: peek line glob must support recursive glob patterns."""
+def test_read_only_peek_line_glob_recursive_pattern(editor, temp_project_dir):
+    """Requirement: read-only-peek line glob must support recursive glob patterns."""
     subdir = temp_project_dir / "subdir"
     subdir.mkdir()
     (temp_project_dir / "root.rs").write_text("root line 1\nroot line 2\n")
     (subdir / "nested.rs").write_text("nested line 1\nnested line 2\n")
 
-    response = editor.handle_command(CommandText("peek line 1 in **/*.rs"))
+    response = editor.handle_command(CommandText("read-only-peek line 1 in **/*.rs"))
     assert response.processed, "Recursive glob should work"
 
     assert "root line 1" in response.output, "Should include root file"
@@ -401,14 +411,16 @@ def test_peek_line_glob_recursive_pattern(editor, temp_project_dir):
 
 
 @timeout(10)
-def test_peek_line_glob_skips_files_with_insufficient_lines(editor, temp_project_dir):
-    """Requirement: peek line glob must skip files that don't have requested lines."""
+def test_read_only_peek_line_glob_skips_files_with_insufficient_lines(
+    editor, temp_project_dir
+):
+    """Requirement: read-only-peek line glob must skip files that don't have requested lines."""
     (temp_project_dir / "short.py").write_text("line1\nline2\n")  # Only 2 lines
     (temp_project_dir / "long.py").write_text(
         "\n".join([f"line{i}" for i in range(1, 101)]) + "\n"
     )
 
-    response = editor.handle_command(CommandText("peek line 50-52 in *.py"))
+    response = editor.handle_command(CommandText("read-only-peek line 50-52 in *.py"))
     assert response.processed, "Should work"
 
     # Should only show long.py content
@@ -994,8 +1006,8 @@ def test_create_with_subdirectory_creates_parent_directories(editor, temp_projec
 
 
 @timeout(30)
-def test_peek_enforces_3000_line_hard_limit(editor, temp_project_dir):
-    """Requirement: peek must enforce 3000 line hard limit and fail when exceeded.
+def test_read_only_peek_enforces_3000_line_hard_limit(editor, temp_project_dir):
+    """Requirement: read-only-peek must enforce 3000 line hard limit and fail when exceeded.
 
     Limit protects against accidentally reading huge amounts of data.
     The executor caps matches per file, so we spread matches across many files
@@ -1012,10 +1024,14 @@ def test_peek_enforces_3000_line_hard_limit(editor, temp_project_dir):
     large_file.write_text("\n".join(lines))
 
     # Peek with large context — windows will overlap and accumulate > 3000 lines
-    response = editor.handle_command(CommandText("peek /MATCH/ in *.py | context 40"))
+    response = editor.handle_command(
+        CommandText("read-only-peek /MATCH/ in *.py | context 40")
+    )
 
     # Should hit limit and fail
-    assert not response.processed, "peek should fail when exceeding 3000 line limit"
+    assert (
+        not response.processed
+    ), "read-only-peek should fail when exceeding 3000 line limit"
     assert (
         "limit" in response.output.lower() or "3000" in response.output
     ), "Error should mention limit"
@@ -1114,13 +1130,13 @@ def test_window_merging_combines_overlapping_views_in_same_file(
 
 @timeout(10)
 @patch("orchestrator.environments.editor.summarizer.request_auxiliary_llm_query")
-def test_scenario_1_architecture_understanding_with_peek(
+def test_scenario_1_architecture_understanding_with_read_only_peek(
     mock_llm, editor, temp_project_dir
 ):
-    """Requirement: peek commands must return content in response without creating persistent views.
+    """Requirement: read-only-peek commands must return content in response without creating persistent views.
 
-    Scenario: Agent uses multiple peek commands to understand architecture.
-    All peeks should be transient - no persistent screen state.
+    Scenario: Agent uses multiple read-only-peek commands to understand architecture.
+    All read-only-peeks should be transient - no persistent screen state.
     """
     mock_llm.return_value = "Architecture summary: options defined, generation functions, integration points."
 
@@ -1132,25 +1148,31 @@ def test_scenario_1_architecture_understanding_with_peek(
         "{\n  generateSecret = key: value;\n  generatePassword = len: pass;\n}\n"
     )
 
-    # Execute peek commands (transient)
-    r1 = editor.handle_command(CommandText("peek /sops/ in *.nix | context 2"))
-    r2 = editor.handle_command(CommandText("peek /generate/ in *.nix | context 2"))
+    # Execute read-only-peek commands (transient)
+    r1 = editor.handle_command(
+        CommandText("read-only-peek /sops/ in *.nix | context 2")
+    )
+    r2 = editor.handle_command(
+        CommandText("read-only-peek /generate/ in *.nix | context 2")
+    )
 
     # Both should succeed
-    assert r1.processed, "peek 1 should succeed"
-    assert r2.processed, "peek 2 should succeed"
+    assert r1.processed, "read-only-peek 1 should succeed"
+    assert r2.processed, "read-only-peek 2 should succeed"
 
     # Content should be in responses (transient)
-    assert "sops" in r1.output, "peek 1 should return matched content"
-    assert "generate" in r2.output, "peek 2 should return matched content"
+    assert "sops" in r1.output, "read-only-peek 1 should return matched content"
+    assert "generate" in r2.output, "read-only-peek 2 should return matched content"
 
-    # Screen should NOT have persistent views from peek
+    # Screen should NOT have persistent views from read-only-peek
     screen = editor.get_screen()
     header = parse_screen_header(screen.content)
-    assert header["query_count"] == 0, "peek should not create persistent queries"
+    assert (
+        header["query_count"] == 0
+    ), "read-only-peek should not create persistent queries"
 
     views = parse_screen_views(screen.content)
-    assert len(views) == 0, "peek should not create persistent views"
+    assert len(views) == 0, "read-only-peek should not create persistent views"
 
 
 @timeout(10)
@@ -2125,7 +2147,7 @@ def test_edit_marks_query_as_used_with_timestamp_update(editor, sample_py_file):
 
 @timeout(10)
 def test_screen_displays_command_help_footer(editor):
-    """Requirement: Screen footer must show command help (Commands: view, peek, close, etc.).
+    """Requirement: Screen footer must show command help (Commands: view, read-only-peek, close, etc.).
 
     Help text provides discoverability of available commands.
     """
@@ -2136,7 +2158,7 @@ def test_screen_displays_command_help_footer(editor):
 
     # Should mention key command types
     assert "view" in screen.content, "Should mention view command"
-    assert "peek" in screen.content, "Should mention peek command"
+    assert "read-only-peek" in screen.content, "Should mention peek command"
     assert "close" in screen.content, "Should mention close command"
 
 

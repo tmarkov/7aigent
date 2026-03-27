@@ -19,7 +19,7 @@ from orchestrator.environments.editor.summarizer import Summarizer
 from orchestrator.environments.editor.windows import View, Window, WindowManager
 
 # Limits
-PEEK_HARD_LIMIT = 3000  # Max lines for peek command
+READ_ONLY_PEEK_HARD_LIMIT = 3000  # Max lines for read-only-peek command
 MAX_TOTAL_LINES = 3000  # Max total lines across all active views
 MAX_QUERIES = 50  # Max active queries
 
@@ -175,32 +175,35 @@ class EditorEnvironment(DeclarativeEnvironment):
         )
 
     @command(
-        signature="peek <matcher> in <glob> | <operations>",
+        signature="read-only-peek <matcher> in <glob> | <operations>",
         examples=[
             (
                 "Peek at a specific line with context",
-                "peek line 155 in file.c | context 10",
+                "read-only-peek line 155 in file.c | context 10",
             ),
-            ("Search for pattern (transient)", "peek /TODO/ in **/*.py | limit 20"),
+            (
+                "Search for pattern (transient)",
+                "read-only-peek /TODO/ in **/*.py | limit 20",
+            ),
         ],
     )
-    def _handle_peek(self, cmd: str) -> CommandResponse:
+    def _handle_read_only_peek(self, cmd: str) -> CommandResponse:
         """Read file content transiently — results appear in the response only, not on screen.
 
         Parameters:
           matcher    — pattern or line matcher (see Matchers reference below);
-                       line matchers (line N, line N-M) are available in peek but
+                       line matchers (line N, line N-M) are available in read-only-peek but
                        not in view
           glob / file — files to search, or exact file path for line matchers
           operations — optional pipeline of expand/filter steps (see Operations)
 
-        Hard limit of 3000 lines per peek — the command is rejected if the result
+        Hard limit of 3000 lines per read-only-peek — the command is rejected if the result
         would exceed it. Refine the query with filter or limit operations.
         Results are not stored and do not appear on subsequent screens.
         """
         try:
             # Parse query
-            ast = self._parser.parse_peek(cmd)
+            ast = self._parser.parse_read_only_peek(cmd)
         except ParseError as e:
             return CommandResponse(output=str(e), processed=False)
 
@@ -212,11 +215,11 @@ class EditorEnvironment(DeclarativeEnvironment):
                 output=f"Query execution failed: {e}", processed=False
             )
 
-        # Check peek limit
+        # Check read-only-peek limit
         total_lines = sum(w.line_count for w in windows)
-        if total_lines > PEEK_HARD_LIMIT:
+        if total_lines > READ_ONLY_PEEK_HARD_LIMIT:
             return CommandResponse(
-                output=f"Query matched {total_lines} lines - exceeds peek limit ({PEEK_HARD_LIMIT}). Refine query.",
+                output=f"Query matched {total_lines} lines - exceeds read-only-peek limit ({READ_ONLY_PEEK_HARD_LIMIT}). Refine query.",
                 processed=False,
             )
 
@@ -229,7 +232,7 @@ class EditorEnvironment(DeclarativeEnvironment):
 
         # Format and return window contents
         return CommandResponse(
-            output=self._format_peek_response(windows), processed=True
+            output=self._format_read_only_peek_response(windows), processed=True
         )
 
     @command(
@@ -546,15 +549,15 @@ class EditorEnvironment(DeclarativeEnvironment):
             f"Total: {total_lines} lines ({existing} queries active, {self._calculate_existing_lines()}/{MAX_TOTAL_LINES} lines used)"
         )
 
-    def _format_peek_response(self, windows: list[Window]) -> str:
-        """Format peek command response."""
+    def _format_read_only_peek_response(self, windows: list[Window]) -> str:
+        """Format read-only-peek command response."""
         if not windows:
             return "No matches found"
 
         lines = []
         total_lines = sum(w.line_count for w in windows)
         lines.append(
-            f"Found {len(windows)} windows ({total_lines}/{PEEK_HARD_LIMIT} lines):\n"
+            f"Found {len(windows)} windows ({total_lines}/{READ_ONLY_PEEK_HARD_LIMIT} lines):\n"
         )
 
         for w in windows:

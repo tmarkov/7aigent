@@ -95,7 +95,7 @@ def test_all_parseable_view_commands_are_executable():
 
 @timeout(10)
 def test_all_parseable_peek_commands_are_executable():
-    """Requirement: All peek command variants must be executable by QueryExecutor.
+    """Requirement: All read-only-peek command variants must be executable by QueryExecutor.
 
     Includes both pattern and line matchers.
     """
@@ -111,20 +111,20 @@ def test_all_parseable_peek_commands_are_executable():
 
         test_commands = [
             # Pattern matchers
-            "peek /def/ in *.py",
-            "peek /TODO|FIXME/ in **/*.py",
-            "peek /def/ in *.py | context 2",
-            "peek /def/ in *.py | while-indent",
-            "peek /line/ in *.py | limit 2",
+            "read-only-peek /def/ in *.py",
+            "read-only-peek /TODO|FIXME/ in **/*.py",
+            "read-only-peek /def/ in *.py | context 2",
+            "read-only-peek /def/ in *.py | while-indent",
+            "read-only-peek /line/ in *.py | limit 2",
             # Line matchers
-            "peek line 1 in test.py",
-            "peek line 2-4 in test.py",
-            "peek line 1 in test.py | context 2",
-            "peek line 3-5 in test.py | up 1",
+            "read-only-peek line 1 in test.py",
+            "read-only-peek line 2-4 in test.py",
+            "read-only-peek line 1 in test.py | context 2",
+            "read-only-peek line 3-5 in test.py | up 1",
         ]
 
         for cmd in test_commands:
-            ast = parser.parse_peek(cmd)
+            ast = parser.parse_read_only_peek(cmd)
             assert ast is not None, f"Parser should parse: {cmd}"
 
             try:
@@ -163,7 +163,7 @@ def test_parser_and_executor_agree_on_context_semantics():
         executor = QueryExecutor(tmppath)
 
         # Parse "context 3"
-        ast = parser.parse_peek("peek /line6/ in *.py | context 3")
+        ast = parser.parse_read_only_peek("read-only-peek /line6/ in *.py | context 3")
 
         # Execute
         windows = executor.execute(ast, set())
@@ -194,7 +194,7 @@ def test_parser_and_executor_agree_on_up_semantics():
         parser = QueryParser()
         executor = QueryExecutor(tmppath)
 
-        ast = parser.parse_peek("peek /line6/ in *.py | up 3")
+        ast = parser.parse_read_only_peek("read-only-peek /line6/ in *.py | up 3")
         windows = executor.execute(ast, set())
 
         window = windows[0]
@@ -217,7 +217,7 @@ def test_parser_and_executor_agree_on_down_semantics():
         parser = QueryParser()
         executor = QueryExecutor(tmppath)
 
-        ast = parser.parse_peek("peek /line6/ in *.py | down 3")
+        ast = parser.parse_read_only_peek("read-only-peek /line6/ in *.py | down 3")
         windows = executor.execute(ast, set())
 
         window = windows[0]
@@ -240,7 +240,9 @@ def test_parser_and_executor_agree_on_until_semantics():
         parser = QueryParser()
         executor = QueryExecutor(tmppath)
 
-        ast = parser.parse_peek("peek /START/ in *.py | until /STOP/")
+        ast = parser.parse_read_only_peek(
+            "read-only-peek /START/ in *.py | until /STOP/"
+        )
         windows = executor.execute(ast, set())
 
         window = windows[0]
@@ -268,7 +270,9 @@ def test_parser_and_executor_agree_on_up_until_semantics():
         parser = QueryParser()
         executor = QueryExecutor(tmppath)
 
-        ast = parser.parse_peek("peek /END/ in *.py | up-until /START/")
+        ast = parser.parse_read_only_peek(
+            "read-only-peek /END/ in *.py | up-until /START/"
+        )
         windows = executor.execute(ast, set())
 
         window = windows[0]
@@ -298,7 +302,9 @@ def test_parser_and_executor_agree_on_while_indent_semantics():
         parser = QueryParser()
         executor = QueryExecutor(tmppath)
 
-        ast = parser.parse_peek("peek /def func/ in *.py | while-indent")
+        ast = parser.parse_read_only_peek(
+            "read-only-peek /def func/ in *.py | while-indent"
+        )
         windows = executor.execute(ast, set())
 
         window = windows[0]
@@ -327,7 +333,9 @@ def test_parser_and_executor_agree_on_filter_semantics():
         parser = QueryParser()
         executor = QueryExecutor(tmppath)
 
-        ast = parser.parse_peek("peek /def / in *.py | while-indent | filter /KEEP/")
+        ast = parser.parse_read_only_peek(
+            "read-only-peek /def / in *.py | while-indent | filter /KEEP/"
+        )
         windows = executor.execute(ast, set())
 
         # Should have only windows containing KEEP
@@ -352,7 +360,7 @@ def test_parser_and_executor_agree_on_limit_semantics():
         parser = QueryParser()
         executor = QueryExecutor(tmppath)
 
-        ast = parser.parse_peek("peek /TODO/ in *.py | limit 3")
+        ast = parser.parse_read_only_peek("read-only-peek /TODO/ in *.py | limit 3")
         windows = executor.execute(ast, set())
 
         # Should have exactly 3 windows (first 3 matches)
@@ -399,8 +407,8 @@ def test_all_expansion_operations_are_executable():
         ]
 
         for op_syntax, expected_op_type in expansion_operations:
-            cmd = f"peek /TARGET/ in *.py | {op_syntax}"
-            ast = parser.parse_peek(cmd)
+            cmd = f"read-only-peek /TARGET/ in *.py | {op_syntax}"
+            ast = parser.parse_read_only_peek(cmd)
 
             # Verify parser produced expected operation
             assert (
@@ -446,8 +454,8 @@ def test_all_filter_operations_are_executable():
         ]
 
         for op_syntax, _ in filter_operations:
-            cmd = f"peek /TODO/ in *.py | {op_syntax}"
-            ast = parser.parse_peek(cmd)
+            cmd = f"read-only-peek /TODO/ in *.py | {op_syntax}"
+            ast = parser.parse_read_only_peek(cmd)
 
             try:
                 windows = executor.execute(ast, set())
@@ -488,8 +496,8 @@ def test_pattern_matcher_with_all_operations():
         ]
 
         for op in operations:
-            cmd = f"peek /def/ in *.py | {op}"
-            ast = parser.parse_peek(cmd)
+            cmd = f"read-only-peek /def/ in *.py | {op}"
+            ast = parser.parse_read_only_peek(cmd)
 
             # PatternMatcher → Operation must work
             windows = executor.execute(ast, set())
@@ -517,8 +525,8 @@ def test_line_matcher_with_expansion_operations():
         expansion_ops = ["context 2", "up 2", "down 2"]
 
         for op in expansion_ops:
-            cmd = f"peek line 6 in test.py | {op}"
-            ast = parser.parse_peek(cmd)
+            cmd = f"read-only-peek line 6 in test.py | {op}"
+            ast = parser.parse_read_only_peek(cmd)
 
             windows = executor.execute(ast, set())
             assert len(windows) == 1, f"LineMatcher with {op} should produce window"
@@ -546,8 +554,8 @@ def test_pipeline_operations_execute_left_to_right():
         executor = QueryExecutor(tmppath)
 
         # Pipeline: match → expand → filter → limit
-        ast = parser.parse_peek(
-            "peek /def/ in *.py | while-indent | filter /TODO/ | limit 1"
+        ast = parser.parse_read_only_peek(
+            "read-only-peek /def/ in *.py | while-indent | filter /TODO/ | limit 1"
         )
         windows = executor.execute(ast, set())
 
@@ -577,7 +585,9 @@ def test_until_excludes_match_line_as_documented():
         parser = QueryParser()
         executor = QueryExecutor(tmppath)
 
-        ast = parser.parse_peek("peek /START/ in *.py | until /END/")
+        ast = parser.parse_read_only_peek(
+            "read-only-peek /START/ in *.py | until /END/"
+        )
         windows = executor.execute(ast, set())
 
         # Documented: "until /pattern/ - expand down until pattern matches (match NOT included)"
@@ -606,7 +616,9 @@ def test_up_until_includes_match_line_as_documented():
         parser = QueryParser()
         executor = QueryExecutor(tmppath)
 
-        ast = parser.parse_peek("peek /END/ in *.py | up-until /START/")
+        ast = parser.parse_read_only_peek(
+            "read-only-peek /END/ in *.py | up-until /START/"
+        )
         windows = executor.execute(ast, set())
 
         # Documented: "up-until /pattern/ - expand up until pattern matches (match IS included)"
@@ -636,7 +648,7 @@ def test_invalid_syntax_fails_at_parse_not_execute():
         "view",  # Missing arguments
         "view test",  # Missing matcher
         "view test pattern in *.py",  # Pattern not in /slashes/
-        "peek line invalid in test.py",  # Non-numeric line
+        "read-only-peek line invalid in test.py",  # Non-numeric line
     ]
 
     for cmd in invalid_commands:
@@ -644,7 +656,7 @@ def test_invalid_syntax_fails_at_parse_not_execute():
             if cmd.startswith("view"):
                 parser.parse_view(cmd)
             else:
-                parser.parse_peek(cmd)
+                parser.parse_read_only_peek(cmd)
 
 
 @timeout(10)
@@ -660,7 +672,7 @@ def test_executor_handles_nonexistent_files_gracefully():
         executor = QueryExecutor(tmppath)
 
         # Valid command, but no matching files
-        ast = parser.parse_peek("peek /pattern/ in *.nonexistent")
+        ast = parser.parse_read_only_peek("read-only-peek /pattern/ in *.nonexistent")
 
         # Should not raise exception
         windows = executor.execute(ast, set())
@@ -684,7 +696,9 @@ def test_executor_handles_empty_pattern_results_gracefully():
         executor = QueryExecutor(tmppath)
 
         # Pattern that won't match
-        ast = parser.parse_peek("peek /NEVER_MATCHES_ANYTHING/ in *.py")
+        ast = parser.parse_read_only_peek(
+            "read-only-peek /NEVER_MATCHES_ANYTHING/ in *.py"
+        )
 
         windows = executor.execute(ast, set())
         assert windows == [], "Should return empty list for no matches"
@@ -717,7 +731,9 @@ def test_property_context_n_produces_at_most_2n_plus_1_lines(n):
         parser = QueryParser()
         executor = QueryExecutor(tmppath)
 
-        ast = parser.parse_peek(f"peek /TARGET/ in *.py | context {n}")
+        ast = parser.parse_read_only_peek(
+            f"read-only-peek /TARGET/ in *.py | context {n}"
+        )
         windows = executor.execute(ast, set())
 
         assert len(windows) == 1, "Should match TARGET once"
@@ -751,12 +767,14 @@ def test_property_up_n_changes_only_start_line(n):
         executor = QueryExecutor(tmppath)
 
         # Without up operation
-        ast_no_up = parser.parse_peek("peek /TARGET/ in *.py")
+        ast_no_up = parser.parse_read_only_peek("read-only-peek /TARGET/ in *.py")
         windows_no_up = executor.execute(ast_no_up, set())
         original_end = windows_no_up[0].end_line
 
         # With up N operation
-        ast_with_up = parser.parse_peek(f"peek /TARGET/ in *.py | up {n}")
+        ast_with_up = parser.parse_read_only_peek(
+            f"read-only-peek /TARGET/ in *.py | up {n}"
+        )
         windows_with_up = executor.execute(ast_with_up, set())
 
         # Property: end line unchanged
@@ -791,12 +809,14 @@ def test_property_down_n_changes_only_end_line(n):
         executor = QueryExecutor(tmppath)
 
         # Without down operation
-        ast_no_down = parser.parse_peek("peek /TARGET/ in *.py")
+        ast_no_down = parser.parse_read_only_peek("read-only-peek /TARGET/ in *.py")
         windows_no_down = executor.execute(ast_no_down, set())
         original_start = windows_no_down[0].start_line
 
         # With down N operation
-        ast_with_down = parser.parse_peek(f"peek /TARGET/ in *.py | down {n}")
+        ast_with_down = parser.parse_read_only_peek(
+            f"read-only-peek /TARGET/ in *.py | down {n}"
+        )
         windows_with_down = executor.execute(ast_with_down, set())
 
         # Property: start line unchanged
@@ -830,7 +850,7 @@ def test_property_limit_n_produces_at_most_n_windows(n):
         parser = QueryParser()
         executor = QueryExecutor(tmppath)
 
-        ast = parser.parse_peek(f"peek /MATCH/ in *.py | limit {n}")
+        ast = parser.parse_read_only_peek(f"read-only-peek /MATCH/ in *.py | limit {n}")
         windows = executor.execute(ast, set())
 
         # Property: output count ≤ N
@@ -858,13 +878,15 @@ def test_property_filter_never_increases_window_count(n):
         executor = QueryExecutor(tmppath)
 
         # Get window count without filter
-        ast_no_filter = parser.parse_peek(f"peek /line/ in *.py | limit {n}")
+        ast_no_filter = parser.parse_read_only_peek(
+            f"read-only-peek /line/ in *.py | limit {n}"
+        )
         windows_no_filter = executor.execute(ast_no_filter, set())
         count_before = len(windows_no_filter)
 
         # Get window count with filter
-        ast_with_filter = parser.parse_peek(
-            f"peek /line/ in *.py | limit {n} | filter /1/"
+        ast_with_filter = parser.parse_read_only_peek(
+            f"read-only-peek /line/ in *.py | limit {n} | filter /1/"
         )
         windows_with_filter = executor.execute(ast_with_filter, set())
         count_after = len(windows_with_filter)
@@ -882,7 +904,7 @@ def test_property_filter_never_increases_window_count(n):
 
 @timeout(10)
 def test_view_and_peek_produce_same_windows_for_same_query():
-    """Requirement: view and peek with identical matcher/operations must produce
+    """Requirement: view and read-only-peek with identical matcher/operations must produce
     identical windows (only difference is persistence).
 
     Integration: Both commands use same QueryExecutor.execute() path.
@@ -898,17 +920,19 @@ def test_view_and_peek_produce_same_windows_for_same_query():
 
         # Same query, different commands
         ast_view = parser.parse_view("view test /def/ in *.py | while-indent")
-        ast_peek = parser.parse_peek("peek /def/ in *.py | while-indent")
+        ast_read_only_peek = parser.parse_read_only_peek(
+            "read-only-peek /def/ in *.py | while-indent"
+        )
 
         windows_view = executor.execute(ast_view, set())
-        windows_peek = executor.execute(ast_peek, set())
+        windows_read_only_peek = executor.execute(ast_read_only_peek, set())
 
         # Should produce identical windows (ignoring labels)
         assert len(windows_view) == len(
-            windows_peek
-        ), "view and peek should produce same number of windows"
+            windows_read_only_peek
+        ), "view and read-only-peek should produce same number of windows"
 
-        for wv, wp in zip(windows_view, windows_peek):
+        for wv, wp in zip(windows_view, windows_read_only_peek):
             assert wv.filepath == wp.filepath, "Same file"
             assert wv.start_line == wp.start_line, "Same start"
             assert wv.end_line == wp.end_line, "Same end"
@@ -947,8 +971,8 @@ def gamma():
         executor = QueryExecutor(tmppath)
 
         # Complex pipeline
-        ast = parser.parse_peek(
-            "peek /def / in *.py | while-indent | filter /KEEP/ | context 1 | limit 2"
+        ast = parser.parse_read_only_peek(
+            "read-only-peek /def / in *.py | while-indent | filter /KEEP/ | context 1 | limit 2"
         )
         windows = executor.execute(ast, set())
 
@@ -993,7 +1017,9 @@ def test_executor_enforces_max_window_lines_limit():
         executor = QueryExecutor(tmppath)
 
         # Try to expand beyond limit with unique match
-        ast = parser.parse_peek("peek /UNIQUE_MATCH_TARGET/ in *.py | context 300")
+        ast = parser.parse_read_only_peek(
+            "read-only-peek /UNIQUE_MATCH_TARGET/ in *.py | context 300"
+        )
         windows = executor.execute(ast, set())
 
         # Should have 1 match, clamped to MAX_WINDOW_LINES
@@ -1020,7 +1046,7 @@ def test_executor_respects_excluded_files_set():
         parser = QueryParser()
         executor = QueryExecutor(tmppath)
 
-        ast = parser.parse_peek("peek /MATCH/ in *.py")
+        ast = parser.parse_read_only_peek("read-only-peek /MATCH/ in *.py")
 
         # Execute without exclusions
         windows_all = executor.execute(ast, set())
@@ -1055,12 +1081,16 @@ def test_multiple_expansions_are_additive():
         executor = QueryExecutor(tmppath)
 
         # Just context 2
-        ast1 = parser.parse_peek("peek /TARGET/ in *.py | context 2")
+        ast1 = parser.parse_read_only_peek(
+            "read-only-peek /TARGET/ in *.py | context 2"
+        )
         windows1 = executor.execute(ast1, set())
         span1 = windows1[0].end_line - windows1[0].start_line + 1
 
         # context 2 | up 3 (should expand further)
-        ast2 = parser.parse_peek("peek /TARGET/ in *.py | context 2 | up 3")
+        ast2 = parser.parse_read_only_peek(
+            "read-only-peek /TARGET/ in *.py | context 2 | up 3"
+        )
         windows2 = executor.execute(ast2, set())
         span2 = windows2[0].end_line - windows2[0].start_line + 1
 
@@ -1094,7 +1124,9 @@ def beta():
         executor = QueryExecutor(tmppath)
 
         # Match both functions, expand, then filter
-        ast = parser.parse_peek("peek /def / in *.py | while-indent | filter /MARKER/")
+        ast = parser.parse_read_only_peek(
+            "read-only-peek /def / in *.py | while-indent | filter /MARKER/"
+        )
         windows = executor.execute(ast, set())
 
         # Should have only alpha (which contains MARKER after expansion)
@@ -1130,7 +1162,9 @@ def test_operations_on_empty_window_list():
         operations = ["context 5", "while-indent", "filter /x/", "limit 5"]
 
         for op in operations:
-            ast = parser.parse_peek(f"peek /NEVER_MATCHES/ in *.py | {op}")
+            ast = parser.parse_read_only_peek(
+                f"read-only-peek /NEVER_MATCHES/ in *.py | {op}"
+            )
 
             # Should not crash on empty input
             windows = executor.execute(ast, set())
@@ -1156,7 +1190,7 @@ def test_operations_on_single_line_file():
         operations = ["context 5", "up 5", "down 5", "while-indent", "until-blank"]
 
         for op in operations:
-            ast = parser.parse_peek(f"peek /TARGET/ in *.py | {op}")
+            ast = parser.parse_read_only_peek(f"read-only-peek /TARGET/ in *.py | {op}")
             windows = executor.execute(ast, set())
 
             assert len(windows) == 1, f"Should match TARGET with operation: {op}"
@@ -1180,7 +1214,7 @@ def test_operations_on_single_line_file():
 def test_line_matcher_with_out_of_bounds_range():
     """Requirement: Executor must handle line ranges that exceed file bounds gracefully.
 
-    Edge case: peek line N-M where M exceeds file length.
+    Edge case: read-only-peek line N-M where M exceeds file length.
     Current behavior: Returns empty if start line > file length, clamps end if in range.
     """
     with TemporaryDirectory() as tmpdir:
@@ -1193,7 +1227,7 @@ def test_line_matcher_with_out_of_bounds_range():
         executor = QueryExecutor(tmppath)
 
         # Request lines 2-100 (end beyond file length)
-        ast = parser.parse_peek("peek line 2-100 in test.py")
+        ast = parser.parse_read_only_peek("read-only-peek line 2-100 in test.py")
         windows = executor.execute(ast, set())
 
         # LineMatcher behavior: if start is valid, returns window clamped to file
@@ -1240,8 +1274,8 @@ def test_executor_handles_all_operation_types_in_ast():
         ]
 
         for op_syntax in operation_syntaxes:
-            cmd = f"peek /def foo/ in *.py | {op_syntax}"
-            ast = parser.parse_peek(cmd)
+            cmd = f"read-only-peek /def foo/ in *.py | {op_syntax}"
+            ast = parser.parse_read_only_peek(cmd)
 
             # Executor must handle the operation type
             try:

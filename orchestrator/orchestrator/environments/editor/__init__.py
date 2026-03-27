@@ -7,7 +7,7 @@ Main class:
 
 Modules:
     environment: Main EditorEnvironment class implementation
-    parser: Query string parsing (view/peek commands, matchers, operations)
+    parser: Query string parsing (view and read-only-peek commands, matchers, operations)
     executor: Query pipeline execution (ripgrep backend, operations)
     windows: Window/view management (merging, deduplication, formatting)
     summarizer: AI summary generation via auxiliary LLM

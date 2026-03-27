@@ -6,15 +6,15 @@ All views are procedural — they re-execute queries on every screen refresh, en
 
 ### Matchers
 
-Matchers select initial windows from files. Specified after `in` in `view` and `peek`.
+Matchers select initial windows from files. Specified after `in` in `view` and `read-only-peek`.
 
-**Pattern** (view and peek): `/regex/ in <glob>`
+**Pattern** (view and read-only-peek): `/regex/ in <glob>`
 
   Match every line in files matched by the glob where the regex is found.
   Each matching line becomes a single-line window, then expanded by operations.
   Use `**` for recursive glob matching (e.g. `**/*.py`).
 
-**Line** (peek only): `line N in <file-or-glob>` or `line N-M in <file-or-glob>`
+**Line** (read-only-peek only): `line N in <file-or-glob>` or `line N-M in <file-or-glob>`
 
   Select a specific line or inclusive line range. Accepts exact file paths
   and glob patterns (e.g. `line 1-50 in **/*.md`).

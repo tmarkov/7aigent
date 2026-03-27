@@ -104,9 +104,9 @@ def test_view_invalid_syntax(parser):
 # ====================
 
 
-def test_peek_basic(parser):
-    """Test basic peek command."""
-    ast = parser.parse_peek("peek /pattern/ in *.py")
+def test_read_only_peek_basic(parser):
+    """Test basic read-only-peek command."""
+    ast = parser.parse_read_only_peek("read-only-peek /pattern/ in *.py")
     assert not ast.is_view
     assert ast.label is None
     assert isinstance(ast.matcher, PatternMatcher)
@@ -114,44 +114,46 @@ def test_peek_basic(parser):
     assert ast.matcher.glob == "*.py"
 
 
-def test_peek_with_pipe_in_pattern(parser):
-    """Test peek with | in regex pattern."""
-    ast = parser.parse_peek("peek /TODO|FIXME|NOTE/ in **/*.rs | limit 5")
+def test_read_only_peek_with_pipe_in_pattern(parser):
+    """Test read-only-peek with | in regex pattern."""
+    ast = parser.parse_read_only_peek(
+        "read-only-peek /TODO|FIXME|NOTE/ in **/*.rs | limit 5"
+    )
     assert ast.matcher.pattern == "TODO|FIXME|NOTE"
     assert len(ast.operations) == 1
     assert isinstance(ast.operations[0], LimitOp)
 
 
-def test_peek_line_matcher_single(parser):
-    """Test peek with single line matcher."""
-    ast = parser.parse_peek("peek line 155 in file.c")
+def test_read_only_peek_line_matcher_single(parser):
+    """Test read-only-peek with single line matcher."""
+    ast = parser.parse_read_only_peek("read-only-peek line 155 in file.c")
     assert isinstance(ast.matcher, LineMatcher)
     assert ast.matcher.start_line == 155
     assert ast.matcher.end_line == 155
     assert ast.matcher.filepath.name == "file.c"
 
 
-def test_peek_line_matcher_range(parser):
-    """Test peek with line range matcher."""
-    ast = parser.parse_peek("peek line 10-20 in src/main.py")
+def test_read_only_peek_line_matcher_range(parser):
+    """Test read-only-peek with line range matcher."""
+    ast = parser.parse_read_only_peek("read-only-peek line 10-20 in src/main.py")
     assert isinstance(ast.matcher, LineMatcher)
     assert ast.matcher.start_line == 10
     assert ast.matcher.end_line == 20
     assert str(ast.matcher.filepath) == "src/main.py"
 
 
-def test_peek_line_with_operations(parser):
-    """Test peek line with operations."""
-    ast = parser.parse_peek("peek line 100 in file.c | context 10")
+def test_read_only_peek_line_with_operations(parser):
+    """Test read-only-peek line with operations."""
+    ast = parser.parse_read_only_peek("read-only-peek line 100 in file.c | context 10")
     assert isinstance(ast.matcher, LineMatcher)
     assert ast.matcher.start_line == 100
     assert len(ast.operations) == 1
     assert isinstance(ast.operations[0], ContextOp)
 
 
-def test_peek_line_glob_simple(parser):
-    """Test peek with simple glob pattern."""
-    ast = parser.parse_peek("peek line 1-10 in *.py")
+def test_read_only_peek_line_glob_simple(parser):
+    """Test read-only-peek with simple glob pattern."""
+    ast = parser.parse_read_only_peek("read-only-peek line 1-10 in *.py")
     assert isinstance(ast.matcher, LineMatcher)
     assert ast.matcher.start_line == 1
     assert ast.matcher.end_line == 10
@@ -159,9 +161,9 @@ def test_peek_line_glob_simple(parser):
     assert ast.matcher.filepath is None
 
 
-def test_peek_line_glob_recursive(parser):
-    """Test peek with recursive glob pattern."""
-    ast = parser.parse_peek("peek line 1-10 in **/*.rs")
+def test_read_only_peek_line_glob_recursive(parser):
+    """Test read-only-peek with recursive glob pattern."""
+    ast = parser.parse_read_only_peek("read-only-peek line 1-10 in **/*.rs")
     assert isinstance(ast.matcher, LineMatcher)
     assert ast.matcher.start_line == 1
     assert ast.matcher.end_line == 10
@@ -169,9 +171,9 @@ def test_peek_line_glob_recursive(parser):
     assert ast.matcher.filepath is None
 
 
-def test_peek_line_glob_question_mark(parser):
-    """Test peek with ? glob pattern."""
-    ast = parser.parse_peek("peek line 50 in test?.py")
+def test_read_only_peek_line_glob_question_mark(parser):
+    """Test read-only-peek with ? glob pattern."""
+    ast = parser.parse_read_only_peek("read-only-peek line 50 in test?.py")
     assert isinstance(ast.matcher, LineMatcher)
     assert ast.matcher.start_line == 50
     assert ast.matcher.end_line == 50
@@ -179,39 +181,39 @@ def test_peek_line_glob_question_mark(parser):
     assert ast.matcher.filepath is None
 
 
-def test_peek_line_glob_bracket(parser):
-    """Test peek with bracket glob pattern."""
-    ast = parser.parse_peek("peek line 1-100 in test[123].py")
+def test_read_only_peek_line_glob_bracket(parser):
+    """Test read-only-peek with bracket glob pattern."""
+    ast = parser.parse_read_only_peek("read-only-peek line 1-100 in test[123].py")
     assert isinstance(ast.matcher, LineMatcher)
     assert ast.matcher.glob == "test[123].py"
     assert ast.matcher.filepath is None
 
 
-def test_peek_line_exact_file_with_underscore(parser):
+def test_read_only_peek_line_exact_file_with_underscore(parser):
     """Test that files with underscores are treated as exact paths."""
-    ast = parser.parse_peek("peek line 1-10 in my_file.py")
+    ast = parser.parse_read_only_peek("read-only-peek line 1-10 in my_file.py")
     assert isinstance(ast.matcher, LineMatcher)
     assert ast.matcher.filepath is not None
     assert str(ast.matcher.filepath) == "my_file.py"
     assert ast.matcher.glob is None
 
 
-def test_peek_line_exact_file_with_dots(parser):
+def test_read_only_peek_line_exact_file_with_dots(parser):
     """Test that files with dots are treated as exact paths."""
-    ast = parser.parse_peek("peek line 1-10 in setup.cfg")
+    ast = parser.parse_read_only_peek("read-only-peek line 1-10 in setup.cfg")
     assert isinstance(ast.matcher, LineMatcher)
     assert ast.matcher.filepath is not None
     assert str(ast.matcher.filepath) == "setup.cfg"
     assert ast.matcher.glob is None
 
 
-def test_peek_invalid_syntax(parser):
-    """Test peek with invalid syntax."""
+def test_read_only_peek_invalid_syntax(parser):
+    """Test read-only-peek with invalid syntax."""
     with pytest.raises(ParseError):
-        parser.parse_peek("peek")
+        parser.parse_read_only_peek("read-only-peek")
 
     with pytest.raises(ParseError):
-        parser.parse_peek("peek pattern without slashes")
+        parser.parse_read_only_peek("read-only-peek pattern without slashes")
 
 
 # ====================
@@ -421,6 +423,6 @@ def test_real_world_scenarios(parser):
     assert ast.matcher.glob == "**/*.nix"
 
     # Scenario 5: Reference while editing
-    ast = parser.parse_peek("peek line 155 in file.c | context 10")
+    ast = parser.parse_read_only_peek("read-only-peek line 155 in file.c | context 10")
     assert isinstance(ast.matcher, LineMatcher)
     assert ast.matcher.start_line == 155

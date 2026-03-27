@@ -20,7 +20,7 @@ class TestQueryExecutor:
             testfile.write_text("# TODO: fix this\nprint('hello')\n# TODO: review\n")
 
             parser = QueryParser()
-            ast = parser.parse_peek("peek /TODO/ in *.py")
+            ast = parser.parse_read_only_peek("read-only-peek /TODO/ in *.py")
 
             executor = QueryExecutor(tmppath)
             windows = executor.execute(ast, set())
@@ -40,7 +40,7 @@ class TestQueryExecutor:
             testfile.write_text("line1\nline2\nline3\nline4\nline5\n")
 
             parser = QueryParser()
-            ast = parser.parse_peek("peek line 3 in test.c")
+            ast = parser.parse_read_only_peek("read-only-peek line 3 in test.c")
 
             executor = QueryExecutor(tmppath)
             windows = executor.execute(ast, set())
@@ -59,7 +59,9 @@ class TestQueryExecutor:
             testfile.write_text("\n".join([f"line{i}" for i in range(1, 11)]) + "\n")
 
             parser = QueryParser()
-            ast = parser.parse_peek("peek /line5/ in *.py | context 2")
+            ast = parser.parse_read_only_peek(
+                "read-only-peek /line5/ in *.py | context 2"
+            )
 
             executor = QueryExecutor(tmppath)
             windows = executor.execute(ast, set())
@@ -80,7 +82,9 @@ class TestQueryExecutor:
             testfile.write_text(content)
 
             parser = QueryParser()
-            ast = parser.parse_peek("peek /def func/ in *.py | while-indent")
+            ast = parser.parse_read_only_peek(
+                "read-only-peek /def func/ in *.py | while-indent"
+            )
 
             executor = QueryExecutor(tmppath)
             windows = executor.execute(ast, set())
@@ -100,7 +104,9 @@ class TestQueryExecutor:
             testfile.write_text(content)
 
             parser = QueryParser()
-            ast = parser.parse_peek("peek /TODO/ in *.py | context 1 | filter /urgent/")
+            ast = parser.parse_read_only_peek(
+                "read-only-peek /TODO/ in *.py | context 1 | filter /urgent/"
+            )
 
             executor = QueryExecutor(tmppath)
             windows = executor.execute(ast, set())
@@ -120,7 +126,7 @@ class TestQueryExecutor:
             testfile.write_text(content)
 
             parser = QueryParser()
-            ast = parser.parse_peek("peek /TODO/ in *.py | limit 5")
+            ast = parser.parse_read_only_peek("read-only-peek /TODO/ in *.py | limit 5")
 
             executor = QueryExecutor(tmppath)
             windows = executor.execute(ast, set())
@@ -138,8 +144,8 @@ class TestQueryExecutor:
             testfile.write_text(content)
 
             parser = QueryParser()
-            ast = parser.parse_peek(
-                "peek /line5/ in *.py | context 2 | down 3 | limit 1"
+            ast = parser.parse_read_only_peek(
+                "read-only-peek /line5/ in *.py | context 2 | down 3 | limit 1"
             )
 
             executor = QueryExecutor(tmppath)
@@ -163,7 +169,7 @@ class TestQueryExecutor:
             (tmppath / "other.txt").write_text("should not match\n")
 
             parser = QueryParser()
-            ast = parser.parse_peek("peek line 1-2 in *.py")
+            ast = parser.parse_read_only_peek("read-only-peek line 1-2 in *.py")
 
             executor = QueryExecutor(tmppath)
             windows = executor.execute(ast, set())
@@ -185,7 +191,7 @@ class TestQueryExecutor:
             )  # 100 lines
 
             parser = QueryParser()
-            ast = parser.parse_peek("peek line 50-60 in *.py")
+            ast = parser.parse_read_only_peek("read-only-peek line 50-60 in *.py")
 
             executor = QueryExecutor(tmppath)
             windows = executor.execute(ast, set())
@@ -204,7 +210,9 @@ class TestQueryExecutor:
             (tmppath / "test.txt").write_text("content\n")
 
             parser = QueryParser()
-            ast = parser.parse_peek("peek line 1-10 in *.py")  # No .py files
+            ast = parser.parse_read_only_peek(
+                "read-only-peek line 1-10 in *.py"
+            )  # No .py files
 
             executor = QueryExecutor(tmppath)
             windows = executor.execute(ast, set())
@@ -223,7 +231,7 @@ class TestQueryExecutor:
             (subdir / "nested.py").write_text("nested\nline2\n")
 
             parser = QueryParser()
-            ast = parser.parse_peek("peek line 1 in **/*.py")
+            ast = parser.parse_read_only_peek("read-only-peek line 1 in **/*.py")
 
             executor = QueryExecutor(tmppath)
             windows = executor.execute(ast, set())

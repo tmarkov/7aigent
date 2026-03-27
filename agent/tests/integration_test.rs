@@ -308,7 +308,7 @@ fn run_integration_test(log: Arc<Mutex<TestLog>>) {
     TestLog::log(&log, "=== Test 5: Editor Environment ===");
     TestLog::log(&log, "Sending: editor 'peek /test/ in test.txt'");
     handle
-        .send_command("editor", "peek /test/ in test.txt")
+        .send_command("editor", "read-only-peek /test/ in test.txt")
         .expect("Failed to send editor command");
 
     TestLog::log(&log, "Waiting for response...");
@@ -323,12 +323,12 @@ fn run_integration_test(log: Arc<Mutex<TestLog>>) {
             response.processed, response.output
         ),
     );
-    assert!(response.processed, "Editor peek should succeed");
+    assert!(response.processed, "Editor read-only-peek should succeed");
 
     // Check that response contains content from the file
     assert!(
         response.output.contains("test content") || response.output.contains("test.txt"),
-        "Editor peek should return file content, got: {:?}",
+        "Editor read-only-peek should return file content, got: {:?}",
         response.output
     );
     TestLog::log(&log, "✓ Editor environment works");
