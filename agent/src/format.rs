@@ -307,6 +307,89 @@ fn format_screen_state(screen: &ScreenState) -> String {
     output
 }
 
+/// Format session output for display (LLM messages + truncated orchestrator responses)
+pub fn format_session_output(events: &[Event]) -> String {
+    let mut output = String::new();
+
+    for event in events {
+        match event {
+            Event::LlmCall {
+                call_id,
+                purpose,
+                response,
+                ..
+            } => {
+                let purpose_str = match purpose {
+                    LlmCallPurpose::Initialization => " (init)",
+                    LlmCallPurpose::MainLoop => "",
+                };
+                output.push_str(&format!(
+                    "[Call {}{}] ${:.4}\n{}\n\n",
+                    call_id,
+                    purpose_str,
+                    response.cost,
+                    response.content.as_deref().unwrap_or("(no content)")
+                ));
+            }
+            Event::CommandExecution {
+                environment,
+                output: cmd_output,
+                ..
+            } => {
+                // Truncate orchestrator response to 3 lines
+                let lines: Vec<&str> = cmd_output.lines().collect();
+                if lines.len() <= 3 {
+                    output.push_str(&format!("=== [{}] ===\n{}\n\n", environment, cmd_output));
+                } else {
+                    output.push_str(&format!(
+                        "=== [{}] ===\n{}\n... ({} more lines)\n\n",
+                        environment,
+                        lines[..3].join("\n"),
+                        lines.len() - 3
+                    ));
+                }
+            }
+            Event::SessionEnd { status, reason, .. } => {
+                let reason_str = reason
+                    .as_ref()
+                    .map(|r| format!(": {}", r))
+                    .unwrap_or_default();
+                output.push_str(&format!(
+                    "=== Session End ===\n{:?}{}\n",
+                    status, reason_str
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    output
+}
+
+/// Format screen state after a specific LLM call
+pub fn format_screen_after_call(events: &[Event], call_id: usize) -> anyhow::Result<String> {
+    let call_idx = events
+        .iter()
+        .position(|e| matches!(e, Event::LlmCall { call_id: id, .. } if *id == call_id))
+        .ok_or_else(|| anyhow::anyhow!("LLM call {} not found", call_id))?;
+
+    let mut last_screen: Option<&ScreenState> = None;
+    for event in &events[call_idx..] {
+        match event {
+            Event::LlmCall { .. } => break, // Stop at next LLM call
+            Event::CommandExecution { screen, .. } => {
+                last_screen = Some(screen);
+            }
+            _ => {}
+        }
+    }
+
+    match last_screen {
+        Some(screen) => Ok(format_screen_state(screen)),
+        None => anyhow::bail!("No screen state found after call {}", call_id),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

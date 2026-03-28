@@ -6,7 +6,7 @@ use agent::{
     container::ContainerManager,
     format::{
         format_llm_call_after, format_llm_call_context, format_llm_call_list, format_llm_replies,
-        format_session_summary,
+        format_screen_after_call, format_session_output, format_session_summary,
     },
     interactive,
     llm::openai::OpenAiCompatibleClient,
@@ -43,8 +43,18 @@ async fn run() -> Result<()> {
             call,
             replies,
             after,
+            calls,
+            screen,
         }) => {
-            handle_inspect(&project_dir, session_id, call, replies, after)?;
+            handle_inspect(
+                &project_dir,
+                session_id,
+                call,
+                replies,
+                after,
+                calls,
+                screen,
+            )?;
         }
         Some(Commands::Resume { session_id }) => {
             handle_resume(&project_dir, session_id).await?;
@@ -146,43 +156,94 @@ fn handle_list(project_dir: &Path, status_filter: Option<String>, verbose: bool)
 /// Handle the inspect command - show session details
 fn handle_inspect(
     project_dir: &Path,
-    session_id: u64,
+    session_id: Option<u64>,
     call: Option<usize>,
     replies: bool,
     after: Option<usize>,
+    calls: bool,
+    screen: Option<usize>,
 ) -> Result<()> {
-    let session_id = SessionId::from_u64(session_id);
+    // Resolve session_id to actual session
+    let session_id = match session_id {
+        Some(id) => SessionId::from_u64(id),
+        None => {
+            let session_manager = SessionManager::new(project_dir.to_path_buf());
+            let sessions = session_manager.list_sessions()?;
+            if sessions.is_empty() {
+                anyhow::bail!("No sessions found. Use '7aigent' to start a new session.");
+            }
+            // Get the most recent session by updated_at time
+            let last_session = sessions
+                .iter()
+                .max_by_key(|s| s.updated_at)
+                .ok_or_else(|| anyhow::anyhow!("No sessions found"))?;
+            println!("Using last session: {}", last_session.id);
+            last_session.id
+        }
+    };
+
     let session = SessionMetadata::load(project_dir, session_id)?;
     let events = session.load_events()?;
 
-    match (call, replies, after) {
-        (None, false, None) => {
-            // Default: list LLM calls
+    // Handle different inspect modes
+    match (call, replies, after, calls, screen) {
+        (None, false, None, false, None) => {
+            // Default: show truncated output (LLM messages + 3 lines of orchestrator response)
+            print!("{}", format_session_output(&events));
+            println!("\nSession ID: {}", session_id);
+        }
+        (None, false, None, true, None) => {
+            // --calls: list LLM calls
             print!("{}", format_llm_call_list(&events));
         }
-        (None, true, None) => {
-            // Show all LLM replies in sequence
+        (None, true, None, false, None) => {
+            // --replies: show all LLM replies in sequence
             print!("{}", format_llm_replies(&events));
         }
-        (Some(n), _, None) => {
-            // Show full context for call N
+        (Some(n), _, None, false, None) => {
+            // --call N: show full context for call N
             print!("{}", format_llm_call_context(&events, n)?);
         }
-        (None, _, Some(n)) => {
-            // Show reply + commands + screen after call N
+        (Some(n), _, Some(_m), false, None) => {
+            // --call N --after M: show LLM reply + commands + screen after call N
+            // Note: For now, we'll use --after as a separate option
             print!("{}", format_llm_call_after(&events, n)?);
         }
+        (None, _, Some(n), false, None) => {
+            // --after N: show reply + commands + screen after call N
+            print!("{}", format_llm_call_after(&events, n)?);
+        }
+        (None, false, None, false, Some(n)) => {
+            // --screen N: show screen state after LLM message N
+            print!("{}", format_screen_after_call(&events, n)?);
+        }
         _ => {
-            anyhow::bail!("--call and --after are mutually exclusive; use one at a time");
+            anyhow::bail!("Invalid combination of flags. Use --help for usage information.");
         }
     }
 
     Ok(())
 }
-
 /// Handle the resume command - resume a paused session
-async fn handle_resume(project_dir: &Path, session_id: u64) -> Result<()> {
-    let session_id = SessionId::from_u64(session_id);
+async fn handle_resume(project_dir: &Path, session_id: Option<u64>) -> Result<()> {
+    // Resolve session_id to actual session
+    let session_id = match session_id {
+        Some(id) => SessionId::from_u64(id),
+        None => {
+            let session_manager = SessionManager::new(project_dir.to_path_buf());
+            let sessions = session_manager.list_sessions()?;
+            if sessions.is_empty() {
+                anyhow::bail!("No sessions found. Use '7aigent' to start a new session.");
+            }
+            // Get the most recent session by updated_at time
+            let last_session = sessions
+                .iter()
+                .max_by_key(|s| s.updated_at)
+                .ok_or_else(|| anyhow::anyhow!("No sessions found"))?;
+            println!("Using last session: {}", last_session.id);
+            last_session.id
+        }
+    };
     let mut session = SessionMetadata::load(project_dir, session_id)?;
 
     if session.status == SessionStatus::Completed {

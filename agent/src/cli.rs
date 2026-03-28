@@ -27,8 +27,9 @@ pub struct Cli {
 pub enum Commands {
     /// Resume a paused session
     Resume {
-        /// Session ID to resume
-        session_id: u64,
+        /// Session ID to resume (defaults to last session if not provided)
+        #[arg(value_name = "SESSION_ID")]
+        session_id: Option<u64>,
     },
 
     /// List all sessions in the project
@@ -44,8 +45,9 @@ pub enum Commands {
 
     /// Inspect a session's history
     Inspect {
-        /// Session ID to inspect
-        session_id: u64,
+        /// Session ID to inspect (defaults to last session if not provided)
+        #[arg(value_name = "SESSION_ID")]
+        session_id: Option<u64>,
 
         /// Show full input context + LLM reply for call N
         #[arg(long, value_name = "N")]
@@ -55,9 +57,17 @@ pub enum Commands {
         #[arg(long)]
         replies: bool,
 
-        /// Show LLM reply + commands + screen after call N
+        /// Show LLM reply + commands + screen after call N (use with --call N)
         #[arg(long, value_name = "N")]
         after: Option<usize>,
+
+        /// List all LLM calls in the session
+        #[arg(long)]
+        calls: bool,
+
+        /// Show screen state after LLM message N
+        #[arg(long, value_name = "N")]
+        screen: Option<usize>,
     },
 
     /// Initialize a new project with a .7aigent.toml config file
@@ -67,7 +77,6 @@ pub enum Commands {
         force: bool,
     },
 }
-
 impl Cli {
     /// Parse CLI arguments from the environment
     pub fn parse_args() -> Self {
@@ -113,7 +122,7 @@ mod tests {
         let cli = Cli::parse_from(["7aigent", "resume", "42"]);
         match cli.command {
             Some(Commands::Resume { session_id }) => {
-                assert_eq!(session_id, 42)
+                assert_eq!(session_id, Some(42))
             }
             _ => panic!("Expected Resume command"),
         }
@@ -152,11 +161,15 @@ mod tests {
                 call,
                 replies,
                 after,
+                calls,
+                screen,
             }) => {
-                assert_eq!(session_id, 42);
+                assert_eq!(session_id, Some(42));
                 assert!(call.is_none());
                 assert!(!replies);
                 assert!(after.is_none());
+                assert!(!calls);
+                assert!(screen.is_none());
             }
             _ => panic!("Expected Inspect command"),
         }
@@ -171,11 +184,15 @@ mod tests {
                 call,
                 replies,
                 after,
+                calls,
+                screen,
             }) => {
-                assert_eq!(session_id, 42);
+                assert_eq!(session_id, Some(42));
                 assert_eq!(call, Some(3));
                 assert!(!replies);
                 assert!(after.is_none());
+                assert!(!calls);
+                assert!(screen.is_none());
             }
             _ => panic!("Expected Inspect command"),
         }
@@ -190,7 +207,7 @@ mod tests {
                 replies,
                 ..
             }) => {
-                assert_eq!(session_id, 42);
+                assert_eq!(session_id, Some(42));
                 assert!(replies);
             }
             _ => panic!("Expected Inspect command"),
@@ -204,7 +221,7 @@ mod tests {
             Some(Commands::Inspect {
                 session_id, after, ..
             }) => {
-                assert_eq!(session_id, 42);
+                assert_eq!(session_id, Some(42));
                 assert_eq!(after, Some(3));
             }
             _ => panic!("Expected Inspect command"),
@@ -233,6 +250,81 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_parse_resume_without_session_id() {
+        let cli = Cli::parse_from(["7aigent", "resume"]);
+        match cli.command {
+            Some(Commands::Resume { session_id }) => {
+                assert!(session_id.is_none());
+            }
+            _ => panic!("Expected Resume command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_inspect_without_session_id() {
+        let cli = Cli::parse_from(["7aigent", "inspect"]);
+        match cli.command {
+            Some(Commands::Inspect {
+                session_id,
+                call,
+                replies,
+                after,
+                calls,
+                screen,
+            }) => {
+                assert!(session_id.is_none());
+                assert!(call.is_none());
+                assert!(!replies);
+                assert!(after.is_none());
+                assert!(!calls);
+                assert!(screen.is_none());
+            }
+            _ => panic!("Expected Inspect command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_inspect_with_calls() {
+        let cli = Cli::parse_from(["7aigent", "inspect", "42", "--calls"]);
+        match cli.command {
+            Some(Commands::Inspect {
+                session_id, calls, ..
+            }) => {
+                assert_eq!(session_id, Some(42));
+                assert!(calls);
+            }
+            _ => panic!("Expected Inspect command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_inspect_with_screen() {
+        let cli = Cli::parse_from(["7aigent", "inspect", "42", "--screen", "3"]);
+        match cli.command {
+            Some(Commands::Inspect {
+                session_id, screen, ..
+            }) => {
+                assert_eq!(session_id, Some(42));
+                assert_eq!(screen, Some(3));
+            }
+            _ => panic!("Expected Inspect command"),
+        }
+    }
+
+    #[test]
+    fn test_parse_inspect_calls_without_session_id() {
+        let cli = Cli::parse_from(["7aigent", "inspect", "--calls"]);
+        match cli.command {
+            Some(Commands::Inspect {
+                session_id, calls, ..
+            }) => {
+                assert!(session_id.is_none());
+                assert!(calls);
+            }
+            _ => panic!("Expected Inspect command"),
+        }
+    }
     #[test]
     fn test_validate_no_args_succeeds_for_interactive_mode() {
         // Requirement: Running with no arguments must succeed (enters interactive mode).
