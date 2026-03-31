@@ -414,3 +414,75 @@ class TestBashEnvironment:
 
             screen = env.get_screen()
             assert "Project-specific bash help for this repo." in screen.content
+
+    @timeout(10)
+    def test_bash_environment_multiline_command_no_stale_output(self) -> None:
+        """Multi-line commands must not leak stale output into subsequent commands.
+
+        Each line sent to bash generates exactly one prompt (PS1 or PS2).
+        Consuming one prompt per line prevents stale output from accumulating
+        in the pexpect buffer and appearing as the output of a later command.
+
+        Requirements tested:
+        1. All lines of a multi-line command execute correctly
+        2. Output of a subsequent command is not contaminated by earlier output
+        3. Exit code reflects the last line of the multi-line command
+        """
+        env = BashEnvironment()
+        try:
+            # Multi-line command: three separate statements
+            response = env.handle_command(
+                CommandText("echo 'first'\necho 'second'\necho 'third'")
+            )
+            assert response.processed is True
+            assert "first" in response.output
+            assert "second" in response.output
+            assert "third" in response.output
+
+            # Subsequent command must return its own output, not leftovers
+            response = env.handle_command(CommandText("echo 'clean'"))
+            assert response.processed is True
+            assert "clean" in response.output
+            assert "first" not in response.output
+            assert "second" not in response.output
+        finally:
+            env.shutdown()
+
+    @timeout(10)
+    def test_bash_environment_heredoc_continuation_state(self) -> None:
+        """Incomplete heredoc must report continuation state to the LLM.
+
+        When an agent sends only the opening line of a heredoc (no terminator),
+        bash is waiting for more input. The environment must:
+        1. Report the continuation state in the response output
+        2. Show "waiting for continuation" in the screen state
+        3. Accept the remaining lines in the next command and complete normally
+
+        Requirements tested:
+        1. Incomplete heredoc → response mentions continuation
+        2. Screen shows continuation status
+        3. Completing the heredoc in a follow-up command produces correct output
+        """
+        env = BashEnvironment()
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                outfile = f"{tmpdir}/out.txt"
+
+                # Send only the opening line of a heredoc — bash will wait for more
+                response = env.handle_command(CommandText(f"cat > {outfile} << 'EOF'"))
+                assert response.processed is True
+                assert "continuation" in response.output.lower()
+
+                screen = env.get_screen()
+                assert "continuation" in screen.content.lower()
+
+                # Complete the heredoc
+                response = env.handle_command(CommandText("hello from heredoc\nEOF"))
+                assert response.processed is True
+                assert "continuation" not in response.output.lower()
+
+                # Verify the file was written
+                response = env.handle_command(CommandText(f"cat {outfile}"))
+                assert "hello from heredoc" in response.output
+        finally:
+            env.shutdown()

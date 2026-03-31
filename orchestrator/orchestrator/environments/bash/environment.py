@@ -20,7 +20,9 @@ class BashEnvironment(InteractiveEnvironment):
 
     Design:
         - Extends InteractiveEnvironment for process management
-        - Uses unique prompt marker (<<<PROMPT>>>) for reliable command completion detection
+        - Uses unique PS1/PS2 markers for reliable per-line prompt detection
+        - Each line sent produces exactly one prompt: PS1 (command complete)
+          or PS2 (continuation expected, e.g. inside a heredoc or after \\)
         - Tracks working directory and exit codes via pwd and echo $?
         - Supports background processes via shell job control (&, jobs)
         - Combined stdout/stderr output (matches terminal behavior)
@@ -31,6 +33,7 @@ class BashEnvironment(InteractiveEnvironment):
         - Current working directory
         - Last command exit code
         - Background job list
+        - Whether shell is awaiting continuation input
 
     Limitations:
         - No timeout mechanism (infinite commands will block indefinitely)
@@ -38,13 +41,14 @@ class BashEnvironment(InteractiveEnvironment):
         - Large outputs truncated with warning
     """
 
-    # Unique marker that won't appear in normal command output
+    # Unique markers that won't appear in normal command output
     PROMPT_MARKER = "<<<PROMPT>>>"
+    PROMPT2_MARKER = "<<<PROMPT2>>>"
 
     def __init__(self, project_dir: Path = Path(".")) -> None:
         """Initialize bash environment (process starts on first command)."""
         super().__init__(
-            prompt_marker=self.PROMPT_MARKER,
+            prompt_markers=[self.PROMPT_MARKER, self.PROMPT2_MARKER],
             name="Bash",
             project_dir=project_dir,
         )
@@ -64,15 +68,17 @@ class BashEnvironment(InteractiveEnvironment):
 
     def _initialize_process(self) -> None:
         """
-        Initialize bash process and configure prompt.
+        Initialize bash process and configure prompts.
 
-        Sets custom PS1 prompt and gets initial working directory.
+        Sets custom PS1 and PS2 prompt markers and gets initial working directory.
         """
-        # Set unique prompt marker
-        ps1_cmd = f'PS1="{self.PROMPT_MARKER}"\n'
-        self._process.send(ps1_cmd)
+        # Set unique PS1 prompt marker
+        self._process.send(f'PS1="{self.PROMPT_MARKER}"\n')
+        self._process.expect_exact(self.PROMPT_MARKER)
 
-        # Wait for first prompt
+        # Set unique PS2 continuation marker (used inside heredocs, backslash
+        # continuations, incomplete if/for/while blocks, etc.)
+        self._process.send(f'PS2="{self.PROMPT2_MARKER}"\n')
         self._process.expect_exact(self.PROMPT_MARKER)
 
         # Get initial working directory
@@ -86,10 +92,18 @@ class BashEnvironment(InteractiveEnvironment):
         """
         Update working directory, exit code, and background jobs after command.
 
+        Skips state probes when the shell is awaiting continuation input
+        (last prompt was PS2), since sending commands at that point would
+        be interpreted as continuation of the in-progress compound command.
+
         Args:
             command: The command that was executed
         """
         if not self._process:
+            return
+
+        if self._last_prompt_index != 0:
+            # Shell is mid-continuation; state probes would corrupt it
             return
 
         # Get exit code using echo $?
@@ -97,7 +111,6 @@ class BashEnvironment(InteractiveEnvironment):
         self._process.expect_exact(self.PROMPT_MARKER)
         exit_code_output = self._process.before
         # Strip ANSI escape codes (bash emits bracketed paste mode even with --norc)
-        # Remove all ANSI CSI sequences: ESC [ ... (any letter)
         clean_output = re.sub(r"\x1b\[[^a-zA-Z]*[a-zA-Z]", "", exit_code_output).strip()
         try:
             self._exit_code = int(clean_output)
@@ -140,6 +153,7 @@ class BashEnvironment(InteractiveEnvironment):
         self._cwd = os.getcwd()
         self._exit_code = 0
         self._background_jobs = []
+        self._last_prompt_index = 0
 
     def _handle_eof(self, eof_exception: pexpect.EOF) -> CommandResponse:
         """
@@ -198,7 +212,9 @@ class BashEnvironment(InteractiveEnvironment):
             cmd: The command to execute
 
         Returns:
-            Response with combined stdout/stderr output and exit_code field
+            Response with combined stdout/stderr output and exit_code field.
+            When the shell is awaiting continuation input, the response notes
+            this and exit_code is not set.
 
         Notes:
             - First command initializes bash process
@@ -207,11 +223,19 @@ class BashEnvironment(InteractiveEnvironment):
             - Output truncated at 10MB limit
             - Working directory and exit code tracked automatically
         """
-        # Call parent implementation
         response = super().handle_command(cmd)
 
-        # Add exit_code field if command was processed successfully
-        if response.processed and hasattr(self, "_exit_code"):
+        if not response.processed:
+            return response
+
+        if self._last_prompt_index != 0:
+            continuation_note = "Bash is waiting for continuation input."
+            response.output = (
+                (response.output + "\n" + continuation_note).strip()
+                if response.output
+                else continuation_note
+            )
+        else:
             response.exit_code = self._exit_code
 
         return response
@@ -229,7 +253,11 @@ class BashEnvironment(InteractiveEnvironment):
 
         lines = []
         lines.append(f"Working directory: {self._cwd}")
-        lines.append(f"Last exit code: {self._exit_code}")
+
+        if self._last_prompt_index != 0:
+            lines.append("Status: waiting for continuation input")
+        else:
+            lines.append(f"Last exit code: {self._exit_code}")
 
         # Add background jobs if any
         if self._background_jobs:

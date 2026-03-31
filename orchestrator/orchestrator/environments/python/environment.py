@@ -36,15 +36,16 @@ class PythonEnvironment(InteractiveEnvironment):
         - Limited to 100 most recently used variables on screen
     """
 
-    # Unique marker for prompt detection
+    # Unique markers for prompt detection
     PROMPT_MARKER = "<<<PROMPT>>>"
+    PROMPT2_MARKER = "<<<PROMPT2>>>"
     # Maximum variables to display
     MAX_VARIABLES_DISPLAY = 100
 
     def __init__(self, project_dir: Path = Path(".")) -> None:
         """Initialize Python environment (process starts on first command)."""
         super().__init__(
-            prompt_marker=self.PROMPT_MARKER,
+            prompt_markers=[self.PROMPT_MARKER, self.PROMPT2_MARKER],
             name="Python",
             project_dir=project_dir,
         )
@@ -96,8 +97,9 @@ class PythonEnvironment(InteractiveEnvironment):
         self._process.send(f'import sys; sys.ps1 = "{self.PROMPT_MARKER}"\n')
         self._process.expect_exact(self.PROMPT_MARKER)
 
-        # Set continuation prompt (for multi-line code)
-        self._process.send('sys.ps2 = ""\n')  # Empty continuation prompt
+        # Set unique continuation prompt so every input line produces a
+        # recognisable prompt (either PROMPT_MARKER or PROMPT2_MARKER)
+        self._process.send(f'sys.ps2 = "{self.PROMPT2_MARKER}"\n')
         self._process.expect_exact(self.PROMPT_MARKER)
 
         # Get initial working directory
@@ -193,10 +195,18 @@ class PythonEnvironment(InteractiveEnvironment):
         """
         Update working directory and variable tracking after command execution.
 
+        Skips state probes when the REPL is awaiting continuation input
+        (last prompt was PROMPT2_MARKER), since sending commands at that point
+        would be interpreted as continuation of the in-progress block.
+
         Args:
             command: The command that was executed
         """
         if not self._process:
+            return
+
+        if self._last_prompt_index != 0:
+            # REPL is mid-continuation; state probes would corrupt it
             return
 
         # Get current working directory
@@ -210,42 +220,6 @@ class PythonEnvironment(InteractiveEnvironment):
         # Get namespace and update variable ordering
         namespace = self._get_namespace_variables()
         self._update_variable_ordering(command, namespace)
-
-    def _send_command(self, command: str) -> None:
-        """
-        Send Python code to REPL, handling multi-line statements.
-
-        Args:
-            command: The Python code to send
-
-        Multi-line code and compound statements require an extra newline
-        to tell Python the block is complete.
-        """
-        # For multi-line code or compound statements, we need an extra newline
-        # Check if:
-        # 1. Contains newline (explicitly multi-line), OR
-        # 2. Is a complete single-line compound statement
-        is_multiline = "\n" in command
-
-        # Check for complete compound statement (must have colon)
-        stripped = command.lstrip()
-        is_compound = (
-            (stripped.startswith(("def ", "class ")) and ":" in command)
-            or (
-                stripped.startswith(
-                    ("if ", "for ", "while ", "with ", "elif ", "else:")
-                )
-                and command.rstrip().endswith(":")
-            )
-            or stripped.startswith(("try:", "except", "finally:"))
-        )
-
-        if is_multiline or is_compound:
-            # Multi-line or compound: send command + blank line to complete
-            self._process.send(command + "\n\n")
-        else:
-            # Simple single line: just send with newline
-            self._process.send(command + "\n")
 
     def _on_restart(self) -> None:
         """Reset Python-specific state on process restart."""

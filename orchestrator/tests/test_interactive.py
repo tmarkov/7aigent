@@ -10,7 +10,7 @@ class SimplePythonInteractive(InteractiveEnvironment):
     """Minimal interactive environment for testing using Python REPL."""
 
     def __init__(self):
-        super().__init__(prompt_marker="<<<TEST>>>", name="test-python")
+        super().__init__(prompt_markers=["<<<TEST>>>"], name="test-python")
         self.last_command = None
 
     def _get_spawn_command(self) -> tuple[str, list[str]]:
@@ -22,8 +22,8 @@ class SimplePythonInteractive(InteractiveEnvironment):
         # Wait for default prompt
         self._process.expect_exact(">>> ")
         # Set custom prompt
-        self._process.send(f'import sys; sys.ps1 = "{self._prompt_marker}"\n')
-        self._process.expect_exact(self._prompt_marker)
+        self._process.send(f'import sys; sys.ps1 = "{self._prompt_markers[0]}"\n')
+        self._process.expect_exact(self._prompt_markers[0])
 
     def _update_state_after_command(self, command: str) -> None:
         """Track last command."""
@@ -40,7 +40,7 @@ def test_interactive_environment_basic():
     """Test that InteractiveEnvironment can be imported and instantiated."""
     env = SimplePythonInteractive()
     assert env._name == "test-python"
-    assert env._prompt_marker == "<<<TEST>>>"
+    assert env._prompt_markers[0] == "<<<TEST>>>"
     assert not env._used
 
 

@@ -55,8 +55,9 @@ class TestPythonEnvironment:
             # Create various state elements
             env.handle_command(CommandText("import math"))
             env.handle_command(CommandText("x = 42"))
-            env.handle_command(CommandText("def foo(): return x * 2"))
-            env.handle_command(CommandText("class Bar: pass"))
+            # Compound statements need a trailing blank line to close in Python REPL
+            env.handle_command(CommandText("def foo(): return x * 2\n\n"))
+            env.handle_command(CommandText("class Bar: pass\n\n"))
 
             # Verify all persist
             response = env.handle_command(CommandText("math.pi"))
@@ -320,8 +321,8 @@ class TestPythonEnvironment:
         env = PythonEnvironment()
         try:
             # Define function (multiline)
-            code = """def add(a, b):
-    return a + b"""
+            # Trailing \n\n produces a blank line that closes the block in the REPL
+            code = "def add(a, b):\n    return a + b\n\n"
             response = env.handle_command(CommandText(code))
             assert response.processed is True, "Function definition should succeed"
 
@@ -330,10 +331,7 @@ class TestPythonEnvironment:
             assert "7" in response.output, "Function should work after definition"
 
             # Define class (multiline)
-            code = """class Point:
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y"""
+            code = "class Point:\n    def __init__(self, x, y):\n        self.x = x\n        self.y = y\n\n"
             response = env.handle_command(CommandText(code))
             assert response.processed is True, "Class definition should succeed"
 

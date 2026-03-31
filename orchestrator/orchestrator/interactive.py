@@ -21,6 +21,12 @@ class InteractiveEnvironment(ABC):
     - Clean shutdown handling
     - Help template loading from co-located help.md files
 
+    Every line sent to the process must produce exactly one prompt response.
+    Environments that cannot guarantee this are not supported. prompt_markers
+    lists all recognised prompts; the base class tracks which one was last seen
+    via _last_prompt_index so subclasses can act on it in
+    _update_state_after_command and get_state_display.
+
     Subclasses must implement:
     - _get_spawn_command(): Return command and args for process
     - _initialize_process(): Set up prompts and initial state
@@ -43,7 +49,7 @@ class InteractiveEnvironment(ABC):
         class GdbEnvironment(InteractiveEnvironment):
             def __init__(self, project_dir: Path = Path(".")) -> None:
                 super().__init__(
-                    prompt_marker="(gdb) ",
+                    prompt_markers=["(gdb) "],
                     name="gdb",
                     project_dir=project_dir,
                 )
@@ -53,7 +59,7 @@ class InteractiveEnvironment(ABC):
 
             def _initialize_process(self) -> None:
                 # Process already spawned, just wait for initial prompt
-                self._process.expect_exact(self._prompt_marker)
+                self._process.expect_exact(self._prompt_markers[0])
 
             def _update_state_after_command(self, command: str) -> None:
                 # Extract breakpoints, current frame, etc. if needed
@@ -72,7 +78,7 @@ class InteractiveEnvironment(ABC):
 
     def __init__(
         self,
-        prompt_marker: str,
+        prompt_markers: list[str],
         name: str,
         max_output_size: int = MAX_OUTPUT_SIZE,
         timeout: Optional[int] = TIMEOUT,
@@ -82,13 +88,18 @@ class InteractiveEnvironment(ABC):
         Initialize interactive environment.
 
         Args:
-            prompt_marker: Unique string that marks command completion
+            prompt_markers: Non-empty list of prompt strings the process may
+                emit after each line of input. Index 0 is conventionally the
+                primary (ready) prompt; higher indices are continuation prompts.
+                Every line sent must produce exactly one of these prompts.
             name: Environment name for error messages
             max_output_size: Maximum output bytes before truncation
             timeout: Command timeout in seconds (None = infinite)
             project_dir: Project root directory for help template lookup
         """
-        self._prompt_marker = prompt_marker
+        if not prompt_markers:
+            raise ValueError("prompt_markers must contain at least one entry")
+        self._prompt_markers = prompt_markers
         self._name = name
         self._max_output_size = max_output_size
         self._timeout = timeout
@@ -96,6 +107,8 @@ class InteractiveEnvironment(ABC):
 
         self._process: Optional[pexpect.spawn] = None
         self._used = False
+        # Index into _prompt_markers of the prompt received after the last line
+        self._last_prompt_index: int = 0
 
     @abstractmethod
     def _get_spawn_command(self) -> tuple[str, list[str]]:
@@ -106,7 +119,7 @@ class InteractiveEnvironment(ABC):
             Tuple of (command, args_list)
 
         Example:
-            return "python", ["-u", "-q"]
+            return "bash", ["--norc", "--noprofile"]
         """
         pass
 
@@ -121,11 +134,8 @@ class InteractiveEnvironment(ABC):
         The process is available as self._process.
 
         Example:
-            # Wait for default prompt
-            self._process.expect_exact(">>> ")
-            # Set custom prompt
-            self._process.send(f'import sys; sys.ps1 = "{self._prompt_marker}"\\n')
-            self._process.expect_exact(self._prompt_marker)
+            self._process.send(f'PS1="{self._prompt_markers[0]}"\\n')
+            self._process.expect_exact(self._prompt_markers[0])
         """
         pass
 
@@ -137,13 +147,16 @@ class InteractiveEnvironment(ABC):
         Args:
             command: The command that was executed
 
-        Called after successful command execution. Use this to extract
-        state information (exit codes, variables, etc.) from the process.
+        Called after every command, including when the process is in
+        continuation state. Implementations should check _last_prompt_index
+        and update state accordingly — for example, skipping state probes
+        that would corrupt an in-progress compound command.
 
         Example:
-            # Get exit code
+            if self._last_prompt_index != 0:
+                return  # mid-continuation, no state to probe
             self._process.send("echo $?\\n")
-            self._process.expect_exact(self._prompt_marker)
+            self._process.expect_exact(self._prompt_markers[0])
             self._exit_code = int(self._process.before.strip())
         """
         pass
@@ -159,6 +172,8 @@ class InteractiveEnvironment(ABC):
         This is called by get_screen() to show state before help text.
 
         Example:
+            if self._last_prompt_index != 0:
+                return "Status: waiting for continuation input"
             return f"Working directory: {self._cwd}\\nExit code: {self._exit_code}"
         """
         pass
@@ -282,32 +297,38 @@ class InteractiveEnvironment(ABC):
         """
         Execute a command in the interactive process.
 
+        Sends the command one line at a time. After each line, waits for
+        exactly one prompt from prompt_markers. This guarantees no stale
+        output accumulates in the pexpect buffer between commands, regardless
+        of how many lines the command contains.
+
+        _last_prompt_index is updated after each line and reflects which
+        prompt was returned for the final line when handle_command returns.
+
         Args:
             cmd: The command to execute
 
         Returns:
             Response with output and processed status
-
-        Notes:
-            - First command initializes the process
-            - Commands block until prompt detected (or timeout)
-            - Process auto-restarts on termination
-            - Output truncated at max_output_size limit
         """
         try:
             # Start process on first command
             if self._process is None:
                 self._start_process()
 
-            # Send command
             command = cmd.value
-            self._send_command(command)
+            lines = command.splitlines() or [""]
+            combined: list[str] = []
 
-            # Wait for prompt marker
-            self._process.expect_exact(self._prompt_marker, timeout=self._timeout)
+            for line in lines:
+                self._process.send(line + "\n")
+                idx = self._process.expect_exact(
+                    self._prompt_markers, timeout=self._timeout
+                )
+                combined.append(self._process.before)
+                self._last_prompt_index = idx
 
-            # Get output (everything before the prompt marker)
-            raw_output = self._process.before.strip()
+            raw_output = "".join(combined).strip()
 
             # Check output size and truncate if needed
             if len(raw_output) > self._max_output_size:
@@ -337,25 +358,6 @@ class InteractiveEnvironment(ABC):
             return CommandResponse(
                 output=f"Error executing command: {e}", processed=False
             )
-
-    def _send_command(self, command: str) -> None:
-        """
-        Send command to process, one line at a time.
-
-        Args:
-            command: The command to send
-
-        Override this for custom command sending logic (like multi-line handling).
-
-        Sends each line separately to avoid exceeding the PTY canonical mode
-        buffer limit (N_TTY_BUF_SIZE = 4096 bytes on Linux). A single large
-        send() call may silently truncate data when the command exceeds the
-        buffer, causing pexpect to hang waiting for a prompt that never arrives
-        (e.g., when bash is stuck waiting for a heredoc terminator that was
-        never sent because it was dropped in the truncated portion).
-        """
-        for line in command.splitlines() or [""]:
-            self._process.send(line + "\n")
 
     def _env_name(self) -> str:
         """
