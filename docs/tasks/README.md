@@ -82,7 +82,7 @@ These tasks are for designing and implementing the agent:
 
 ### Documentation
 
-- [ ] [18 - Refactor documentation structure](./18-refactor-documentation-structure.md) - Reorganize docs for better navigation
+- [ ] [18 - Refactor documentation structure](./18-restructure-documentation.md) - Reorganize docs for better navigation
 
 ### User Experience
 
