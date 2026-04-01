@@ -72,7 +72,7 @@ Host System
 │  │  IPC namespace: isolated                              │   │
 │  └───────────────────────────────────────────────────────┘   │
 │                                                               │
-└───────────────────────────────────────────────────────────────┘
+└──────────────────────────────────────────────────────────────┘
 ```
 
 **Communication**: Agent ↔ Sandbox uses stdin/stdout pipes (NDJSON protocol, see [../orchestrator/](../orchestrator/))
@@ -302,6 +302,6 @@ impl ContainerManager {
 
 ## Related Documents
 
-- [Sandbox Overview](overview.md) - Design rationale and principles
+- [Sandbox Overview](./) - Design rationale and principles
 - [Customization](customization.md) - How users add dependencies
 - [Security Model](security.md) - Isolation boundaries and threat model

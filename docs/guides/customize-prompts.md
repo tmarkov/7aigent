@@ -1,10 +1,11 @@
-# How to Customize Agent Prompts
+# Customizing Agent Prompts
 
 This guide shows how to customize the messages 7aigent sends to the LLM by overriding markdown templates.
 
 ## Overview
 
 All agent messages are generated from markdown templates with `{{key}}` replacement syntax:
+
 - **System prompt**: Agent capabilities and instructions
 - **Task message**: Initial task description
 - **Command output**: Execution results

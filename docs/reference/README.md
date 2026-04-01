@@ -1,40 +1,29 @@
 # Reference Documentation
 
-Technical reference material for implementing and integrating with 7aigent.
+This directory contains project-wide conventions and reference material.
 
-## Protocols and Contracts
+## Contents
 
-- [Environment Protocol](environment-protocol.md) - Contract for implementing custom environments
-- [Agent-Orchestrator Protocol](agent-orchestrator-protocol.md) - JSON communication protocol
+- [conventions/](./conventions/) - Per-language conventions and documentation standards
+  - [documentation.md](./conventions/documentation.md) - How to write documentation for this project
 
-## Configuration
+## Purpose
 
-- [Configuration Reference](configuration.md) - All configuration options and formats
+Reference documentation serves as the authoritative source for:
+- Project-wide conventions and standards
+- Coding style guides
+- Documentation guidelines
+- Configuration references
 
-## Development Standards
+## What Goes Here
 
-- [Coding Style](coding-style.md) - Code conventions, philosophy, and guidelines
+- Conventions that apply across the entire project
+- Style guides for different languages
+- Reference material that doesn't change frequently
+- Standards that all contributors should follow
 
-## Using This Reference
+## What Doesn't Go Here
 
-### Implementing a Custom Environment
-
-1. Read [Environment Protocol](environment-protocol.md) to understand the contract
-2. Look at existing environments in the orchestrator codebase for examples
-3. Follow [Coding Style](coding-style.md) conventions
-4. See [Orchestrator Design](../design/orchestrator/) for architecture context
-
-### Understanding Communication
-
-The [Agent-Orchestrator Protocol](agent-orchestrator-protocol.md) documents the JSON message format for communication between agent and orchestrator. This is useful for:
-- Debugging issues
-- Understanding error responses
-- Implementing alternative agents or orchestrators
-
-### Configuring the Agent
-
-See [Configuration Reference](configuration.md) for all available options including:
-- LLM provider settings (API keys, models, endpoints)
-- Sandbox customization (shell_prefix)
-- Cost limits and budgets
-- Session management
+- Design rationale (belongs in [design/](../design/))
+- User guides (belongs in [guides/](../guides/))
+- Task definitions (belongs in [tasks/](../tasks/))

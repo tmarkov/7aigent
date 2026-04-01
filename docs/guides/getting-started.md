@@ -1,10 +1,10 @@
 # Getting Started with 7aigent
 
-7aigent is a general autonomous AI agent that runs an interaction loop where an LLM executes actions in a system and receives feedback to complete tasks.
+This guide helps you get 7aigent running and understand how to use it effectively.
 
 ## What is 7aigent?
 
-7aigent consists of two main components:
+7aigent is an autonomous AI agent that runs an interaction loop where an LLM executes actions and receives feedback to complete tasks. It consists of two main components:
 
 1. **Agent** (Rust) - Orchestrates LLM interactions, manages sessions, handles sandboxing
 2. **Orchestrator** (Python) - Provides tool execution environments (bash, python, editor)
@@ -13,13 +13,13 @@ The agent sends commands to the orchestrator, which executes them and returns re
 
 ## Quick Start
 
-<bash>
+```bash
 # Build the agent
 nix build .#agent
 
 # Run the agent
 ./result/bin/7aigent "your task here"
-</bash>
+```
 
 ## How It Works
 
@@ -45,6 +45,8 @@ All commands run in a bubblewrap sandbox with:
 - No network access by default
 - Resource limits
 - Custom tool availability via shell_prefix
+
+See [Sandbox Design](../design/sandbox/) for details.
 
 ### Session Management
 
@@ -78,18 +80,18 @@ The agent runs in a minimal environment by default. To add project-specific tool
 **2. Configure the agent:**
 
 ```toml
-# .7aigent.toml
+# .7aigent/config.toml
 [sandbox]
 shell_prefix = "nix develop --command"
 ```
 
 Now the agent can use cargo, rustc, and Python with numpy.
 
-See [Sandbox Customization](design/sandbox/customization.md) for details.
+See [Sandbox Customization](../design/sandbox/customization.md) for details.
 
 ## Next Steps
 
-- [Architecture Overview](architecture.md) - Understand how components interact
-- [Agent Design](design/agent/) - Deep dive into agent architecture
-- [Orchestrator Design](design/orchestrator/) - How environments work
-- [Contributing](development/contributing.md) - Join development
+- [Architecture Overview](../design/agent/architecture.md) - Understand how components interact
+- [Agent Design](../design/agent/) - Deep dive into agent architecture
+- [Orchestrator Design](../design/orchestrator/) - How environments work
+- [Customize Prompts](./customize-prompts.md) - Tailor agent behavior to your needs

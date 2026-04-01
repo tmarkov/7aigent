@@ -1,152 +1,182 @@
 # Cost Control
 
-The agent tracks token usage and enforces budgets to prevent runaway costs.
+This document explains the rationale behind the agent's cost control and budget management strategy.
 
-## Cost Estimation
+## The Problem
 
-**Before each LLM call**:
-```rust
-fn estimate_call_cost(messages: &[Message], pricing: &TokenPricing) -> Decimal {
-    let prompt_tokens = messages.iter().map(|m| count_tokens(&m.content)).sum();
-    let estimated_completion_tokens = 2000;  // Heuristic: assume typical response
+LLM API calls cost money per token. Without careful management:
+- Long sessions can accumulate significant costs
+- Budget overruns surprise users
+- No visibility into spending during operation
 
-    let prompt_cost = Decimal::from(prompt_tokens) * pricing.input_cost_per_1k / Decimal::from(1000);
-    let completion_cost = Decimal::from(estimated_completion_tokens) * pricing.output_cost_per_1k / Decimal::from(1000);
+## Cost Sources
 
-    prompt_cost + completion_cost
-}
+### Input Tokens
+- System prompt (instructions, tool definitions)
+- Conversation history
+- Tool results from orchestrator
+
+### Output Tokens
+- Assistant reasoning and planning
+- Tool call specifications
+
+### Multipliers
+- Different models have different pricing
+- Input vs output token costs differ
+- Some operations require multiple API calls
+
+## Design Goals
+
+1. **Transparency**: User always knows current spend
+2. **Control**: User can set limits and have them enforced
+3. **Flexibility**: Different budgets for different use cases
+4. **Safety**: Never exceed user's budget without explicit consent
+
+## Budget Architecture
+
+### Budget Types
+
+**Session Budget**: Maximum spend for a single session
+- Set via CLI flag or config
+- Tracked cumulatively across all API calls
+- When exceeded: pause and ask user to continue or stop
+
+**Warning Threshold**: Proactive notification
+- Default: 50%, 75%, 90% of budget
+- User sees progress without interruption
+- Helps avoid surprise budget exhaustion
+
+**No Budget Mode**: Explicit opt-out
+- User explicitly chooses to run without limits
+- Still tracks and reports costs
+- Useful for trusted, time-sensitive work
+
+### Budget Enforcement
+
+```
+┌─────────────────────────────────────────┐
+│           Budget State Machine          │
+├─────────────────────────────────────────┤
+│                                         │
+│  ┌─────────┐    budget    ┌─────────┐  │
+│  │ Running │ ───────────▶ │ Paused  │  │
+│  └────┬────┘   exceeded   └────┬────┘  │
+│       ▲                         │       │
+│       │         resume          │       │
+│       └─────────────────────────┘       │
+│                                         │
+│  Any state ─▶ Stopped (user choice)    │
+│                                         │
+└─────────────────────────────────────────┘
 ```
 
-**Actual cost** (after call):
-```rust
-fn calculate_actual_cost(usage: &TokenUsage, pricing: &TokenPricing) -> Decimal {
-    let prompt_cost = Decimal::from(usage.prompt_tokens) * pricing.input_cost_per_1k / Decimal::from(1000);
-    let completion_cost = Decimal::from(usage.completion_tokens) * pricing.output_cost_per_1k / Decimal::from(1000);
+When budget exceeded:
+1. Stop before next API call
+2. Display current spend and budget
+3. Ask user: continue (with new budget) or stop
+4. Resume only with explicit user consent
 
-    prompt_cost + completion_cost
-}
-```
+## Token Tracking
 
-## Budget Enforcement
+### Per-Message Tracking
 
-**Configuration**:
-```toml
-[budget]
-max_cost_per_session = 5.00   # Dollars
-max_cost_per_call = 0.50       # Dollars
-warn_threshold = 0.80          # Warn at 80% of budget
-```
-
-**Checks**:
-```rust
-fn check_budget(
-    session: &Session,
-    estimated_cost: Decimal,
-    budget: &BudgetConfig,
-) -> BudgetCheckResult {
-    // Check per-call limit
-    if let Some(max_per_call) = budget.max_cost_per_call {
-        if estimated_cost > max_per_call {
-            return BudgetCheckResult::ExceedsPerCallLimit {
-                estimated: estimated_cost,
-                limit: max_per_call,
-            };
-        }
-    }
-
-    // Check session limit
-    if let Some(max_per_session) = budget.max_cost_per_session {
-        let projected_total = session.total_cost + estimated_cost;
-
-        if projected_total > max_per_session {
-            return BudgetCheckResult::ExceedsSessionLimit {
-                current: session.total_cost,
-                estimated: estimated_cost,
-                limit: max_per_session,
-            };
-        }
-
-        // Warn if approaching limit
-        let threshold = max_per_session * budget.warn_threshold;
-        if projected_total > threshold && session.total_cost <= threshold {
-            return BudgetCheckResult::WarningThreshold {
-                projected: projected_total,
-                limit: max_per_session,
-            };
-        }
-    }
-
-    BudgetCheckResult::Ok
-}
-```
-
-**User prompts**:
-```
-WARNING: Next LLM call estimated at $0.45, approaching session limit of $5.00
-Current total: $4.20
-Projected total: $4.65
-
-Continue? [y/n]:
-```
-
-## Cost Display
-
-**After each step**:
-```
-[Step 5] ✓ Executed bash command
-  Step cost: $0.08
-  Session total: $0.42
-```
-
-**At end of session**:
-```
-Session completed!
-
-Cost summary:
-  Total steps: 12
-  Total tokens: 45,231 (prompt) + 8,422 (completion)
-  Total cost: $1.67
-```
-
-## Token Pricing
-
-Pricing is configured per LLM provider:
-
-```toml
-[llm.pricing]
-input_cost_per_1k = 0.01   # Dollars per 1000 input tokens
-output_cost_per_1k = 0.03  # Dollars per 1000 output tokens
-```
-
-Different models have different pricing:
-- Claude Opus: Higher cost, better quality
-- Claude Sonnet: Balanced
-- Claude Haiku: Lower cost, faster
-
-## Cost Tracking Persistence
-
-Costs are tracked in session metadata (`~/.7aigent/sessions/<id>/metadata.json`):
-
-```json
-{
-  "session_id": "...",
-  "total_cost": 1.67,
-  "total_tokens": {
-    "prompt_tokens": 45231,
-    "completion_tokens": 8422,
-    "total_tokens": 53653
-  },
-  "steps": 12
-}
-```
+Every message is tracked:
+- Input token count
+- Output token count
+- Model used
+- Timestamp
 
 This enables:
-- Resume with accurate cost tracking
-- Analyze costs across sessions
-- Report on spending per project
+- Accurate cost calculation
+- Historical analysis
+- Debugging cost anomalies
+
+### Cost Calculation
+
+```rust
+cost = (input_tokens * input_price) + (output_tokens * output_price)
+```
+
+Prices are model-specific and configurable:
+- Supports different pricing tiers
+- Handles price changes gracefully
+- Defaults to conservative estimates
+
+## Implementation Details
+
+### Budget Configuration
+
+Budgets can be set via:
+- CLI flag: `--budget 5.00` (dollars)
+- Config file: `budget: 5.00`
+- Environment variable: `AGENT_BUDGET=5.00`
+
+Priority: CLI > Config > Environment > Default (no limit)
+
+### Cost Reporting
+
+After each API call:
+- Log token counts and cost
+- Update running total
+- Check against budget thresholds
+
+At session end:
+- Report total cost
+- Report token breakdown (input/output)
+- Report by model if multiple used
+
+### Persistence
+
+Budget state is persisted with session:
+- Running total survives restart
+- Budget limit preserved
+- Can resume interrupted sessions
+
+## Trade-offs
+
+### Why Per-Session Budgets?
+
+**Alternative**: Global budget across all sessions
+- Pro: Matches actual billing
+- Con: Hard to attribute costs to specific work
+- Con: Shared state across invocations
+
+**Chosen**: Per-session budgets
+- Pro: Clear attribution to specific tasks
+- Pro: No shared state between sessions
+- Con: User must set budget per session (or use config)
+
+### Why Pause Instead of Stop?
+
+**Alternative**: Hard stop when budget exceeded
+- Pro: Guarantees budget adherence
+- Con: Loses work in progress
+- Con: Frustrating for users
+
+**Chosen**: Pause and ask
+- Pro: User has control
+- Pro: Can continue if budget was conservative
+- Con: Requires user interaction
+
+### Why Track Per-Message?
+
+**Alternative**: Track only totals
+- Pro: Simpler implementation
+- Con: No visibility into cost drivers
+- Con: Can't debug expensive operations
+
+**Chosen**: Per-message tracking
+- Pro: Full visibility
+- Pro: Enables analysis and optimization
+- Con: More data to store
+
+## Related Components
+
+- **budget.rs**: Token counting and cost calculation
+- **config.rs**: Budget configuration loading
+- **session.rs**: Budget persistence
 
 ## Related Documents
 
-- [Context Management](context-management.md) - How context size affects cost
-- [Type System](types.md) - TokenUsage and pricing types
-- [Configuration](../../reference/configuration.md) - Budget configuration options
+- [Architecture](architecture.md) - Overall system design
+- [Context Management](context-management.md) - Token usage and context limits

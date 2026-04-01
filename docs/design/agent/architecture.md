@@ -1,34 +1,63 @@
 # Agent Architecture
 
-This document describes the internal structure of the agent and how components interact.
+This document describes the high-level architecture of the agent and how components interact.
+
+## Overview
+
+The agent is a Rust binary that runs on the host machine (outside the container). It:
+- Manages user interaction via CLI
+- Constructs prompts and calls LLM APIs
+- Spawns and manages containerized orchestrator
+- Maintains conversation history and state
+- Tracks costs and enforces budgets
+- Persists sessions for resumability
+
+**Key design principle**: The agent handles the "intelligence" layer (LLM interaction, planning, cost management) while delegating tool execution to the orchestrator.
+
+## Separation of Concerns
+
+**Agent handles:**
+- LLM communication (prompts, responses, tool calls)
+- Session persistence (save/resume)
+- Cost tracking and budgets
+- Configuration management
+
+**Orchestrator handles:**
+- Command execution (bash, python, editor)
+- Environment state (REPL variables, file views)
+- Output formatting (screen rendering)
+
+This separation allows:
+- Agent to be language-agnostic (could support multiple LLMs)
+- Orchestrator to be swapped (different language implementations)
+- Clean protocol boundary (JSON over stdin/stdout)
 
 ## High-Level Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Agent (Rust binary, runs on host)                         │
+│  Agent (Rust binary, runs on host)                          │
 │                                                              │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
-│  │   CLI        │  │  Session     │  │  Config      │     │
-│  │   Interface  │  │  (with save/ │  │  Loader      │     │
-│  │              │  │   load API)  │  │              │     │
-│  └──────────────┘  └──────────────┘  └──────────────┘     │
-│         │                  │                  │             │
-│         └──────────────────┼──────────────────┘             │
-│                            │                                │
-│                    ┌───────▼────────┐                       │
-│                    │  Agent Core    │                       │
-│                    │  (Main Loop)   │                       │
-│                    └───────┬────────┘                       │
-│                            │                                │
-│      ┌─────────────────────┼─────────────────────┐         │
-│      │                     │                     │         │
-│  ┌───▼────────┐   ┌────────▼─────────┐  ┌───────▼──────┐ │
-│  │  LLM       │   │  Container       │  │  History &   │ │
-│  │  Client    │   │  Manager         │  │  Context     │ │
-│  └────────────┘   └──────────────────┘  └──────────────┘ │
-│                            │                                │
-└────────────────────────────┼────────────────────────────────┘
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
+│  │   CLI        │  │  Session     │  │  Config      │      │
+│  │   Interface  │  │  (save/load) │  │  Loader      │      │
+│  └──────────────┘  └──────────────┘  └──────────────┘      │
+│         │                  │                  │              │
+│         └──────────────────┼──────────────────┘              │
+│                            │                                 │
+│                    ┌───────▼────────┐                        │
+│                    │  Agent Core    │                        │
+│                    │  (Main Loop)   │                        │
+│                    └───────┬────────┘                        │
+│                            │                                 │
+│      ┌─────────────────────┼─────────────────────┐          │
+│      │                     │                     │          │
+│  ┌───▼────────┐   ┌────────▼─────────┐  ┌───────▼──────┐  │
+│  │  LLM       │   │  Container       │  │  History &   │  │
+│  │  Client    │   │  Manager         │  │  Context     │  │
+│  └────────────┘   └──────────────────┘  └──────────────┘  │
+│                            │                                 │
+└────────────────────────────┼─────────────────────────────────┘
                              │ JSON protocol (stdin/stdout)
                              │
                     ┌────────▼────────┐
@@ -53,70 +82,37 @@ This document describes the internal structure of the agent and how components i
 | **Config Loader** | Load and merge project + global configs |
 | **Session** | Owns session state and persistence (create/load/save methods) |
 | **Agent Core** | Main interaction loop orchestration |
-| **LLM Client** | Call OpenAI-compatible APIs, retry logic, cost tracking |
-| **Container Manager** | Build/spawn/manage bubblewrap sandbox with orchestrator |
-| **History & Context** | Loaded from session, maintained in-memory during execution |
+| **LLM Client** | API communication, response parsing |
+| **Container Manager** | Spawn sandbox, communicate with orchestrator |
+| **History & Context** | Manage conversation, truncate for context limits |
 
-## Data Flow
+## Responsibilities by Layer
 
-### Session Start
+### Intelligence Layer
+- Send prompts to LLM (Claude, OpenAI, etc.)
+- Parse LLM responses for tool calls
+- Decide when task is complete
 
-1. **CLI** parses arguments (task, session ID to resume, etc.)
-2. **Config Loader** loads and validates configuration
-3. **Session** either:
-   - Creates new session with task
-   - Loads existing session from disk
-4. **Container Manager** spawns orchestrator in sandbox
-5. **Agent Core** begins interaction loop
+### Orchestration
+- Spawn orchestrator in sandbox
+- Send commands via stdin
+- Receive results via stdout
+- Manage orchestrator lifecycle
 
-### Interaction Loop
+### State Management
+- Persist full conversation history
+- Save and resume sessions
+- Track screen state across turns
+- Maintain cost data
 
-1. **Agent Core** constructs prompt from:
-   - System prompt (via template renderer with config values)
-   - Task description (via template renderer)
-   - Conversation history (command outputs via template renderer)
-   - Current screen state (via template renderer)
-2. **LLM Client** sends prompt to LLM API
-3. **LLM Client** receives response with tool calls
-4. **Agent Core** for each tool call:
-   - Sends command to **Container Manager**
-   - Receives result from orchestrator
-   - Formats output via template renderer
-   - Appends to conversation history
-5. **Session** persists:
-   - Updated conversation history
-   - New screen state
-   - Token usage
-6. Repeat until LLM indicates task complete
-
-**Template Rendering**: All messages sent to the LLM are generated from markdown templates (`agent/templates/prompts/*.md`) using `{{key}}` replacement. Templates can be overridden per-project in `.7aigent/prompts/` for customization without recompilation.
-
-### Session End
-
-1. **Session** saves final state to disk
-2. **Container Manager** shuts down orchestrator
-3. **CLI** displays summary (cost, turns, result)
-
-## Module Structure
-
-```
-agent/
-├── src/
-│   ├── main.rs              # CLI entry point
-│   ├── config.rs            # Configuration loading and validation
-│   ├── session.rs           # Session struct with save/load/create
-│   ├── agent.rs             # Agent core (main loop)
-│   ├── llm_client.rs        # LLM API client trait and implementations
-│   ├── container.rs         # Container management (bubblewrap + orchestrator)
-│   ├── types.rs             # Semantic types (SessionId, TokenUsage, etc.)
-│   └── persistence.rs       # Low-level file I/O for sessions
-└── Cargo.toml
-```
+### Security
+- Container isolation via bubblewrap
+- Validate configuration
+- Enforce resource limits
 
 ## Related Documents
 
-- [Overview](overview.md) - High-level purpose and responsibilities
-- [Type System](types.md) - Semantic types and design rationale
-- [Sandboxing](sandboxing.md) - Container security model
-- [Context Management](context-management.md) - How context is tracked
+- [Context Management](context-management.md) - How context is tracked and truncated
 - [Cost Control](cost-control.md) - Token tracking and budgets
+- [Sandboxing](sandboxing.md) - Security and isolation model
+- [Sandbox Design](../sandbox/) - Complete sandbox implementation details

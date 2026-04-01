@@ -1,131 +1,116 @@
-# Context and State Management
+# Context Management
 
-This document describes how the agent manages conversation history, screen state, and context truncation.
+This document explains the rationale behind the agent's context management strategy.
 
-## Conversation History
+## The Problem
 
-**Storage**: JSONL file, one message per line.
+LLMs have finite context windows. The agent maintains a conversation history that grows with each turn. Without careful management:
+- Context overflows, causing API errors or truncated conversations
+- Important context gets lost when truncation happens
+- Costs increase linearly with conversation length
 
-**Message format**:
-```json
-{"role": "system", "content": "You are an agent...", "timestamp": "2026-01-08T10:30:00Z"}
-{"role": "user", "content": "Add authentication", "timestamp": "2026-01-08T10:30:05Z"}
-{"role": "assistant", "content": "I'll add authentication...", "timestamp": "2026-01-08T10:30:10Z"}
-{"role": "user", "content": "bash output: ...", "timestamp": "2026-01-08T10:30:15Z"}
-```
+## Context Window Constraints
 
-**Roles**:
-- `system`: System prompt (instructions, file restrictions, task)
-- `user`: Task description, tool outputs, screen updates
-- `assistant`: LLM responses (thoughts + commands)
+Different LLMs have different context limits:
+- Claude: 200K tokens
+- GPT-4: 128K tokens
+- Smaller models: 4K-32K tokens
 
-**Message Generation**: All messages are generated from markdown templates using the template renderer in `agent/src/templates.rs`. Templates support `{{key}}` replacement syntax and can be overridden per-project in `.7aigent/prompts/`. This allows users to customize the agent's communication style without recompilation.
+The agent must work within these limits while preserving:
+1. System prompt (instructions, tool definitions)
+2. User messages (tasks, clarifications)
+3. Assistant messages (plans, reasoning)
+4. Tool results (command outputs, file contents)
 
-## Screen History
+## Strategy: Layered Context
 
-**Purpose**: For debugging - inspect LLM context at specific step.
+The agent uses a layered approach to context management:
 
-**Storage**: JSONL file, one screen state per step.
+### Layer 1: System Prompt (Never Truncated)
+- Core instructions
+- Tool definitions
+- Output format specifications
 
-**Screen format**:
-```json
-{
-  "step": 5,
-  "timestamp": "2026-01-08T10:30:15Z",
-  "sections": {
-    "bash": {"content": "Working directory: /workspace\n...", "max_lines": 50},
-    "python": {"content": "Variables:\n  df: DataFrame\n...", "max_lines": 50},
-    "editor": {"content": "Views:\n  [main] src/main.py\n    45  def main():\n...", "max_lines": 50}
-  }
-}
-```
+This is always included and counts against the budget, but never gets truncated.
 
-**Inspection command**:
-<bash>
-# Show screen at step 5
-7aigent --inspect <session-id> --step 5
+### Layer 2: Essential History (Preserved)
+- Initial task description
+- Key decisions made
+- Current state summary
 
-# Show full LLM context at step 5 (system + history + screen)
-7aigent --inspect <session-id> --step 5 --full-context
-</bash>
+Preserved as long as possible, only truncated when absolutely necessary.
 
-## Context Truncation Strategy
+### Layer 3: Recent Turns (Preserved)
+- Last N turns of conversation
+- Most relevant to current work
 
-**Problem**: LLM context windows are limited (e.g., 128k tokens). Long sessions exceed this.
+Preserved until context pressure forces truncation.
 
-**Initial strategy**: Simple truncation - keep system prompt, task, recent history, and current screen.
+### Layer 4: Old Turns (Truncated First)
+- Historical conversation
+- Completed subtasks
+- Old tool results
 
-**Algorithm**:
-```rust
-fn build_llm_messages(
-    history: &[Message],
-    current_screen: &Screen,
-    config: &BehaviorConfig,
-) -> Vec<Message> {
-    let mut messages = Vec::new();
+First to be truncated when context pressure builds.
 
-    // 1. System prompt (always included)
-    messages.push(build_system_prompt(config));
+## Implementation Approach
 
-    // 2. Task description (always included)
-    messages.push(Message::user(history.first().unwrap().content.clone()));
+### Token Counting
 
-    // 3. Recent history (last N messages that fit)
-    let max_history_tokens = 100_000;  // Reserve tokens for system + screen
-    let recent_history = truncate_history(history, max_history_tokens);
-    messages.extend(recent_history);
+The agent tracks token counts for:
+- Each message in history
+- Each tool result
+- Running total of context usage
 
-    // 4. Current screen (always included)
-    messages.push(Message::user(format_screen(current_screen)));
+This enables proactive truncation before hitting limits.
 
-    messages
-}
-```
+### Truncation Strategy
 
-**Future enhancement**: Smarter truncation
-- Summarize old history with LLM
-- Keep only key decision points
-- Semantic compression
+When context approaches limits:
 
-## Parallel Sessions
+1. **Summarize old turns**: Replace detailed history with summaries
+2. **Remove old tool results**: Large outputs from completed work
+3. **Compress conversations**: Keep conclusions, remove reasoning process
 
-**Problem**: User wants multiple agents working in parallel.
+The goal is to preserve information density while reducing token count.
 
-**Solution**: Each session is independent.
+### Screen State Persistence
 
-**Implementation**:
-- Different session IDs → different directories
-- Each spawns its own container
-- No shared state between sessions
-- User responsibility to avoid conflicts (e.g., both modifying same file)
+The screen provides context that doesn't need to be in conversation history:
+- Current file views
+- Environment state
+- Working directory
 
-**Example**:
-<bash>
-# Terminal 1: Feature work
-7aigent "Add dark mode toggle"
+This state persists across truncation events, giving the agent continuity.
 
-# Terminal 2: Hotfix (different session)
-7aigent "Fix crash on invalid input"
-</bash>
+## Trade-offs
 
-## Session Persistence
+### Why Not Always Keep Full History?
 
-See [Architecture](architecture.md) for details on session directory structure.
+- **Cost**: Every token costs money
+- **Latency**: Larger contexts mean slower responses
+- **Quality**: Too much context can confuse the model
 
-**Location**: `~/.7aigent/sessions/<session-id>/`
+### Why Not Always Summarize?
 
-**Files**:
-- `metadata.json` - Session metadata, cost tracking
-- `conversation.jsonl` - Full message history
-- `screens.jsonl` - Screen state snapshots
+- **Information loss**: Summaries miss details
+- **Context breaks**: Agent may lose thread of work
+- **Complexity**: Summarization is itself error-prone
 
-This enables:
-- Resume interrupted sessions
-- Inspect session history for debugging
-- Track costs across sessions
+### Chosen Balance
+
+- Keep recent turns verbatim
+- Summarize old turns when needed
+- Preserve screen state separately
+- Track costs explicitly
+
+## Related Components
+
+- **budget.rs**: Token counting and cost tracking
+- **context.rs**: Context window management
+- **session.rs**: Persistence of conversation history
 
 ## Related Documents
 
-- [Architecture](architecture.md) - Component structure
-- [Cost Control](cost-control.md) - Token tracking and budgets
-- [Overview](overview.md) - High-level responsibilities
+- [Architecture](architecture.md) - Overall system design
+- [Cost Control](cost-control.md) - Token costs and budgets

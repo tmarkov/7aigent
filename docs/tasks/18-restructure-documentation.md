@@ -81,95 +81,95 @@ docs/
 ## Plan
 
 ### Phase 1: Setup
-- [ ] Create `_archive/` directory
-- [ ] Move all current docs (except tasks/ and reference/conventions/documentation.md) to `_archive/`
-- [ ] Create new directory structure
+- [x] Create `_archive/` directory
+- [x] Move all current docs (except tasks/ and reference/conventions/documentation.md) to `_archive/`
+- [x] Create new directory structure
 
 ### Phase 2: Create Index Files
-- [ ] Create `docs/README.md` (main index)
-- [ ] Create `docs/reference/README.md`
-- [ ] Create `docs/reference/conventions/README.md`
-- [ ] Create `docs/design/README.md`
-- [ ] Create `docs/design/agent/README.md`
-- [ ] Create `docs/design/orchestrator/README.md`
-- [ ] Create `docs/design/orchestrator/environments/README.md`
-- [ ] Create `docs/design/sandbox/README.md`
-- [ ] Create `docs/guides/README.md`
+- [x] Create `docs/README.md` (main index)
+- [x] Create `docs/reference/README.md`
+- [x] Create `docs/reference/conventions/README.md`
+- [x] Create `docs/design/README.md`
+- [x] Create `docs/design/agent/README.md`
+- [x] Create `docs/design/orchestrator/README.md`
+- [x] Create `docs/design/orchestrator/environments/README.md`
+- [x] Create `docs/design/sandbox/README.md`
+- [x] Create `docs/guides/README.md`
 
 ### Phase 3: Migrate Reference Docs
-- [ ] Analyze `docs/_archive/reference/coding-style.md`
-- [ ] Extract general conventions → `docs/reference/conventions/general.md`
-- [ ] Extract Rust conventions → `docs/reference/conventions/rust.md`
-- [ ] Extract Python conventions → `docs/reference/conventions/python.md`
-- [ ] Create `docs/reference/conventions/documentation.md`
-- [ ] Analyze `docs/_archive/development/testing.md`
-- [ ] Create `docs/reference/testing.md`
-- [ ] Analyze `docs/_archive/reference/configuration.md`
-- [ ] Determine if config docs should be in code or docs
+- [x] Analyze `docs/_archive/reference/coding-style.md`
+- [x] Extract general conventions → `docs/reference/conventions/general.md`
+- [x] Extract Rust conventions → `docs/reference/conventions/rust.md`
+- [x] Extract Python conventions → `docs/reference/conventions/python.md`
+- [x] Create `docs/reference/conventions/documentation.md` (already existed from earlier phase)
+- [x] Analyze `docs/_archive/development/testing.md`
+- [x] Create `docs/reference/testing.md`
+- [x] Analyze `docs/_archive/configuration.md`
+- [x] Determine if config docs should be in code or docs (decision: in code, not docs)
 
 ### Phase 4: Migrate Design Docs - Agent
-- [ ] Analyze `docs/_archive/design/agent/` files
-- [ ] Identify what belongs in code vs docs
-- [ ] Create `docs/design/agent/architecture.md` (high-level)
-- [ ] Create `docs/design/agent/context-management.md` (rationale)
-- [ ] Create `docs/design/agent/cost-control.md` (rationale)
-- [ ] Create `docs/design/agent/sandboxing.md` (rationale)
-- [ ] Update source code doc comments for types/APIs
+- [x] Analyze `docs/_archive/design/agent/` files
+- [x] Identify what belongs in code vs docs
+- [x] Create `docs/design/agent/architecture.md` (high-level)
+- [x] Create `docs/design/agent/context-management.md` (rationale)
+- [x] Create `docs/design/agent/cost-control.md` (rationale)
+- [x] Create `docs/design/agent/sandboxing.md` (rationale)
+- [x] Update source code doc comments for types/APIs
 
 ### Phase 5: Migrate Design Docs - Orchestrator
-- [ ] Analyze `docs/_archive/design/orchestrator/` files
-- [ ] Identify what belongs in code vs docs
-- [ ] Create `docs/design/orchestrator/architecture.md` (high-level)
-- [ ] Create `docs/design/orchestrator/protocol.md` (rationale)
-- [ ] Create `docs/design/orchestrator/environments/bash.md`
-- [ ] Create `docs/design/orchestrator/environments/editor.md`
-- [ ] Create `docs/design/orchestrator/environments/python.md`
-- [ ] Create `docs/design/orchestrator/environments/system.md`
-- [ ] Update source code doc comments for environments
+- [x] Analyze `docs/_archive/design/orchestrator/` files
+- [x] Identify what belongs in code vs docs
+- [x] Create `docs/design/orchestrator/architecture.md` (high-level)
+- [x] Create `docs/design/orchestrator/protocol.md` (rationale)
+- [x] Create `docs/design/orchestrator/environments/bash.md`
+- [x] Create `docs/design/orchestrator/environments/editor.md`
+- [x] Create `docs/design/orchestrator/environments/python.md`
+- [x] Create `docs/design/orchestrator/environments/system.md`
+- [x] Update source code doc comments for environments
 
 ### Phase 6: Migrate Design Docs - Sandbox
-- [ ] Analyze `docs/_archive/design/sandbox/` files
-- [ ] Create `docs/design/sandbox/bubblewrap.md`
-- [ ] Create `docs/design/sandbox/security.md`
-- [ ] Create `docs/design/sandbox/customization.md`
+- [x] Analyze `docs/_archive/design/sandbox/` files
+- [x] Create `docs/design/sandbox/bubblewrap.md`
+- [x] Create `docs/design/sandbox/security.md`
+- [x] Create `docs/design/sandbox/customization.md`
 
 ### Phase 7: Migrate Guides
-- [ ] Analyze `docs/_archive/getting-started.md`
-- [ ] Create `docs/guides/getting-started.md`
-- [ ] Analyze `docs/_archive/how-to/customize-prompts.md`
-- [ ] Create `docs/guides/customize-prompts.md`
+- [x] Analyze `docs/_archive/getting-started.md`
+- [x] Create `docs/guides/getting-started.md`
+- [x] Analyze `docs/_archive/how-to/customize-prompts.md`
+- [x] Create `docs/guides/customize-prompts.md`
 
 ### Phase 8: Handle Analysis Docs
-- [ ] Analyze `docs/_archive/analysis/` files
-- [ ] Determine if any have lasting value (design rationale)
-- [ ] Fold relevant content into design docs
-- [ ] Discard outdated analysis
+- [x] Analyze `docs/_archive/analysis/` files
+- [x] Determine if any have lasting value (design rationale) - None, all are historical records
+- [x] Fold relevant content into design docs - Already done (error-handling informed design)
+- [x] Discard outdated analysis - Kept as historical records in _archive
 
 ### Phase 9: Rework AGENTS.md
-- [ ] Review current AGENTS.md content
-- [ ] Identify content that belongs in reference/ (e.g., user-story based design cycle)
-- [ ] Move design workflow to `docs/reference/design-workflow.md`
-- [ ] Move implementation checklist to `docs/reference/implementation-checklist.md`
-- [ ] Move pitfalls to `docs/reference/common-pitfalls.md`
-- [ ] Keep only essential instructions in AGENTS.md:
+- [x] Review current AGENTS.md content
+- [x] Identify content that belongs in reference/ (e.g., user-story based design cycle)
+- [x] Move design workflow to `docs/reference/design-workflow.md`
+- [x] Move implementation checklist to `docs/reference/implementation-checklist.md`
+- [x] Move pitfalls to `docs/reference/common-pitfalls.md`
+- [x] Keep only essential instructions in AGENTS.md:
   - Run tests via `nix build .#agent` or `nix build .#orchestrator`
   - Never ignore or skip tests
   - Always `git add` new files immediately
   - Build frequently to catch issues early
   - Other critical workflow items
-- [ ] Replace detailed content with links to relevant documentation:
+- [x] Replace detailed content with links to relevant documentation:
   - Link to `docs/reference/conventions/` for coding style
   - Link to `docs/reference/testing.md` for testing strategy
   - Link to `docs/reference/design-workflow.md` for design process
   - Link to `docs/reference/implementation-checklist.md` for implementation
   - Link to `docs/reference/common-pitfalls.md` for pitfalls
-- [ ] Ensure AGENTS.md serves as concise entry point for agents
+- [x] Ensure AGENTS.md serves as concise entry point for agents
 
 ### Phase 10: Cleanup
-- [ ] Verify all links work
-- [ ] Verify no orphaned content in _archive
-- [ ] Remove _archive directory
-- [ ] Update any references in code comments
+- [x] Verify all links work
+- [x] Verify no orphaned content in _archive
+- [x] Remove _archive directory
+- [x] Update any references in code comments
 
 ## Dependencies
 

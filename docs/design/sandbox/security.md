@@ -181,6 +181,6 @@ Some systems disable unprivileged user namespaces. Bubblewrap detects this and f
 
 ## Related Documents
 
-- [Sandbox Overview](overview.md) - Design rationale and decision process
+- [Sandbox Overview](./) - Design rationale and decision process
 - [Bubblewrap Implementation](bubblewrap.md) - Technical implementation details
 - [Customization](customization.md) - How users extend the sandbox

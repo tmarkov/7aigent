@@ -4,7 +4,7 @@ This document describes how users customize the sandbox environment for project-
 
 ## Design Philosophy
 
-Users customize their environment AFTER agent installation using standard Nix workflows. The agent ships with a minimal sandbox containing only essentials (Python, bash, coreutils, nix). Users add project-specific tools via `shell_prefix` configuration.
+Users customize their environment AFTER agent installation using standard Nix workflows. The agent ships with a minimal sandbox containing only essentials (Python, bash, coreutils, nix). Users add project-specific tools through their project's `flake.nix`.
 
 ## Shell Prefix Customization (Implemented)
 
@@ -248,6 +248,6 @@ All toolchains available simultaneously.
 
 ## Related Documents
 
-- [Sandbox Overview](overview.md) - Design rationale and principles
+- [Sandbox Overview](./) - Design rationale and principles
 - [Bubblewrap Implementation](bubblewrap.md) - Architecture details
 - [Security Model](security.md) - What customization can and cannot do

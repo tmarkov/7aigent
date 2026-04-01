@@ -12,9 +12,9 @@ When working on this project, follow these guidelines:
 4. **Explicit over implicit**: Code should be clear and obvious, not clever
 5. **Test thoroughly**: Property-based testing ensures correctness across input space
 
-See [docs/development/testing.md](docs/development/testing.md) for testing strategy.
+See [docs/reference/testing.md](docs/reference/testing.md) for testing strategy.
 
-See [docs/reference/coding-style.md](docs/reference/coding-style.md) for detailed conventions that support these principles.
+See [docs/reference/conventions/general.md](docs/reference/conventions/general.md) for detailed conventions that support these principles.
 
 ## Build System
 
@@ -22,7 +22,7 @@ See [docs/reference/coding-style.md](docs/reference/coding-style.md) for detaile
 
 All code verification (formatting, linting, testing) is integrated into the Nix build:
 
-<bash>
+```bash
 # Build the agent (Rust) with all checks
 nix build .#agent
 # Runs: rustfmt check, clippy, cargo test
@@ -33,7 +33,7 @@ nix build .#orchestrator
 
 # Development shell with all tools
 nix develop
-</bash>
+```
 
 **Important**: Don't run formatters and linters directly during implementation. Instead:
 - Make your changes
@@ -55,7 +55,7 @@ Understanding where different types of work belong:
 - **Purpose**: Explains HOW things work and WHY decisions were made
 - **Audience**: Anyone trying to understand the system
 - **Lifecycle**: Long-term reference material
-- **Examples**: `docs/design/orchestrator/`, `docs/reference/coding-style.md`, `docs/development/technology.md`
+- **Examples**: `docs/design/orchestrator/`, `docs/reference/conventions/general.md`, `docs/development/technology.md`
 
 ### Tasks (docs/tasks/)
 
@@ -120,7 +120,7 @@ Python environment consumes unbounded memory over long sessions...
 - Trade-offs and alternatives considered
 - Design document in `docs/` (e.g., `docs/capability-discovery.md`)
 
-**Process**: Follow the full "Scenario-Driven Design Workflow" below.
+**Process**: Follow the full Scenario-Driven Design Workflow. See [docs/reference/design-workflow.md](docs/reference/design-workflow.md) for details.
 
 ### 3. Implementation
 
@@ -134,471 +134,44 @@ Python environment consumes unbounded memory over long sessions...
 - Updated documentation if design changed during implementation
 - Checked-off items in task file's plan checklist
 
-**Process**: Follow the "Implementation Task" checklist in Quick Reference below.
+**Process**: Follow the Implementation Task checklist. See [docs/reference/implementation-checklist.md](docs/reference/implementation-checklist.md) for details.
 
 ---
 
-## Scenario-Driven Design Workflow
+## Design Workflow
 
-When designing or implementing changes, follow this workflow to ensure designs are practical, simple, and actually solve real problems.
+For detailed guidance on scenario-driven design, see [docs/reference/design-workflow.md](docs/reference/design-workflow.md).
 
-### 1. Identify Components
+Key principles:
+- Start with concrete scenarios before designing
+- Mentally trace implementation of critical paths
+- Simplify and prune features
+- Iterate until design is solid
 
-**Before anything else**: Understand what you're changing and what it affects.
+---
 
-- Which components are involved? (agent, orchestrator, environments, protocols, etc.)
-- What are the boundaries and interfaces?
-- What existing designs or decisions constrain this change?
+## Implementation Checklist
 
-**Action**: Read relevant documentation in `./docs/` before proceeding.
+For detailed implementation guidance, see [docs/reference/implementation-checklist.md](docs/reference/implementation-checklist.md).
 
-### 2. Define Scenarios
-
-**Describe concrete situations that must work**, without prescribing solutions.
-
-- **Who is the "user"?** Could be:
-  - End user of the system
-  - The agent (user of environments)
-  - Another component (e.g., orchestrator using environment protocol)
-
-- **What scenarios must this component support?** Create 3-5 diverse, concrete scenarios:
-  - Include the happy path
-  - Include edge cases
-  - Include scenarios that might break the design
-  - Make scenarios different in important ways
-
-**Properties of good scenarios:**
-
-1. **Goal-oriented, not process-oriented**: Describe what the user wants to accomplish, not what they need to learn or discover along the way
-   - Good: "Agent needs to fix type errors in TypeScript project"
-   - Bad: "Agent needs to discover TypeScript environment capabilities"
-
-2. **External/black-box perspective**: Describe the situation from outside the system - what goes in (the task/request) and what should come out (successful completion)
-   - Good: "Agent is asked to debug a segfault in unfamiliar C code"
-   - Bad: "Agent sends debug command to GDB environment and parses output"
-
-3. **Concrete and specific**: Real situations with enough detail to understand context and success criteria
-   - Good: "Agent needs to refactor authentication code spread across 5 files"
-   - Bad: "Agent needs to work with multiple files"
-
-4. **No built-in solution assumptions**: Don't presume HOW the system solves it, only WHAT needs to work
-   - Good: "Agent receives error from unknown command, needs to fix it"
-   - Bad: "Agent uses help command to see command syntax"
-
-5. **Testable/Verifiable**: Clear enough that you can determine if it succeeded or failed
-
-6. **Independent**: Each scenario stands alone, not dependent on others or on a specific sequence
-
-7. **Include failure/edge cases**: Not just happy paths - scenarios where things go wrong reveal requirements
-
-**Example good scenarios:**
-- "Agent views function in C file, edits it, sees updated content"
-- "Agent edits multi-chapter story, needs to see multiple files simultaneously"
-- "External tool modifies file while agent has it open"
-- "Agent wants to view function but doesn't know which line it's on"
-
-**Example bad scenarios (and why):**
-- ❌ "Agent sends view command with line numbers" - describes HOW (solution), not WHAT (goal)
-- ❌ "System caches file contents and detects changes via mtime" - describes internal mechanism
-- ❌ "Environment returns JSON with file content" - describes implementation detail
-- ❌ "Agent discovers available commands" - process-oriented, not goal-oriented
-- ❌ "Agent learns command syntax" - learning is never a goal in itself
-
-**Critical**: Write these scenarios BEFORE designing. They reveal requirements that abstract thinking misses. Scenarios should describe situations as if the system is a black box - what goes in (user request), what must come out (successful outcome), not the internals.
-
-### 3. Design for Scenarios
-
-**Walk through each scenario** to understand what's needed.
-
-For each scenario, trace the interaction:
-- What commands/APIs are needed?
-- What state must be maintained?
-- What information must be displayed?
-- What can go wrong?
-
-**Extract requirements** from scenarios:
-- Common patterns → core features
-- Rare cases → defer or simplify
-- Contradictions → deeper design issues to resolve
-
-**Make design decisions**:
-- Prefer simple over complex
-- Prefer explicit over implicit
-- Design APIs that use types to prevent misuse
-- Document trade-offs (performance vs correctness, simplicity vs features)
-
-**Important**:
-- Provide concrete examples, not just abstract descriptions
-- Show what the interaction actually looks like
-- Include both successful and failure cases
-
-### 4. Verify Implementation Practicality
-
-**Before finalizing the design**: Trace through the implementation.
-
-**Mentally implement critical functions**:
-- For each key operation, sketch the implementation logic
-- Identify where state is stored and how it's updated
-- Trace data flow through the system
-
-**Ask implementation questions**:
-- Can this actually be implemented as described?
-- Are there contradictions? (e.g., "fast operation" that does file I/O)
-- What are the performance characteristics?
-- What happens in edge cases?
-
-**Common issues to check**:
-- Does it require information that won't be available?
-- Does it create circular dependencies?
-- Are there race conditions or ordering issues?
-- Can error cases be handled cleanly?
-
-**Red flags**:
-- "This will be handled automatically" (by what? how?)
-- "The system will detect..." (using what mechanism?)
-- Contradictions between requirements (fast + always up-to-date + no caching)
-
-**If you find issues**: Don't paper over them. Go back to step 3 and redesign.
-
-### 5. Simplify and Prune
-
-**Question every feature**: Does its benefit outweigh its complexity?
-
-**Simplification strategies**:
-- Can this be done with existing features?
-- Can we defer this to a future version?
-- Can we use a simpler approach that solves 80% of cases?
-- Can we eliminate edge case handling by changing constraints?
-
-**Red flags for over-complexity**:
-- "The system will intelligently..." (just use a fixed strategy)
-- "Configurable per-..." (just pick one good default)
-- "Supports both X and Y..." (just pick the better one)
-- Multiple layers of indirection
-- Complex state machines
-
-**Lean toward simplicity**:
-- Fixed limits better than dynamic allocation
-- Explicit better than automatic
-- Fail fast better than complex recovery
-- One obvious way better than multiple options
-
-### 6. Review Against Scenarios
-
-**Go back to your scenarios**: Does the design actually work?
-
-**For each scenario**:
-1. Walk through the interaction with your design
-2. Identify friction points (agent must do X manually, confusing state, etc.)
-3. Identify missing functionality
-4. Identify unnecessary complexity
-
-**Ask**:
-- What works well?
-- What goes wrong?
-- Which features are helpful?
-- Which features are unnecessary or harmful?
-- What assumptions did I make that turned out wrong?
-
-**Grade the design**:
-- A: Handles all scenarios elegantly, implementation clear, minimal complexity
-- B: Works for scenarios, some friction points, implementable
-- C: Works but has significant limitations or complexity
-- D: Doesn't actually solve the scenarios or has fundamental flaws
-
-**If not an A**: Identify specific improvements, then iterate.
-
-### 7. Iterate and Refine
-
-**Based on the review**, refine the design:
-
-- Fix issues found in step 6
-- Simplify based on what scenarios actually need
-- Clarify ambiguities in specification
-- Add missing edge case handling
-- Remove features that don't pull their weight
-
-**Extract assumptions and confirm them**:
-- List any decisions you made based on assumptions
-- Ask clarifying questions about trade-offs
-- Don't proceed until key assumptions are confirmed
-
-**Document the design**:
-- Why decisions were made (rationale)
-- What alternatives were considered
-- What trade-offs were accepted
-- What features were deferred and why
-
-### 8. Implement
-
-Only implement after design is solid.
-
-**Implementation checklist**:
-- Follow [docs/reference/coding-style.md](docs/reference/coding-style.md) strictly
-- Use TodoWrite to track implementation steps
-- **CRITICAL: Verify build sees new code first** (see Implementation Task below)
-  - Create test file that imports new module
-  - `git add` test file
-  - Verify build FAILS with ImportError
-  - If build succeeds, new test not in build - STOP and investigate
-- Write tests as you go (property-based for public APIs)
+Key principles:
+- Always use `nix build` to verify changes
 - `git add` files immediately after creation
+- Write tests as you go
 - Build frequently to catch issues early
-- Update documentation with any implementation learnings
-- Verify work with `nix build .#agent` or `nix build .#orchestrator`
-  - Build runs all formatters, linters, and tests automatically
-  - Don't run tools directly - Nix ensures everything is checked
-  - Verify new files appear in build output (grep for filenames)
 
 ---
 
-## Quick Reference for Common Tasks
-
-### Task Definition
-
-**When**: You need to define new work to be done.
-
-1. Create file in `docs/tasks/` with descriptive name
-2. Write problem description (2-3 sentences: what's wrong or missing)
-3. Add context (affected components, constraints, related docs)
-4. **Write 3-5 concrete scenarios** (WHAT must work, not HOW)
-5. Optionally add initial thoughts (observations, not solutions)
-6. Add entry to `docs/tasks/README.md` checklist
-7. **Stop** - don't design yet
-
-### Design Task
-
-**When**: You're ready to solve a defined task.
-
-1. Read task file and related docs
-2. Follow the 8-step Scenario-Driven Design Workflow:
-   - Identify components
-   - Review scenarios (already in task file)
-   - Design for those scenarios
-   - **Mentally implement critical functions**
-   - Simplify and prune
-   - Review against scenarios
-   - Iterate until design is grade A or B
-   - Document with rationale
-3. Create design document in `docs/` (separate from task file)
-
-### Implementation Task
-
-**CRITICAL: Nix builds use git-tracked files only. Untracked files are invisible to the build, causing false positive "build succeeds" on old code.**
-
-**CRITICAL: Always use `nix build .#packagename` not cargo/pytest directly. The project uses Nix as the build system. Running cargo/pytest directly bypasses formatters, linters, and may test code that won't be in the Nix build.**
-
-1. Read the design doc
-2. Use TodoWrite to plan steps
-3. **IMMEDIATELY after creating ANY new file: `git add filename`** - Nix won't see untracked files
-4. **Run `nix build .#packagename` after EVERY change** - not cargo check/test
-5. **Verify build will see new code (choose one approach):**
-
-   **Option A - Import Test (recommended for new modules):**
-   <bash>
-   # Create test file that imports new module
-   cat > tests/test_new_module.py << 'EOF'
-   from package.new_module import NewClass  # Will fail - doesn't exist yet
-
-   def test_placeholder():
-       assert True
-   EOF
-
-   # Add to git and verify build FAILS
-   git add tests/test_new_module.py
-   nix build .#package 2>&1 | tee /dev/tty | grep -q "ModuleNotFoundError.*new_module"
-
-   # If build succeeds, STOP - test file not in build!
-   # If build fails with ImportError - GOOD, proceed to step 4
-   
-</bash>
-
-   **Option B - Test Count Verification:**
-   <bash>
-   # Note current test count
-   BEFORE=$(nix build .#package 2>&1 | grep -oP '\d+(?= passed)' | tail -1)
-
-   # Create test file with simple test
-   # (write test file here)
-
-   # Add to git and verify count increases
-   git add tests/test_new_module.py
-   AFTER=$(nix build .#package 2>&1 | grep -oP '\d+(?= passed|failed)' | head -1)
-
-   # If AFTER <= BEFORE, STOP - test not in build!
-   
-</bash>
-
-   **Option C - Grep Test Output:**
-   <bash>
-   # Create test file
-   # (write test file here)
-
-   # Add to git and verify it appears in output
-   git add tests/test_new_module.py
-   nix build .#package 2>&1 | grep -q "test_new_module.py"
-
-   # If not found, STOP - test not in build!
-   
-</bash>
-
-4. **Create minimal module to fix import:**
-   <bash>
-   # Create skeleton module
-   cat > package/new_module.py << 'EOF'
-   """New module."""
-
-   class NewClass:
-       pass
-   EOF
-
-   # Add to git immediately
-   git add package/new_module.py
-
-   # Build should now pass (or fail on different issue)
-   nix build .#package
-   
-</bash>
-
-5. **Implement incrementally:**
-   - Write code
-   - `git add` changes IMMEDIATELY after each file creation/modification
-   - Run `nix build .#package` after EVERY change - never use cargo/pytest directly
-   - Build frequently to catch issues early
-   - Tests guide implementation
-
-6. Follow reference/coding-style.md strictly
-
-7. Write tests as you go (property-based for public APIs)
-
-8. Update docs if implementation reveals issues
-
-9. **Final verification:**
-   <bash>
-   # Clean build
-   nix build .#package
-
-   # Verify new files in build output
-   nix build .#package 2>&1 | grep "adding.*new_module"
-
-   # All checks must pass:
-   # - black, isort, ruff (formatters/linters)
-   # - pytest (all tests including new ones)
-   
-</bash>
-
-**Why this process:**
-- Catches ALL "new code not in build" issues (git, config, import paths)
-- Fails fast - know immediately if setup is wrong
-- Low overhead - one extra build cycle
-- Prevents wasted work on code that won't be tested
-
-**Key principle:** Build must fail first, then succeed. If build succeeds immediately with new test imports, something is wrong.
-
-### Debug/Fix Task
-
-1. Reproduce the issue
-2. Understand root cause (don't just fix symptoms)
-3. Check if it reveals a design flaw
-4. Fix the root cause
-5. Add tests to prevent regression
-6. Update docs if needed
-
-### Documentation Task
-
-1. Read related docs for context
-2. Use concrete examples
-3. Explain why, not just what
-4. Link to related docs
-5. Keep different concerns in separate files
-6. Update task checklists if tasks completed
-
----
-
-## Common Pitfalls and How to Avoid Them
-
-### Pitfall: Designing Without Scenarios
-
-**Symptom**: Design that looks good on paper but has obvious issues when you try to use it.
-
-**Example**: Designing "line-based file views" without asking "how does agent know which lines to view?"
-
-**How to avoid**: Always start with concrete scenarios before abstract design.
-
-### Pitfall: Solution-Focused Scenarios
-
-**Symptom**: Scenarios describe API calls, message flows, or implementation details instead of user needs.
-
-**Example - Bad**:
-- "Agent sends list_environments request to orchestrator"
-- "Orchestrator returns JSON array of environment names"
-- "Agent parses response and caches the list"
-
-**Example - Good**:
-- "Agent needs to fix type errors in a TypeScript project it's never seen"
-- "Human added custom 'docker' environment, agent needs to use it to build containers"
-- "Agent is asked to debug a segfault in unfamiliar C code"
-
-**How to avoid**: Describe scenarios as if the system is a black box. Focus on what the user (human, agent, or component) is trying to accomplish, not how the system will accomplish it.
-
-### Pitfall: Not Tracing Implementation
-
-**Symptom**: Design has contradictions or impossible requirements.
-
-**Example**: "Fast operation" that requires re-reading files, "automatic detection" with no mechanism specified.
-
-**How to avoid**: For critical functions, mentally write the implementation before finalizing design.
-
-### Pitfall: Unchecked Assumptions
-
-**Symptom**: Design doesn't match what user actually wants.
-
-**Example**: Assuming environments should use separate working directories, assuming timeouts are needed.
-
-**How to avoid**: Extract assumptions explicitly and confirm them before proceeding.
-
-### Pitfall: Over-Engineering
-
-**Symptom**: Design is complex, has many configuration options, "intelligently" handles edge cases.
-
-**Example**: "Intelligent priority-based screen truncation" instead of simple line limits.
-
-**How to avoid**: For each feature, ask "does benefit outweigh complexity?" Default to simple.
-
-### Pitfall: Ignoring Contradictions
-
-**Symptom**: Design has internally inconsistent requirements.
-
-**Example**: "Keep line ranges fixed" + "auto-update when files change" = views show wrong content after edits.
-
-**How to avoid**: When you find contradictions, dig deeper. They often reveal fundamental design issues.
-
-### Pitfall: Bypassing Existing Abstractions
-
-**Symptom**: When adding new functionality, you hardcode special-case logic instead of using the general-purpose abstractions already in the codebase.
-
-**Also known as**: "Not eating your own dog food"
-
-**Example**: We had a general command processing pipeline (parse commands from text → execute each command → save events). When adding a simulated initial message, we hardcoded specific `send_command()` calls instead of using the existing `parse_commands()` function and execution loop.
-
-**Why this is problematic**:
-- **Duplication**: The same logic exists in multiple places
-- **Inconsistency**: The parallel code paths can diverge over time
-- **Maintenance burden**: Bug fixes and improvements need to be applied in multiple places
-- **Missed benefits**: Improvements to the general abstraction don't benefit the special case
-- **False complexity**: Suggests the special case genuinely needs different treatment when it doesn't
-
-**How to avoid**:
-1. **Before implementing**: Ask "Is there already an abstraction that handles this?"
-2. **If yes**: Use it! The abstraction exists for a reason.
-3. **If it doesn't quite fit**: First try to extend the abstraction to handle the new case
-4. **Only bypass if**: The new case is genuinely a different problem domain
-
-**Related principles**:
-- **DRY (Don't Repeat Yourself)**: Avoid duplicating logic
-- **Dog-fooding**: Use your own abstractions to validate they work
-- **Single Responsibility**: Each piece of logic should live in one place
-- **Principle of Least Surprise**: Similar things should work similarly
+## Common Pitfalls
+
+For common design and implementation pitfalls, see [docs/reference/common-pitfalls.md](docs/reference/common-pitfalls.md).
+
+Key pitfalls to avoid:
+- Designing without scenarios
+- Solution-focused scenarios
+- Not tracing implementation
+- Over-engineering
+- Bypassing existing abstractions
 
 ---
 
