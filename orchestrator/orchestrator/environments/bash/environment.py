@@ -72,13 +72,16 @@ class BashEnvironment(InteractiveEnvironment):
 
         Sets custom PS1 and PS2 prompt markers and gets initial working directory.
         """
-        # Set unique PS1 prompt marker
-        self._process.send(f'PS1="{self.PROMPT_MARKER}"\n')
+        # Export PS1 and PS2 so they survive into any exec'd subshell.
+        # Tools like 'nix develop' replace the current bash with a new one via
+        # exec; if PS1/PS2 are only shell variables (not exported), the new bash
+        # resets them to defaults ('bash-5.x$ ' and '> '), causing single-line
+        # commands to hang and heredocs to hang respectively.
+        self._process.send(f'export PS1="{self.PROMPT_MARKER}"\n')
         self._process.expect_exact(self.PROMPT_MARKER)
 
-        # Set unique PS2 continuation marker (used inside heredocs, backslash
-        # continuations, incomplete if/for/while blocks, etc.)
-        self._process.send(f'PS2="{self.PROMPT2_MARKER}"\n')
+        # Export PS2 for the same reason (heredoc continuation prompt)
+        self._process.send(f'export PS2="{self.PROMPT2_MARKER}"\n')
         self._process.expect_exact(self.PROMPT_MARKER)
 
         # Get initial working directory

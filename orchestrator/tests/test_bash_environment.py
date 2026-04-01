@@ -449,6 +449,55 @@ class TestBashEnvironment:
             env.shutdown()
 
     @timeout(10)
+    def test_bash_environment_exec_bash_preserves_prompts(self) -> None:
+        """PS1 and PS2 must survive into any exec'd bash (e.g. after nix develop).
+
+        Tools like 'nix develop' replace the current bash process with a new one
+        via exec. If PS1 and PS2 are only shell variables (not exported), the new
+        bash resets them to defaults. PS1 defaults to 'bash-5.x$' (so pexpect can
+        no longer match <<<PROMPT>>>), and PS2 defaults to '> ' (so heredocs hang
+        because pexpect is waiting for <<<PROMPT2>>> but the shell emits '> ').
+
+        This is exactly what happened in agent session 9: nix develop exec'd a new
+        bash, whose PS2 was '> '. The next heredoc command hung indefinitely.
+
+        Requirements tested:
+        1. After exec bash --norc --noprofile, single-line commands still work
+           (PS1 was exported → new bash inherits it)
+        2. After exec bash --norc --noprofile, heredocs still work
+           (PS2 was exported → new bash inherits it, no hang)
+        """
+        env = BashEnvironment()
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                # exec bash replaces the current process; the new bash must still
+                # have our custom PS1 and PS2 (requires them to be exported)
+                response = env.handle_command(
+                    CommandText("exec bash --norc --noprofile")
+                )
+                assert (
+                    response.processed is True
+                ), "exec bash must complete (PS1 exported → new bash matches prompt)"
+
+                # Single-line command must work in the new shell
+                response = env.handle_command(CommandText("echo hello_after_exec"))
+                assert response.processed is True
+                assert "hello_after_exec" in response.output
+
+                # Heredoc must not hang (PS2 must still be <<<PROMPT2>>>)
+                outfile = f"{tmpdir}/test.txt"
+                response = env.handle_command(
+                    CommandText(f"cat > {outfile} << 'EOF'\nhello heredoc\nEOF")
+                )
+                assert response.processed is True
+
+                # Verify the file was written
+                response = env.handle_command(CommandText(f"cat {outfile}"))
+                assert "hello heredoc" in response.output
+        finally:
+            env.shutdown()
+
+    @timeout(10)
     def test_bash_environment_heredoc_continuation_state(self) -> None:
         """Incomplete heredoc must report continuation state to the LLM.
 
