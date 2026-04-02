@@ -83,6 +83,13 @@ These tasks are for designing and implementing the agent:
 ### Documentation
 
 - [ ] [18 - Refactor documentation structure](./18-restructure-documentation.md) - Reorganize docs for better navigation
+### Bug Fixes and Improvements
+
+- [ ] [32 - Fix session and turn semantics](./32-fix-session-turn-semantics.md) - Remove meaningless session completion status, fix resume routing
+- [ ] [33 - Require Commands or Summary section](./33-require-commands-section.md) - Prevent silent failures from misplaced commands
+- [ ] [34 - Improve spending limit interaction](./34-improve-spending-limit-interaction.md) - Remove pointless warning, prompt when limit reached
+- [ ] [35 - Move model data to config](./35-move-model-data-to-config.md) - Remove hardcoded model/provider information
+- [ ] [36 - Auto-summarize large orchestrator responses](./36-auto-summarize-orchestrator-responses.md) - Prevent context window bloat
 
 ### User Experience
 
