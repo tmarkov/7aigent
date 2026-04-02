@@ -318,6 +318,12 @@ pub struct BehaviorConfig {
     /// If not specified, defaults to checking for .7aigent/init.md in project directory
     /// If file doesn't exist, agent starts without initial messages
     pub initial_messages: Option<PathBuf>,
+
+    /// Maximum character length for orchestrator responses before summarization.
+    /// Set to 0 to disable summarization (responses are included in full).
+    /// Large responses are truncated with a summary indicator.
+    #[serde(default)]
+    pub response_summary_threshold: usize,
 }
 
 fn default_explain_actions() -> bool {
@@ -330,6 +336,7 @@ impl Default for BehaviorConfig {
             explain_actions: default_explain_actions(),
             ask_before_destructive: false,
             initial_messages: None,
+            response_summary_threshold: 10000,
         }
     }
 }

@@ -415,8 +415,12 @@ impl<C: LlmClient> Agent<C> {
                 .unwrap_or_else(Self::create_empty_screen);
 
             // Build LLM context from events
-            let messages =
-                build_llm_messages_from_events(&events, &current_screen, &self.session.project_dir);
+            let messages = build_llm_messages_from_events(
+                &events,
+                &current_screen,
+                &self.session.project_dir,
+                self.config.behavior.response_summary_threshold,
+            );
 
             // Convert to LLM messages
             let llm_messages: Vec<LlmMessage> = messages
@@ -580,6 +584,7 @@ fn build_llm_messages_from_events(
     events: &[Event],
     current_screen: &ScreenState,
     project_dir: &Path,
+    response_summary_threshold: usize,
 ) -> Vec<(MessageRole, String)> {
     use crate::context::truncate_history;
     use crate::types::Message;
@@ -631,6 +636,7 @@ fn build_llm_messages_from_events(
                     *exit_code,
                     *processed,
                     project_dir,
+                    response_summary_threshold,
                 );
                 messages.push(Message {
                     role: MessageRole::User,

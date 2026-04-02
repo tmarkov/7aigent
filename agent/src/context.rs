@@ -91,6 +91,8 @@ pub fn format_task(task: &str, project_dir: &Path) -> Message {
 /// Format command execution output
 ///
 /// Converts command execution results into a user message.
+/// If threshold > 0 and output exceeds threshold, truncates with summary indicator.
+/// TODO: Use an LLM-generated summary (need to know the LLM context window threshold)
 pub fn format_command_output(
     environment: &str,
     command: &str,
@@ -98,13 +100,28 @@ pub fn format_command_output(
     exit_code: Option<i32>,
     processed: bool,
     project_dir: &Path,
+    threshold: usize,
 ) -> Message {
     let renderer = TemplateRenderer::new(project_dir);
     let mut context = TemplateContext::new();
 
+    // Apply summarization threshold if configured
+    let output_to_use = if threshold > 0 && output.len() > threshold {
+        // Truncate output and add summary indicator
+        let truncated = &output[..threshold.min(output.len())];
+        let summary_note = format!(
+            "\n\n... [OUTPUT TRUNCATED: {} chars total, showing first {} chars] ...",
+            output.len(),
+            threshold
+        );
+        format!("{}{}", truncated, summary_note)
+    } else {
+        output.to_string()
+    };
+
     context.insert("environment", environment);
     context.insert("command", command);
-    context.insert("output", output);
+    context.insert("output", &output_to_use);
     context.insert(
         "exit_code",
         exit_code
@@ -264,6 +281,7 @@ mod tests {
             Some(0),
             true,
             tmp.path(),
+            0, // No threshold
         );
         assert_eq!(msg.role, MessageRole::User);
         assert!(msg.content.contains("Environment: bash"));
@@ -273,6 +291,33 @@ mod tests {
         assert!(msg.content.contains("file1.txt"));
     }
 
+    #[test]
+    fn test_format_command_output_with_truncation() {
+        let tmp = TempDir::new().unwrap();
+
+        // Create output that exceeds threshold
+        let long_output = "x".repeat(1000);
+        let threshold = 100;
+
+        let msg = format_command_output(
+            "bash",
+            "cat bigfile.txt",
+            &long_output,
+            Some(0),
+            true,
+            tmp.path(),
+            threshold,
+        );
+
+        // Verify the output is truncated
+        assert!(msg.content.contains("OUTPUT TRUNCATED"));
+        assert!(msg.content.contains("1000 chars total"));
+        assert!(msg.content.contains("showing first 100 chars"));
+        // The truncated portion should be in the output
+        assert!(msg.content.contains(&"x".repeat(100)));
+        // But not the full output
+        assert!(!msg.content.contains(&"x".repeat(500)));
+    }
     #[test]
     fn test_format_screen() {
         let tmp = TempDir::new().unwrap();

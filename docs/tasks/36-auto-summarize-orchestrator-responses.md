@@ -17,14 +17,14 @@ Need to:
 
 # Plan
 
-- [ ] Determine appropriate size threshold for orchestrator responses
-- [ ] Identify where orchestrator responses are added to conversation
-- [ ] Design summarization strategy (what to keep, what to compress)
-- [ ] Implement size detection logic
-- [ ] Implement summarization logic (may use LLM or rule-based)
-- [ ] Add configuration option for threshold (0 = disabled)
-- [ ] Add tests for summarization logic
-- [ ] Run `nix build .#agent` and `nix build .#orchestrator` to verify
+- [x] Determine appropriate size threshold for orchestrator responses
+- [x] Identify where orchestrator responses are added to conversation
+- [x] Design summarization strategy (what to keep, what to compress)
+- [x] Implement size detection logic
+- [x] Implement summarization logic (may use LLM or rule-based)
+- [x] Add configuration option for threshold (0 = disabled)
+- [x] Add tests for summarization logic
+- [x] Run `nix build .#agent` and `nix build .#orchestrator` to verify
 
 # Dependencies
 
