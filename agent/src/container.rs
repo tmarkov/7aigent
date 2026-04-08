@@ -82,8 +82,8 @@ impl ContainerManager {
         // First argument: project directory
         cmd.arg(project_dir);
 
-        // Optional: disable network if configured
-        if config.disable_network {
+        // Optional: disable network if configured (default: true)
+        if config.disable_network.unwrap_or(true) {
             cmd.arg("--unshare-net");
         }
 

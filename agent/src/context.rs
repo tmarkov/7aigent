@@ -220,7 +220,7 @@ mod tests {
 
         let sandbox = SandboxConfig {
             shell_prefix: None,
-            disable_network: true,
+            disable_network: Some(true),
             sandbox_path: None,
             files: FileAccessConfig::default(),
             resources: ResourceConfig::default(),
@@ -243,7 +243,7 @@ mod tests {
 
         let sandbox = SandboxConfig {
             shell_prefix: None,
-            disable_network: true,
+            disable_network: Some(true),
             sandbox_path: None,
             files: FileAccessConfig {
                 read_only: vec!["*.lock".to_string()],

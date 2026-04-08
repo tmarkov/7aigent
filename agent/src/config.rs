@@ -71,6 +71,9 @@ impl Config {
         if other.llm.max_tokens.is_some() {
             self.llm.max_tokens = other.llm.max_tokens;
         }
+        if other.llm.timeout_seconds.is_some() {
+            self.llm.timeout_seconds = other.llm.timeout_seconds;
+        }
         if other.llm.system_prompt_suffix.is_some() {
             self.llm.system_prompt_suffix = other.llm.system_prompt_suffix;
         }
@@ -90,8 +93,9 @@ impl Config {
         if other.sandbox.sandbox_path.is_some() {
             self.sandbox.sandbox_path = other.sandbox.sandbox_path;
         }
-        // disable_network is a boolean, so just copy it
-        self.sandbox.disable_network = other.sandbox.disable_network;
+        if other.sandbox.disable_network.is_some() {
+            self.sandbox.disable_network = other.sandbox.disable_network;
+        }
 
         // File access: replace lists if non-empty
         if !other.sandbox.files.read_only.is_empty() {
@@ -148,6 +152,9 @@ pub struct LlmConfig {
     /// Maximum tokens in response
     pub max_tokens: Option<usize>,
 
+    /// HTTP request timeout in seconds (default: 60)
+    pub timeout_seconds: Option<u64>,
+
     /// Custom system prompt suffix
     pub system_prompt_suffix: Option<String>,
 
@@ -196,8 +203,8 @@ impl LlmConfig {
         );
 
         // Set optional timeout (default is 60 seconds)
-        if let Some(timeout) = self.max_tokens {
-            validated = validated.with_timeout(timeout as u64);
+        if let Some(timeout) = self.timeout_seconds {
+            validated = validated.with_timeout(timeout);
         }
 
         Ok(validated)
@@ -214,6 +221,7 @@ impl Default for LlmConfig {
             api_key_env: Some("OPENAI_API_KEY".to_string()),
             temperature: Some(0.7),
             max_tokens: Some(4096),
+            timeout_seconds: None,
             system_prompt_suffix: None,
             reasoning_effort: Some(crate::llm::ReasoningEffort::Medium),
             pricing,
@@ -224,12 +232,8 @@ impl Default for LlmConfig {
 /// Token pricing for a model (re-export from llm::cost)
 pub use crate::llm::cost::TokenPricing;
 
-fn default_true() -> bool {
-    true
-}
-
 /// Sandbox configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SandboxConfig {
     /// Shell prefix for wrapping interactive processes (e.g., "nix develop --command")
     /// This is passed to orchestrator via SHELL_PREFIX environment variable.
@@ -238,8 +242,7 @@ pub struct SandboxConfig {
     pub shell_prefix: Option<String>,
 
     /// Disable network access (default: true, network disabled)
-    #[serde(default = "default_true")]
-    pub disable_network: bool,
+    pub disable_network: Option<bool>,
 
     /// Path to custom sandbox script (optional, overrides default)
     pub sandbox_path: Option<PathBuf>,
@@ -251,18 +254,6 @@ pub struct SandboxConfig {
     /// Resource limits (V1: not implemented, use systemd-run manually)
     #[serde(default)]
     pub resources: ResourceConfig,
-}
-
-impl Default for SandboxConfig {
-    fn default() -> Self {
-        Self {
-            shell_prefix: None,
-            disable_network: default_true(),
-            sandbox_path: None,
-            files: FileAccessConfig::default(),
-            resources: ResourceConfig::default(),
-        }
-    }
 }
 
 /// File access configuration (advisory in V1)
@@ -465,6 +456,7 @@ mod tests {
                 api_key_env: Some("OPENAI_API_KEY".to_string()),
                 temperature: Some(0.7),
                 max_tokens: Some(4096),
+                timeout_seconds: None,
                 system_prompt_suffix: None,
                 reasoning_effort: None,
                 pricing: HashMap::new(),
@@ -514,5 +506,63 @@ mod tests {
         // Valid threshold should work
         config.budget.warn_threshold = Decimal::new(80, 2); // 0.8
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_disable_network_merge_preserves_global_when_project_omits_it() {
+        // Bug regression: unconditional copy of disable_network would override
+        // a global `disable_network = false` with the default `None` from a
+        // project config that doesn't mention disable_network at all.
+        let mut global = Config::default();
+        global.llm.endpoint = "https://api.example.com".to_string();
+        global.llm.model = "gpt-4".to_string();
+        global.sandbox.disable_network = Some(false); // explicitly allow network globally
+
+        let project = Config::default(); // project config mentions nothing about network
+        global.merge(project);
+
+        assert_eq!(
+            global.sandbox.disable_network,
+            Some(false),
+            "global disable_network=false should not be overridden by a project config that omits the field"
+        );
+    }
+
+    #[test]
+    fn test_disable_network_merge_project_can_override_global() {
+        let mut global = Config::default();
+        global.llm.endpoint = "https://api.example.com".to_string();
+        global.llm.model = "gpt-4".to_string();
+        global.sandbox.disable_network = Some(false);
+
+        let mut project = Config::default();
+        project.sandbox.disable_network = Some(true); // project explicitly disables network
+        global.merge(project);
+
+        assert_eq!(global.sandbox.disable_network, Some(true));
+    }
+
+    #[test]
+    fn test_timeout_seconds_not_confused_with_max_tokens() {
+        // Bug regression: max_tokens (e.g. 4096) was used as the HTTP timeout in seconds,
+        // which would set a ~68 minute timeout instead of the intended 60s default.
+        let mut config = Config::default();
+        config.llm.endpoint = "https://api.openai.com/v1".to_string();
+        config.llm.model = "gpt-4".to_string();
+        config.llm.max_tokens = Some(4096);
+        config.llm.timeout_seconds = None; // not set → should use ValidatedLlmConfig default (60s)
+
+        // Setting a large max_tokens should not affect timeout
+        std::env::set_var("OPENAI_API_KEY", "test-key");
+        let validated = config.llm.validate().unwrap();
+        assert_eq!(
+            validated.timeout_seconds, 60,
+            "timeout should be 60s default when timeout_seconds is not set"
+        );
+
+        // Setting timeout_seconds explicitly should be respected
+        config.llm.timeout_seconds = Some(120);
+        let validated = config.llm.validate().unwrap();
+        assert_eq!(validated.timeout_seconds, 120);
     }
 }
