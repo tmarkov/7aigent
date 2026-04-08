@@ -37,13 +37,13 @@ LLM API calls cost money per token. Without careful management:
 ### Budget Types
 
 **Session Budget**: Maximum spend for a single session
-- Set via CLI flag or config
+- Set via config file
 - Tracked cumulatively across all API calls
-- When exceeded: pause and ask user to continue or stop
+- When exceeded: session fails immediately (no partial API calls)
 
-**Warning Threshold**: Proactive notification
-- Default: 50%, 75%, 90% of budget
-- User sees progress without interruption
+**Warning Threshold**: Proactive notification before budget is hit
+- Default: 80% of budget
+- Prompts user to continue or stop before the next API call
 - Helps avoid surprise budget exhaustion
 
 **No Budget Mode**: Explicit opt-out
@@ -58,23 +58,28 @@ LLM API calls cost money per token. Without careful management:
 │           Budget State Machine          │
 ├─────────────────────────────────────────┤
 │                                         │
-│  ┌─────────┐    budget    ┌─────────┐  │
-│  │ Running │ ───────────▶ │ Paused  │  │
-│  └────┬────┘   exceeded   └────┬────┘  │
-│       ▲                         │       │
-│       │         resume          │       │
-│       └─────────────────────────┘       │
-│                                         │
-│  Any state ─▶ Stopped (user choice)    │
+│  ┌─────────┐  warn      ┌──────────┐   │
+│  │ Running │ ─────────▶ │ Prompted │   │
+│  └────┬────┘ threshold  └────┬─────┘   │
+│       │                      │         │
+│       │      budget          │ y/n      │
+│       ├────────────────────▶ Fail       │
+│       │      exceeded        │         │
+│       │                      ▼         │
+│       └──────────── Continue/Stop      │
 │                                         │
 └─────────────────────────────────────────┘
 ```
 
-When budget exceeded:
+When warning threshold reached (approaching budget):
 1. Stop before next API call
 2. Display current spend and budget
-3. Ask user: continue (with new budget) or stop
+3. Ask user: continue or stop
 4. Resume only with explicit user consent
+
+When budget is actually exceeded:
+1. Session is marked as failed immediately
+2. No user prompt — session ends
 
 ## Token Tracking
 
@@ -94,7 +99,7 @@ This enables:
 ### Cost Calculation
 
 ```rust
-cost = (input_tokens * input_price) + (output_tokens * output_price)
+cost = (input_tokens * input_price_per_1k / 1000) + (output_tokens * output_price_per_1k / 1000)
 ```
 
 Prices are model-specific and configurable:
@@ -106,12 +111,13 @@ Prices are model-specific and configurable:
 
 ### Budget Configuration
 
-Budgets can be set via:
-- CLI flag: `--budget 5.00` (dollars)
-- Config file: `budget: 5.00`
-- Environment variable: `AGENT_BUDGET=5.00`
+Budgets can be set via the config file:
 
-Priority: CLI > Config > Environment > Default (no limit)
+```toml
+[budget]
+max_cost_per_session = 5.00
+warn_threshold = 0.8
+```
 
 ### Cost Reporting
 
@@ -123,7 +129,6 @@ After each API call:
 At session end:
 - Report total cost
 - Report token breakdown (input/output)
-- Report by model if multiple used
 
 ### Persistence
 
@@ -146,17 +151,17 @@ Budget state is persisted with session:
 - Pro: No shared state between sessions
 - Con: User must set budget per session (or use config)
 
-### Why Pause Instead of Stop?
+### Why Hard Fail Instead of Pause on Budget Exceeded?
 
-**Alternative**: Hard stop when budget exceeded
-- Pro: Guarantees budget adherence
-- Con: Loses work in progress
-- Con: Frustrating for users
+**Alternative**: Pause and ask user when budget exceeded
+- Pro: User can extend budget and continue
+- Con: May have already made a partial API call
+- Con: Adds complexity to recovery logic
 
-**Chosen**: Pause and ask
-- Pro: User has control
-- Pro: Can continue if budget was conservative
-- Con: Requires user interaction
+**Chosen**: Hard fail when exceeded, warn-and-prompt approaching threshold
+- Pro: Guarantees budget adherence once exceeded
+- Pro: Warning threshold gives the user control before the limit is hit
+- Con: In-progress work may be lost if budget is hit unexpectedly
 
 ### Why Track Per-Message?
 
@@ -172,9 +177,9 @@ Budget state is persisted with session:
 
 ## Related Components
 
-- **budget.rs**: Token counting and cost calculation
+- **budget.rs**: Budget threshold checking
+- **llm/openai.rs**: Token counting and cost calculation
 - **config.rs**: Budget configuration loading
-- **session.rs**: Budget persistence
 
 ## Related Documents
 

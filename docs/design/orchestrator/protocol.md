@@ -18,74 +18,75 @@ Agent                          Orchestrator
   │                                  │
   │──── Command (NDJSON) ───────────>│
   │                                  │
-  │<─── Response (NDJSON) ───────────│
-  │                                  │
-  │<─── Screen Update (NDJSON) ──────│
+  │<─── Response+Screen (NDJSON) ────│
   │                                  │
 ```
 
 Each turn consists of:
 1. Agent sends a command
-2. Orchestrator executes and returns response
-3. Orchestrator sends screen update
+2. Orchestrator executes and returns a single combined response+screen message
 
 ## Command Format
 
 Commands are sent as single-line JSON objects:
 
 ```json
-{"environment": "bash", "command": "ls -la"}
+{"env": "bash", "command": "ls -la"}
 ```
 
 Fields:
-- `environment` (required): Target environment name
+- `env` (required): Target environment name
 - `command` (required): Command text to execute
 
 ## Response Format
 
-Responses include execution results:
+Each response is a single JSON object combining command output and updated screen state:
 
 ```json
-{"output": "total 8\ndrwxr-xr-x 2 user user 4096...", "processed": true}
+{
+  "response": {
+    "output": "total 8\ndrwxr-xr-x 2 user user 4096...",
+    "processed": true
+  },
+  "screen": {
+    "bash": {"content": "Working directory: /workspace\n..."},
+    "python": {"content": ""},
+    "editor": {"content": "Views: none"}
+  }
+}
 ```
 
-Fields:
+`response` fields:
 - `output`: Text output from the command
 - `processed`: Whether the command was successfully processed
 - `exit_code` (bash only): Process exit code (0-255)
 
-## Screen Format
-
-Screen updates show current state of all environments:
-
-```json
-{
-  "sections": [
-    {"name": "bash", "content": "Working directory: /workspace\n..."},
-    {"name": "python", "content": "Python REPL (ready)"},
-    {"name": "editor", "content": "Views: none"}
-  ]
-}
-```
+`screen` fields: A dict keyed by environment name, each value having a `content` string with the current display state of that environment.
 
 ## Error Handling
 
 ### Unknown Environment
 
 ```json
-{"output": "Unknown environment: 'docker'\nAvailable: bash, python, editor", "processed": false}
+{
+  "response": {"output": "Unknown environment: 'docker'. Available environments: bash, python, editor", "processed": false},
+  "screen": { ... }
+}
 ```
 
 ### Parse Error
 
 ```json
-{"output": "Invalid command format: expected 'environment: command'", "processed": false}
+{"type": "error", "message": "Parse error: ..."}
 ```
 
 ### Execution Error
 
 ```json
-{"output": "Environment error: [traceback]", "processed": false}
+{
+  "response": {"output": "Environment error: [traceback]", "processed": false},
+  "screen": { ... }
+}
 ```
 
 ## Design Decisions
@@ -96,7 +97,7 @@ Screen updates show current state of all environments:
 
 3. **Structured exit codes**: Bash includes `exit_code` field for programmatic checking, not just "success/failure".
 
-4. **Screen is separate message**: Allows screen to be generated after command execution, showing updated state.
+4. **Combined response+screen**: Response and screen state are sent as a single message per turn. This simplifies the agent's receive logic and ensures the screen is always up-to-date with the response.
 
 5. **No message IDs**: Single-threaded execution means responses always match the preceding command.
 
@@ -104,4 +105,4 @@ Screen updates show current state of all environments:
 
 - `orchestrator/communication.py` - Message parsing and serialization
 - `orchestrator/main.py` - Main loop implementation
-- `agent/src/container/manager.rs` - Agent-side protocol handling
+- `agent/src/container.rs` - Agent-side protocol handling

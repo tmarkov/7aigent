@@ -42,8 +42,7 @@ nix build .#agent
 
 All commands run in a bubblewrap sandbox with:
 - Isolated filesystem (only project directory visible)
-- No network access by default
-- Resource limits
+- No network access by default (set `disable_network = false` in config to enable)
 - Custom tool availability via shell_prefix
 
 See [Sandbox Design](../design/sandbox/) for details.
@@ -81,6 +80,10 @@ The agent runs in a minimal environment by default. To add project-specific tool
 
 ```toml
 # .7aigent/config.toml
+[llm]
+endpoint = "https://api.anthropic.com/v1/messages"
+model = "claude-opus-4-5"
+
 [sandbox]
 shell_prefix = "nix develop --command"
 ```

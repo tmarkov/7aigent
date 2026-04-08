@@ -23,7 +23,7 @@ You can override these templates in your project without modifying the agent cod
 
 **Syntax**: `{{key}}` placeholders are replaced with actual values.
 
-**Validation**: The agent errors if required keys are missing or unknown keys are provided.
+**Validation**: The agent errors if required keys are missing from the template context. Extra keys provided in context but not used by the template are silently ignored.
 
 ## Available Templates
 
@@ -41,7 +41,7 @@ You can override these templates in your project without modifying the agent cod
 **Example override**:
 
 ```markdown
-You are 7aigent, a specialized AI assistant for {{project_type}}.
+You are 7aigent, a specialized AI assistant.
 
 Available environments:
 - bash: Shell commands
@@ -57,7 +57,7 @@ Guidelines:
 {{additional_guidelines}}
 ```
 
-Note: You can't add custom keys like `{{project_type}}` - only the predefined keys are supported.
+Note: You can't add custom keys like `{{project_type}}` — only predefined keys are supported. Using an undefined key causes a `MissingKey` error at runtime.
 
 ### task.md
 
@@ -219,7 +219,7 @@ This removes the header, making the screen output more concise.
 
 **Debug template issues**:
 - Missing keys: Agent will error with "Missing required key: <key>"
-- Unknown keys: Agent will error with "Unknown key: <key>"
+- Extra keys in context are silently ignored — you cannot cause an error by providing unused keys
 - Read template errors: Check file permissions and path
 
 ## Limitations
@@ -234,7 +234,7 @@ This removes the header, making the screen output more concise.
 
 ## Reference
 
-**Template validation**: All templates are validated at runtime. Mismatches between template keys and provided context will fail immediately with clear error messages.
+**Template validation**: All templates are validated at runtime. If a template references a key not provided in context, the agent fails immediately with a `MissingKey` error.
 
 **Character encoding**: Templates must be UTF-8 encoded markdown files.
 

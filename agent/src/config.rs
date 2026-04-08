@@ -224,8 +224,12 @@ impl Default for LlmConfig {
 /// Token pricing for a model (re-export from llm::cost)
 pub use crate::llm::cost::TokenPricing;
 
+fn default_true() -> bool {
+    true
+}
+
 /// Sandbox configuration
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SandboxConfig {
     /// Shell prefix for wrapping interactive processes (e.g., "nix develop --command")
     /// This is passed to orchestrator via SHELL_PREFIX environment variable.
@@ -233,8 +237,8 @@ pub struct SandboxConfig {
     /// Bash environment ignores this - agent controls bash shell directly.
     pub shell_prefix: Option<String>,
 
-    /// Disable network access (default: false, network enabled)
-    #[serde(default)]
+    /// Disable network access (default: true, network disabled)
+    #[serde(default = "default_true")]
     pub disable_network: bool,
 
     /// Path to custom sandbox script (optional, overrides default)
@@ -247,6 +251,18 @@ pub struct SandboxConfig {
     /// Resource limits (V1: not implemented, use systemd-run manually)
     #[serde(default)]
     pub resources: ResourceConfig,
+}
+
+impl Default for SandboxConfig {
+    fn default() -> Self {
+        Self {
+            shell_prefix: None,
+            disable_network: default_true(),
+            sandbox_path: None,
+            files: FileAccessConfig::default(),
+            resources: ResourceConfig::default(),
+        }
+    }
 }
 
 /// File access configuration (advisory in V1)
