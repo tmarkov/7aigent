@@ -993,42 +993,6 @@ def gamma():
             assert "def " in content, "Should contain function definition"
 
 
-# ====================
-# Executor Limit Enforcement
-# ====================
-
-
-@timeout(10)
-def test_executor_enforces_max_window_lines_limit():
-    """Requirement: Executor must enforce MAX_WINDOW_LINES (200) on all operations.
-
-    Any operation that would create window > 200 lines must be clamped.
-    """
-    with TemporaryDirectory() as tmpdir:
-        tmppath = Path(tmpdir)
-
-        testfile = tmppath / "large.py"
-        # Create file with 500 lines, unique match at line 250
-        lines = [f"# comment {i}" for i in range(1, 501)]
-        lines[249] = "# UNIQUE_MATCH_TARGET"  # Line 250
-        testfile.write_text("\n".join(lines) + "\n")
-
-        parser = QueryParser()
-        executor = QueryExecutor(tmppath)
-
-        # Try to expand beyond limit with unique match
-        ast = parser.parse_read_only_peek(
-            "read-only-peek /UNIQUE_MATCH_TARGET/ in *.py | context 300"
-        )
-        windows = executor.execute(ast, set())
-
-        # Should have 1 match, clamped to MAX_WINDOW_LINES
-        assert len(windows) == 1
-        assert (
-            windows[0].line_count <= 200
-        ), f"Window should be clamped to 200 lines, got {windows[0].line_count}"
-
-
 @timeout(10)
 def test_executor_respects_excluded_files_set():
     """Requirement: Executor must respect excluded_files parameter in execute().

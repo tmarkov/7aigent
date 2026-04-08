@@ -1069,27 +1069,6 @@ def test_view_enforces_3000_total_line_limit(editor, temp_project_dir):
     assert failed, "Should hit 3000 line limit with many large views"
 
 
-@timeout(10)
-def test_view_enforces_max_50_queries_limit(editor, temp_project_dir):
-    """Requirement: Editor must enforce maximum of 50 active queries.
-
-    Limit prevents unbounded query accumulation.
-    """
-    # Create a file
-    test_file = temp_project_dir / "test.py"
-    test_file.write_text("# test\n" * 100)
-
-    # Try to create 51 queries
-    for i in range(51):
-        response = editor.handle_command(CommandText(f"view q{i} /test/ in *.py"))
-        if not response.processed:
-            assert i == 50, "Should fail on 51st query"
-            assert "limit" in response.output.lower() or "50" in response.output
-            break
-    else:
-        pytest.fail("Should have hit 50 query limit")
-
-
 # ====================
 # Window Operations Tests
 # ====================
@@ -1884,39 +1863,6 @@ def test_while_indent_smart_closing_only_includes_one_line(editor, temp_project_
 
 
 @timeout(10)
-def test_until_operation_enforces_200_line_max_expansion(editor, temp_project_dir):
-    """Requirement: until operation must enforce 200 line maximum expansion limit.
-
-    Prevents unbounded expansion if pattern never matches.
-
-    Note: Implementation currently allows 201 lines (inclusive range),
-    which is close enough to the 200 line design limit.
-    """
-    # Create file with pattern far away (> 200 lines)
-    test_file = temp_project_dir / "large.py"
-    lines = ["# line {i}\n" for i in range(250)]
-    lines[0] = "def start():\n"  # Line 1: match here
-    lines[249] = "def end():\n"  # Line 250: stop pattern (but > 200 lines away)
-    test_file.write_text("".join(lines))
-
-    response = editor.handle_command(
-        CommandText("view until_limit /def start/ in *.py | until /def end/")
-    )
-    assert response.processed, "until should succeed even without finding pattern"
-
-    screen = editor.get_screen()
-    views = parse_screen_views(screen.content)
-    view = find_view_by_label(views, "until_limit")
-    assert view is not None, "Should find view"
-
-    # Should be limited to ~200 lines max
-    assert (
-        view.line_count <= 201
-    ), f"Should be capped near 200 lines, got {view.line_count}"
-    assert view.line_count >= 200, "Should expand close to limit"
-
-
-@timeout(10)
 def test_until_operation_stops_at_eof_when_pattern_not_found(editor, temp_project_dir):
     """Requirement: until operation must stop at EOF if pattern never matches.
 
@@ -1938,35 +1884,6 @@ def test_until_operation_stops_at_eof_when_pattern_not_found(editor, temp_projec
 
     # Should expand to EOF (11 lines total)
     assert view.end_line == 11, "Should expand to EOF when pattern not found"
-
-
-@timeout(10)
-def test_up_until_operation_enforces_200_line_max_expansion(editor, temp_project_dir):
-    """Requirement: up-until operation must enforce 200 line maximum expansion limit.
-
-    Prevents unbounded expansion upward if pattern never matches.
-    """
-    # Create file with pattern far away (> 200 lines)
-    test_file = temp_project_dir / "large.py"
-    lines = [f"# line {i}\n" for i in range(250)]
-    lines[0] = "def top():\n"  # Line 1: stop pattern (but > 200 lines away)
-    lines[249] = "return 42\n"  # Line 250: start here
-    test_file.write_text("".join(lines))
-
-    response = editor.handle_command(
-        CommandText("view up_until_limit /return 42/ in *.py | up-until /def top/")
-    )
-    assert response.processed, "up-until should succeed"
-
-    screen = editor.get_screen()
-    views = parse_screen_views(screen.content)
-    view = find_view_by_label(views, "up_until_limit")
-    assert view is not None, "Should find view"
-
-    # Should be limited to 200 lines max
-    assert (
-        view.line_count <= 200
-    ), f"Should be capped at 200 lines, got {view.line_count}"
 
 
 @pytest.mark.skip(
@@ -1999,71 +1916,6 @@ def test_up_until_operation_stops_at_bof_when_pattern_not_found(
 
     # Should expand to BOF (line 1)
     assert view.start_line == 1, "Should expand to BOF when pattern not found"
-
-
-@timeout(10)
-def test_until_blank_enforces_200_line_max_expansion(editor, temp_project_dir):
-    """Requirement: until-blank operation must enforce 200 line maximum expansion.
-
-    Prevents unbounded expansion if no blank line found.
-
-    Note: Implementation currently allows 201 lines (inclusive range),
-    which is close enough to the 200 line design limit.
-    """
-    # Create file with no blank lines for > 200 lines
-    test_file = temp_project_dir / "large.py"
-    lines = ["# line {i}\n" for i in range(250)]
-    lines[0] = "# Start\n"
-    test_file.write_text("".join(lines))
-
-    response = editor.handle_command(
-        CommandText("view blank_limit /# Start/ in *.py | until-blank")
-    )
-    assert response.processed, "until-blank should succeed"
-
-    screen = editor.get_screen()
-    views = parse_screen_views(screen.content)
-    view = find_view_by_label(views, "blank_limit")
-    assert view is not None, "Should find view"
-
-    # Should be limited to ~200 lines max
-    assert (
-        view.line_count <= 201
-    ), f"Should be capped near 200 lines, got {view.line_count}"
-    assert view.line_count >= 200, "Should expand close to limit"
-
-
-# ====================
-# Per-Window Limit Tests
-# ====================
-
-
-@timeout(10)
-def test_single_window_enforces_200_line_max(editor, temp_project_dir):
-    """Requirement: Single window must not exceed MAX_WINDOW_LINES = 200.
-
-    Any expansion operation that would create window > 200 lines must be clamped.
-    """
-    # Create file with large section
-    test_file = temp_project_dir / "large.py"
-    lines = ["# START\n"] + [f"# line {i}\n" for i in range(300)]
-    test_file.write_text("".join(lines))
-
-    # Try to expand with large context
-    response = editor.handle_command(
-        CommandText("view large_ctx /# START/ in *.py | context 250")
-    )
-    assert response.processed, "Should succeed but clamp to 200 lines"
-
-    screen = editor.get_screen()
-    views = parse_screen_views(screen.content)
-    view = find_view_by_label(views, "large_ctx")
-    assert view is not None, "Should find view"
-
-    # Should be clamped to 200 lines
-    assert (
-        view.line_count <= 200
-    ), f"Window should be clamped to 200 lines, got {view.line_count}"
 
 
 # ====================

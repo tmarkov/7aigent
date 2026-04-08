@@ -33,9 +33,9 @@ from orchestrator.environments.editor.parser import (
 from orchestrator.environments.editor.windows import Window
 
 # Limits
-MAX_MATCHES_PER_FILE = 50
+MAX_MATCHES_PER_FILE = 3000
 MAX_FILES = 100
-MAX_WINDOW_LINES = 200
+MAX_WINDOW_LINES = 3000
 
 
 class QueryExecutor:
