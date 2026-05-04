@@ -114,8 +114,10 @@ more than a configurable `detail_threshold` lines.
 **R12** — The `detail_threshold` is configurable, with a sensible default
 (suggested: 30 lines).
 
-**R13** — Markdown files are parsed using Julia's stdlib `Markdown` module.
-Sections and subsections are landmark nodes; paragraphs are detail nodes.
+**R13** — The config format applies uniformly to all languages. Markdown files
+are parsed using Julia's stdlib `Markdown` module; the landmark/detail
+classification for Markdown node types is specified in the config, not
+hardcoded in the package.
 
 ---
 
@@ -152,15 +154,16 @@ documentation is found, `summary` is `missing`.
 
 ### Cross-References
 
-**R21** — Function and method calls are extracted by scanning `source` for
-`name(` patterns; each match produces a `refs` row with `ref_kind="call"`.
+**R21** — The language config supplies tree-sitter query patterns that define
+what constitutes a reference for each language. Each matched pattern produces
+a row in `db.refs` with the `ref_kind` label specified in the config.
 
-**R22** — Import statements produce `refs` rows with `ref_kind="import"`.
+**R22** — The `ref_kind` label is config-defined, allowing semantically
+equivalent constructs across languages to be mapped to the same kind (e.g.
+Python `import`, C `#include`, and Nix `imports = [...]` can all map to
+`ref_kind="import"`). The package imposes no fixed vocabulary of ref kinds.
 
-**R23** — Base class names in class declarations produce `refs` rows with
-`ref_kind="inherit"`.
-
-**R24** — After extraction, refs with exactly one match in `db.code` by
+**R23** — After extraction, refs with exactly one match in `db.code` by
 `to_name` have their `to_id` resolved. Refs with zero or multiple matches
 leave `to_id` as `missing`.
 
@@ -168,37 +171,44 @@ leave `to_id` as `missing`.
 
 ### Caching
 
-**R25** — The cache is stored under `.7aigent/code_tree/` relative to the
+**R24** — The cache is stored under `.7aigent/code_tree/` relative to the
 codebase root.
 
-**R26** — A `files` table is persisted alongside `code` and `refs`, tracking
+**R25** — A `files` table is persisted alongside `code` and `refs`, tracking
 `(path, hash, commit_hash?)` for each indexed file. `hash` is the SHA-256 of
 the file contents.
 
-**R27** — On `load`, each discovered file's hash is compared against the
+**R26** — On `load`, each discovered file's hash is compared against the
 cache. Unchanged files reuse their cached rows without re-parsing.
 
-**R28** — Changed and new files are re-parsed; their rows in `code` and
+**R27** — Changed and new files are re-parsed; their rows in `code` and
 `refs` are replaced.
 
-**R29** — Files present in the cache but absent on disk have their rows
+**R28** — Files present in the cache but absent on disk have their rows
 removed.
 
 ---
 
 ### Editing
 
-**R30** — `update_source(db, id, new_source)` is the sole entry point for
-modifying source. There is no other supported way to change codebase content.
+**R29** — `CodeTreeDB` maintains an internal in-memory buffer: a mapping from
+file path to current source content. On `load`, all discovered files are read
+into this buffer. The DataFrames are always indexed from the buffer, never
+directly from disk.
 
-**R31** — `update_source` reconstructs the full file by replacing the target
-node's lines with `new_source`, then writes the result to disk.
+**R30** — `update_source(db, id, new_source)` is the sole mutation path.
+There is no other supported way to change codebase content.
 
-**R32** — After writing to disk, the affected file is fully re-indexed
-(steps: parse → build tree → extract summaries → extract refs → resolve refs).
+**R31** — `update_source` reconstructs the new file content in memory by
+replacing the target node's lines with `new_source` in the buffer.
 
-**R33** — `db.code` and `db.refs` are updated together: all re-indexing work
-is completed before either DataFrame is modified. If re-indexing fails, both
-DataFrames remain unchanged.
+**R32** — The new buffer content is re-indexed in memory (parse → build tree
+→ extract summaries → extract refs → resolve refs), producing a new set of
+rows. Only if this succeeds are the DataFrames modified.
 
-**R34** — The cache is updated after a successful edit.
+**R33** — `db.code` and `db.refs` are updated together from the new rows.
+Both updates are in-memory and happen before any write to disk.
+
+**R34** — After the DataFrames are updated, the new buffer content is written
+to disk and the cache is updated. Disk is never written before the DataFrames
+are consistent with the new content.
