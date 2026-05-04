@@ -1,0 +1,7 @@
+name = "CodeTree"
+uuid = "342842c8-1a2a-4ebb-ae0f-32d4c88624eb"
+authors = []
+version  = "0.1.0"
+
+[compat]
+julia = "1.11"
