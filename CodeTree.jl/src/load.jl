@@ -120,6 +120,7 @@ function load(
         buffer,
         hashes,
     )
+    extract_symbols!(db)
     return db
 end
 

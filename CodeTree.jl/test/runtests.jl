@@ -545,3 +545,81 @@ end
     @test occursin("globals", something(cmt.summary, ""))
 end
 
+# =============================================================================
+# Phase 6 — Symbol Extraction (R21, R21a, R21b, R21c, R22)
+# =============================================================================
+
+@testset "R21: call symbols recorded for main() leaf — quick_sort, timed_sort, process" begin
+    code = _db().code
+    syms = _db().symbols
+    main_leaves = filter(r -> isequal(r.file, "src/main.cpp") && r.n_children == 0, code)
+    calls = filter(r -> r.kind == "call" && r.node_id in main_leaves.id, syms)
+    @test "quick_sort" in calls.symbol
+    @test "timed_sort" in calls.symbol
+    @test "process"    in calls.symbol
+end
+
+@testset "R21: var_ref symbols exclude locally-defined names (n, data, raw, s, idx)" begin
+    code = _db().code
+    syms = _db().symbols
+    main_leaves = filter(r -> isequal(r.file, "src/main.cpp") && r.n_children == 0, code)
+    var_refs = filter(r -> r.kind == "var_ref" && r.node_id in main_leaves.id, syms)
+    for local_name in ("n", "data", "raw", "s", "idx")
+        @test local_name ∉ var_refs.symbol
+    end
+end
+
+@testset "R21: MAX_N appears as var_ref in main.cpp leaves" begin
+    code = _db().code
+    syms = _db().symbols
+    main_leaves = filter(r -> isequal(r.file, "src/main.cpp") && r.n_children == 0, code)
+    var_refs = filter(r -> r.kind == "var_ref" && r.node_id in main_leaves.id, syms)
+    @test "MAX_N" in var_refs.symbol
+end
+
+@testset "R21a: Markdown tagged fenced block — quick_sort in api.md symbols" begin
+    code = _db().code
+    syms = _db().symbols
+    api_leaves = filter(r -> isequal(r.file, "docs/api.md") && r.n_children == 0, code)
+    api_syms = filter(r -> r.node_id in api_leaves.id, syms)
+    @test "quick_sort" in api_syms.symbol
+end
+
+@testset "R21a: Markdown untagged block — compute_stats and DataStats in api.md; MyUnknownType absent" begin
+    code = _db().code
+    syms = _db().symbols
+    api_leaves = filter(r -> isequal(r.file, "docs/api.md") && r.n_children == 0, code)
+    api_syms = filter(r -> r.node_id in api_leaves.id, syms)
+    @test "compute_stats"  in api_syms.symbol
+    @test "DataStats"      in api_syms.symbol
+    @test "MyUnknownType" ∉ api_syms.symbol
+end
+
+@testset "R21a: README.md untagged block — quick_sort and sort_array present; unknown_algorithm absent" begin
+    code = _db().code
+    syms = _db().symbols
+    readme_leaves = filter(r -> isequal(r.file, "README.md") && r.n_children == 0, code)
+    readme_syms = filter(r -> r.node_id in readme_leaves.id, syms)
+    @test "quick_sort"        in readme_syms.symbol
+    @test "sort_array"        in readme_syms.symbol
+    @test "unknown_algorithm" ∉ readme_syms.symbol
+end
+
+@testset "R21c: Markdown heading/paragraph text does not appear in symbols" begin
+    code = _db().code
+    syms = _db().symbols
+    readme_leaves = filter(r -> isequal(r.file, "README.md") && r.n_children == 0, code)
+    readme_syms = filter(r -> r.node_id in readme_leaves.id, syms)
+    @test "Structure"  ∉ readme_syms.symbol
+    @test "Start"      ∉ readme_syms.symbol  # from "Quick Start" heading
+end
+
+@testset "R22: db.symbols rows have node_id, symbol, kind — no resolved references" begin
+    syms = _db().symbols
+    @test nrow(syms) > 0
+    @test hasproperty(syms, :node_id)
+    @test hasproperty(syms, :symbol)
+    @test hasproperty(syms, :kind)
+    # All kinds are one of the expected values
+    @test all(k -> k ∈ ("call", "var_ref"), syms.kind)
+end
