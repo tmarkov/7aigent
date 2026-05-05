@@ -2,6 +2,8 @@ using Test
 using CodeTree
 using DataFrames
 using DataFramesMeta
+using SQLite
+using DBInterface
 
 # Phase 0 smoke test: the module loads without error.
 @testset "CodeTree module loads" begin
@@ -622,4 +624,144 @@ end
     @test hasproperty(syms, :kind)
     # All kinds are one of the expected values
     @test all(k -> k ∈ ("call", "var_ref"), syms.kind)
+end
+
+# ===========================================================================
+# Phase 7 — Caching (R24, R25, R26, R27, R28)
+#
+# All cache tests operate on a temp copy of the fixture to avoid polluting
+# the canonical test_codebase with .7aigent/ artifacts.
+# ===========================================================================
+
+# Helper: copy the test_codebase tree into a fresh temp directory.
+function _tmp_codebase()
+    tmp = mktempdir()
+    for (root, dirs, files) in walkdir(TEST_CODEBASE)
+        rel = relpath(root, TEST_CODEBASE)
+        dst_dir = joinpath(tmp, rel)
+        isdir(dst_dir) || mkpath(dst_dir)
+        for f in files
+            cp(joinpath(root, f), joinpath(dst_dir, f))
+        end
+    end
+    # Reproduce the .gitignore so discovery works the same way
+    gi_src = joinpath(TEST_CODEBASE, ".gitignore")
+    isfile(gi_src) && cp(gi_src, joinpath(tmp, ".gitignore"), force=true)
+    # git init so git ls-files works
+    run(pipeline(Cmd(`git init`; dir=tmp); stdout=devnull, stderr=devnull); wait=true)
+    run(pipeline(Cmd(`git add -A`; dir=tmp); stdout=devnull, stderr=devnull); wait=true)
+    run(pipeline(Cmd(`git -c user.email=x@x -c user.name=x commit -m init`; dir=tmp);
+                 stdout=devnull, stderr=devnull); wait=true)
+    return tmp
+end
+
+@testset "R24: cache stored at .7aigent/code_tree/ under the codebase root" begin
+    tmp = _tmp_codebase()
+    try
+        load(tmp, TEST_CONFIG)
+        cache_dir = joinpath(tmp, ".7aigent", "code_tree")
+        @test isdir(cache_dir)
+        # At least one SQLite db file exists inside the cache dir
+        db_files = filter(f -> endswith(f, ".db"), readdir(cache_dir))
+        @test length(db_files) >= 1
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R25: SQLite cache has a files table with path, hash, commit_hash columns" begin
+    tmp = _tmp_codebase()
+    try
+        load(tmp, TEST_CONFIG)
+        cache_db_path = joinpath(tmp, ".7aigent", "code_tree", "index.db")
+        @test isfile(cache_db_path)
+        db = SQLite.DB(cache_db_path)
+        tables = SQLite.tables(db) |> x -> [t.name for t in x]
+        @test "files" ∈ tables
+        files_df = DBInterface.execute(db, "SELECT * FROM files") |> DataFrame
+        @test hasproperty(files_df, :path)
+        @test hasproperty(files_df, :hash)
+        @test hasproperty(files_df, :commit_hash)
+        # Every discovered source file is represented
+        @test nrow(files_df) > 0
+        # SHA-256 hashes are non-empty hex strings
+        @test all(h -> !ismissing(h) && length(h) == 64, files_df.hash)
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R25 + R26: code and symbols tables are persisted in SQLite cache" begin
+    tmp = _tmp_codebase()
+    try
+        db1 = load(tmp, TEST_CONFIG)
+        cache_db_path = joinpath(tmp, ".7aigent", "code_tree", "index.db")
+        sdb = SQLite.DB(cache_db_path)
+        tables = SQLite.tables(sdb) |> x -> [t.name for t in x]
+        @test "code" ∈ tables
+        @test "symbols" ∈ tables
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R26: second load of unchanged codebase produces identical db.code" begin
+    tmp = _tmp_codebase()
+    try
+        db1 = load(tmp, TEST_CONFIG)
+        db2 = load(tmp, TEST_CONFIG)
+        # Same number of rows
+        @test nrow(db1.code) == nrow(db2.code)
+        # Same ids (order may differ — sort first)
+        @test sort(db1.code.id) == sort(db2.code.id)
+        # Same symbol count
+        @test nrow(db1.symbols) == nrow(db2.symbols)
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R27: changed file is re-parsed; its rows reflect new content" begin
+    tmp = _tmp_codebase()
+    try
+        db1 = load(tmp, TEST_CONFIG)
+        # Count rows from core.jl before modification
+        rows_before = nrow(filter(r -> isequal(r.file, "julia/core.jl"), db1.code))
+        @test rows_before > 0
+
+        # Overwrite core.jl with minimal content (single function)
+        core_path = joinpath(tmp, "julia", "core.jl")
+        write(core_path, "function tiny_fn()\n  return 1\nend\n")
+        run(pipeline(Cmd(`git add julia/core.jl`; dir=tmp); stdout=devnull, stderr=devnull); wait=true)
+        run(pipeline(Cmd(`git -c user.email=x@x -c user.name=x commit -m update`; dir=tmp);
+                     stdout=devnull, stderr=devnull); wait=true)
+
+        db2 = load(tmp, TEST_CONFIG)
+        rows_after = filter(r -> isequal(r.file, "julia/core.jl"), db2.code)
+        # The rewritten file has fewer rows than the original
+        @test nrow(rows_after) < rows_before
+        # The new function name appears
+        @test any(r -> isequal(r.name, "tiny_fn"), eachrow(rows_after))
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R28: deleted file has its rows removed from db.code after re-load" begin
+    tmp = _tmp_codebase()
+    try
+        db1 = load(tmp, TEST_CONFIG)
+        @test any(r -> isequal(r.file, "julia/utils.jl"), eachrow(db1.code))
+
+        # Delete utils.jl
+        rm(joinpath(tmp, "julia", "utils.jl"))
+        run(pipeline(Cmd(`git rm julia/utils.jl`; dir=tmp); stdout=devnull, stderr=devnull); wait=true)
+        run(pipeline(Cmd(`git -c user.email=x@x -c user.name=x commit -m delete`; dir=tmp);
+                     stdout=devnull, stderr=devnull); wait=true)
+
+        db2 = load(tmp, TEST_CONFIG)
+        @test !any(r -> isequal(r.file, "julia/utils.jl"), eachrow(db2.code))
+    finally
+        rm(tmp; recursive=true)
+    end
 end

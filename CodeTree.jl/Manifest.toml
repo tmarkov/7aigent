@@ -2,7 +2,7 @@
 
 julia_version = "1.12.6"
 manifest_format = "2.0"
-project_hash = "d558cf11bf9704d36b9f2242d6342b26bdebbe1a"
+project_hash = "ac16f44de40ad8e5468e4ab6bfc45deb44d2d3a8"
 
 [[deps.AbstractTrees]]
 git-tree-sha1 = "2d9c9a55f9c93e8887ad391fbae72f8ef55e1177"
@@ -28,7 +28,7 @@ uuid = "8be319e6-bccf-4806-a6f7-6fae938471bc"
 version = "1.0.0"
 
 [[deps.CodeTree]]
-deps = ["DataFrames", "DataFramesMeta", "SHA", "SQLite", "TreeSitter", "tree_sitter_cpp_jll", "tree_sitter_julia_jll"]
+deps = ["DBInterface", "DataFrames", "DataFramesMeta", "SHA", "SQLite", "Tables", "TreeSitter", "tree_sitter_cpp_jll", "tree_sitter_julia_jll"]
 path = "."
 uuid = "342842c8-1a2a-4ebb-ae0f-32d4c88624eb"
 version = "0.1.0"

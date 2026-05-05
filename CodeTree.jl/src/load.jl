@@ -1,4 +1,4 @@
-# load() and reload() — Phase 4 implementation.
+# load() and reload() — with SQLite cache support (R24–R28).
 
 """
     load(root_path, config; detail_threshold=30) -> CodeTreeDB
@@ -8,6 +8,9 @@ Index the codebase rooted at `root_path` using `config` and return a read-only
 
 `detail_threshold` (default 30): compound nodes whose parent spans fewer lines
 than this threshold are suppressed from `db.code` (R11, R12).
+
+Unchanged files (same SHA-256 hash as the last `load`) are served from the
+SQLite cache under `.7aigent/code_tree/index.db` without re-parsing (R26).
 """
 function load(
     root_path::AbstractString,
@@ -15,11 +18,30 @@ function load(
     detail_threshold::Int = 30,
 )::CodeTreeDB
 
-    root_path = abspath(root_path)
+    root_path    = abspath(root_path)
     codebase_name = basename(root_path)
+    commit_hash   = _current_commit_hash(root_path)
+
+    # Open (or create) the SQLite cache.
+    cache_db = _open_or_create_cache(root_path)
 
     # Discover files (relative paths from root_path)
     rel_files = discover_files(root_path)
+
+    # Read all file sources into the buffer and compute hashes.
+    buffer = Dict{String,String}()
+    hashes = Dict{String,String}()
+    for rel in rel_files
+        src = try read(joinpath(root_path, rel), String) catch; "" end
+        buffer[rel] = src
+        hashes[rel]  = bytes2hex(SHA.sha256(src))
+    end
+
+    # --- Remove cache entries for files that no longer exist on disk (R28) ---
+    current_set = Set(rel_files)
+    for cached_path in _get_all_cached_paths(cache_db)
+        cached_path ∉ current_set && _delete_file_from_cache!(cache_db, cached_path)
+    end
 
     # Build all rows
     all_rows = Dict{Symbol,Any}[]
@@ -38,10 +60,9 @@ function load(
     # --- Module nodes and root-level file nodes as children of codebase ---
     # All immediate children of the codebase root are numbered in a single
     # sorted sequence so sibling_order values are unique (R16).
-    subdirs = sort(unique(filter(!isempty, dirname.(rel_files))))
+    subdirs    = sort(unique(filter(!isempty, dirname.(rel_files))))
     root_files = sort(get(dir_to_files, "", String[]))
 
-    # Interleave: sort all codebase-root children alphabetically by name.
     root_children = vcat(subdirs, root_files)
     sort!(root_children, by = x -> basename(x))
 
@@ -49,40 +70,53 @@ function load(
         if child in subdirs
             push!(all_rows, _struct_row(child, codebase_id, 1, ci - 1, "module", basename(child)))
         end
-        # root-level files are handled below in the file-loop
     end
+
+    # Track which file rows came from fresh parsing (need cache save).
+    fresh_file_rows = Dict{String, Vector{Dict{Symbol,Any}}}()
 
     # --- File nodes + their descendants (R6, R8, R10–R16) ---
     for d in sort(collect(keys(dir_to_files)))
         parent_id = isempty(d) ? codebase_id : d
         dir_files = sort(dir_to_files[d])
-        depth = isempty(d) ? 1 : 2
+        depth     = isempty(d) ? 1 : 2
 
         for rel in dir_files
-            # Determine sibling_order: for root-level files use the merged index.
-            if isempty(d)
-                fi = findfirst(==(rel), root_children)
+            # Determine sibling_order
+            fi = if isempty(d)
+                findfirst(==(rel), root_children)
             else
-                fi = findfirst(==(rel), dir_files)
+                findfirst(==(rel), dir_files)
             end
 
-            abs_path = joinpath(root_path, rel)
-            src = try read(abs_path, String) catch; "" end
-            lang = language_for_file(config, rel)
+            current_hash  = hashes[rel]
+            cached_hash   = _get_cached_hash(cache_db, rel)
+
+            if !isnothing(cached_hash) && cached_hash == current_hash
+                # Cache hit (R26): load code rows without re-parsing.
+                cached = _load_file_rows_from_cache(cache_db, rel)
+                if !isnothing(cached)
+                    code_rows, _ = cached
+                    code_rows[1][:sibling_order] = fi - 1  # update ordering
+                    append!(all_rows, code_rows)
+                    continue
+                end
+            end
+
+            # Cache miss or stale: re-parse (R27).
+            src       = buffer[rel]
+            lang      = language_for_file(config, rel)
             file_rows = build_file_rows(
                 src, lang, config, detail_threshold,
-                rel,       # file_id = relative path
-                rel,       # file_path (used in :file column)
-                parent_id,
-                depth,
+                rel, rel, parent_id, depth,
             )
             file_rows[1][:sibling_order] = fi - 1
             append!(all_rows, file_rows)
+            fresh_file_rows[rel] = file_rows
         end
     end
 
     # Post-process: fill n_children for codebase and module rows
-    # (file rows have n_children filled by build_file_rows)
     id_to_children = Dict{String,Int}()
     for row in all_rows
         p = row[:parent]
@@ -97,20 +131,9 @@ function load(
 
     # --- Assemble DataFrames ---
     code_df = _rows_to_dataframe(all_rows)
-
-    # R19: assign README-based summaries to codebase root and module nodes.
     _assign_readme_summaries!(code_df, root_path)
 
     syms_df = DataFrame(node_id=String[], symbol=String[], kind=String[])
-
-    buffer = Dict{String,String}()
-    hashes = Dict{String,String}()
-    for rel in rel_files
-        abs_path = joinpath(root_path, rel)
-        src = try read(abs_path, String) catch; "" end
-        buffer[rel] = src
-        hashes[rel]  = bytes2hex(SHA.sha256(src))
-    end
 
     db = CodeTreeDB(
         CodeTree(code_df),
@@ -121,6 +144,44 @@ function load(
         hashes,
     )
     extract_symbols!(db)
+
+    # --- Persist cache (R24, R25) ---
+    # Build a node_id → file lookup from the code DataFrame.
+    code_df_raw = getfield(db.code, :_df)
+    id_to_file  = Dict{String,String}(
+        row.id => row.file
+        for row in eachrow(code_df_raw)
+        if !ismissing(row.file)
+    )
+
+    # Group symbol rows by file.
+    sym_rows_by_file = Dict{String, Vector{NamedTuple}}()
+    for sym_row in eachrow(getfield(db.symbols, :_df))
+        f = get(id_to_file, sym_row.node_id, nothing)
+        isnothing(f) && continue
+        push!(get!(sym_rows_by_file, f, NamedTuple[]),
+              (node_id=sym_row.node_id, symbol=sym_row.symbol, kind=sym_row.kind))
+    end
+
+    # Save freshly parsed files to cache; update commit_hash for cached files.
+    for rel in rel_files
+        sym_rows = get(sym_rows_by_file, rel, NamedTuple[])
+        if haskey(fresh_file_rows, rel)
+            _save_file_rows!(cache_db, rel, hashes[rel], commit_hash,
+                             fresh_file_rows[rel], sym_rows)
+        else
+            # Unchanged file: just refresh commit_hash and symbol rows.
+            _upsert_file!(cache_db, rel, hashes[rel], commit_hash)
+            DBInterface.execute(cache_db, "DELETE FROM symbols WHERE file = ?", [rel])
+            for s in sym_rows
+                DBInterface.execute(cache_db,
+                    "INSERT INTO symbols (file, node_id, symbol, kind) VALUES (?,?,?,?)",
+                    [rel, s.node_id, s.symbol, s.kind])
+            end
+        end
+    end
+
+    close(cache_db)
     return db
 end
 
