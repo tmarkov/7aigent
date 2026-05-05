@@ -479,3 +479,69 @@ end
     end
 end
 
+# =============================================================================
+# Phase 5 — Summary Extraction (R17, R18, R19, R20, R20a)
+# =============================================================================
+
+@testset "R17: sort_array (first overload) summary comes from its docstring" begin
+    code = _db().code
+    # The first sort_array does not end with $2
+    nodes = filter(r -> isequal(r.name, "sort_array") && !endswith(r.id, "\$2"), code)
+    @test nrow(nodes) == 1
+    node = only(nodes)
+    @test !ismissing(node.summary)
+    @test occursin("quicksort", lowercase(something(node.summary, "")))
+end
+
+@testset "R17: DataStats struct summary comes from its docstring" begin
+    code = _db().code
+    nodes = filter(r -> isequal(r.name, "DataStats"), code)
+    @test nrow(nodes) == 1
+    @test occursin("statistics", lowercase(something(only(nodes).summary, "")))
+end
+
+@testset "R18: search_sorted summary comes from preceding comment (no docstring)" begin
+    code = _db().code
+    node = only(filter(r -> isequal(r.name, "search_sorted"), code))
+    @test occursin("binary search", lowercase(something(node.summary, "")))
+end
+
+@testset "R18: is_sorted summary comes from preceding comment (no docstring)" begin
+    code = _db().code
+    node = only(filter(r -> isequal(r.name, "is_sorted"), code))
+    @test occursin("sorted", lowercase(something(node.summary, "")))
+end
+
+@testset "R19: DataProcessor module summary comes from module-level docstring" begin
+    code = _db().code
+    dp = only(filter(r -> isequal(r.name, "DataProcessor"), code))
+    @test occursin("sorting", lowercase(something(dp.summary, "")))
+end
+
+@testset "R19: codebase root summary comes from README.md first paragraph" begin
+    code = _db().code
+    root_node = only(filter(r -> r.kind == "codebase", code))
+    @test !ismissing(root_node.summary)
+    @test occursin("minimal", lowercase(something(root_node.summary, "")))
+end
+
+@testset "R20: swap has missing summary (blank line breaks R14b absorption)" begin
+    code = _db().code
+    sw = only(filter(r -> isequal(r.name, "swap"), code))
+    @test ismissing(sw.summary)
+end
+
+@testset "R20: noop has missing summary (blank line before declaration)" begin
+    code = _db().code
+    node = only(filter(r -> isequal(r.name, "noop"), code))
+    @test ismissing(node.summary)
+end
+
+@testset "R20a: standalone comment node has its own source as summary" begin
+    code = _db().code
+    # "/* Section: globals and helpers */" is a standalone kind=comment node
+    cmt = only(filter(r -> r.kind == "comment" &&
+                      occursin("globals", something(r.source, "")), code))
+    @test occursin("globals", something(cmt.summary, ""))
+end
+
