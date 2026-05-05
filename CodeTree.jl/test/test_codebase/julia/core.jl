@@ -64,7 +64,7 @@ end
     sort_array(v::Vector{Float64}) -> Vector{Float64}
 
 Sort a vector of floats using Julia's built-in sort (Timsort, stable).
-R1: second sibling named `sort_array`; gets id/qname suffix `sort_array$2`.
+R1: second sibling named `sort_array`; gets id/qname suffix `sort_array\$2`.
 """
 function sort_array(v::Vector{Float64})
     # Delegates to Base.sort for stability guarantees.

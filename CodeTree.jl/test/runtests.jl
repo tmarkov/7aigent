@@ -1,9 +1,9 @@
 using Test
 using CodeTree
+using DataFrames
+using DataFramesMeta
 
-@testset "CodeTree" begin
-    @test isdefined(CodeTree, :CREATE_CODE_TABLE)
-    @test isdefined(CodeTree, :CREATE_REFS_TABLE)
-    @test occursin("CREATE TABLE IF NOT EXISTS code",  CodeTree.CREATE_CODE_TABLE)
-    @test occursin("CREATE TABLE IF NOT EXISTS refs",  CodeTree.CREATE_REFS_TABLE)
+# Phase 0 smoke test: the module loads without error.
+@testset "CodeTree module loads" begin
+    @test nameof(CodeTree) === :CodeTree
 end

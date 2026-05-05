@@ -1,7 +1,29 @@
 name = "CodeTree"
 uuid = "342842c8-1a2a-4ebb-ae0f-32d4c88624eb"
+version = "0.1.0"
 authors = []
-version  = "0.1.0"
+
+[deps]
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+DataFramesMeta = "1313f7d8-7da2-5740-9ea0-a2ca25f37964"
+SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
+SQLite = "0aa819cd-b072-5ff4-a722-6bc24af294d9"
+TreeSitter = "f42328cb-ece0-4cf2-995f-9e7abb27d006"
+tree_sitter_cpp_jll = "db96dd59-cc3e-5205-9518-9f32d21f88e9"
+tree_sitter_julia_jll = "52be201e-a5e9-5cfe-8bf2-2dc4b062171c"
 
 [compat]
+DataFrames = "1.8.2"
+DataFramesMeta = "0.15.6"
+SHA = "0.7.0"
+SQLite = "1.8.0"
+TreeSitter = "0.2.3"
 julia = "1.11"
+tree_sitter_cpp_jll = "0.23.4"
+tree_sitter_julia_jll = "0.25.0"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
