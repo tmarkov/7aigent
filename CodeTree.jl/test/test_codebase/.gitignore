@@ -1,0 +1,15 @@
+# Build outputs — should be excluded from CodeTree.jl indexing (R5)
+*.o
+*.a
+*.so
+*.dylib
+
+build/
+_build/
+
+# Editor temporaries
+*.swp
+.DS_Store
+
+# CodeTree cache — never indexed
+.7aigent/

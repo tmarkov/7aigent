@@ -1,0 +1,15 @@
+# Runtime configuration for the test codebase.
+# This file has a .toml extension which is not in the language config.
+# Per R8 it is loaded as a single leaf node (the file node itself, no children).
+
+[sorting]
+default_algorithm = "quick_sort"
+max_n             = 1000000
+stable            = false
+
+[logging]
+level   = "info"
+colours = true
+
+[limits]
+detail_threshold = 30   # mirrors CodeTree.jl default
