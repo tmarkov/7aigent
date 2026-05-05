@@ -765,3 +765,66 @@ end
         rm(tmp; recursive=true)
     end
 end
+
+# ===========================================================================
+# Phase 8 — load/reload integration and in-memory buffer (R29)
+# ===========================================================================
+
+@testset "R29: all discovered files are in db._buffer after load" begin
+    db = _db()
+    # Every file that appears in db.code should have an entry in the buffer.
+    file_cols = skipmissing(db.code.file) |> unique |> collect
+    for f in file_cols
+        @test haskey(db._buffer, f)
+    end
+    # Buffer entries are non-empty strings matching on-disk content.
+    for (rel, src) in db._buffer
+        abs_path = joinpath(db.root, rel)
+        @test isfile(abs_path)
+        @test src == read(abs_path, String)
+    end
+end
+
+@testset "R29: db.code source column comes from buffer, not re-read from disk" begin
+    tmp = _tmp_codebase()
+    try
+        db = load(tmp, TEST_CONFIG)
+        # Overwrite a file on disk AFTER load (without calling load again)
+        write(joinpath(tmp, "julia", "utils.jl"), "# tampered\n")
+
+        # The buffer should still have the original content
+        original = db._buffer["julia/utils.jl"]
+        @test !occursin("tampered", original)
+
+        # db.code source for utils.jl nodes should come from the original buffer
+        utils_rows = filter(r -> isequal(r.file, "julia/utils.jl") && !ismissing(r.source), db.code)
+        for row in eachrow(utils_rows)
+            @test !occursin("tampered", row.source)
+        end
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "reload: after external file change, db is updated in-place" begin
+    tmp = _tmp_codebase()
+    try
+        db = load(tmp, TEST_CONFIG)
+        original_id = objectid(db)
+
+        # Modify a file externally
+        write(joinpath(tmp, "julia", "utils.jl"), "function reloaded_fn()\n  42\nend\n")
+        run(pipeline(Cmd(`git add julia/utils.jl`; dir=tmp); stdout=devnull, stderr=devnull); wait=true)
+        run(pipeline(Cmd(`git -c user.email=x@x -c user.name=x commit -m reload`; dir=tmp);
+                     stdout=devnull, stderr=devnull); wait=true)
+
+        reload(db)
+
+        # Same object, updated content
+        @test objectid(db) == original_id
+        @test any(r -> isequal(r.name, "reloaded_fn"), eachrow(db.code))
+        @test db._buffer["julia/utils.jl"] == "function reloaded_fn()\n  42\nend\n"
+    finally
+        rm(tmp; recursive=true)
+    end
+end
