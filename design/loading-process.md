@@ -23,14 +23,14 @@ This is achieved by two kinds of child nodes:
 Example:
 
 ```python
-def myFunc():        # line 1 — function node (compound)
-    a = 10           # line 2 ─┐ chunk: "lines 2-2"
+def myFunc():        # line 1 ─┐ chunk: "line 1" (declaration line)
+    a = 10           # line 2 ─┘ chunk: "lines 1-2"  [merged with decl if contiguous]
     for i in range(a): # line 3 — for node (compound)
-        print(i)     # line 4 ─── chunk inside the for: "line 4"
-    a = 5            # line 5 ─── chunk: "lines 5-5"
+        print(i)     # line 4 ─── chunk inside the for: "lines 3-4" (decl + body)
+    a = 5            # line 5 ─── chunk: "line 5"
 ```
 
-The function's children are: `[chunk(2-2), for(3-4), chunk(5-5)]`. These fully span lines 2-5. The `for`'s children are: `[chunk(4-4)]`.
+The function's children are: `[chunk(1-2), for(3-4), chunk(5-5)]`. These fully span lines 1-5. The `for`'s children are: `[chunk(3-4)]` (the `for` declaration plus its body line).
 
 If no compound nodes are found inside a parent, that parent is a **leaf**: it has no children and its full source is stored directly.
 
@@ -69,9 +69,9 @@ The configuration is deliberately small (~15–20 entries per language). Languag
 
 ### Step 1: Discover Files
 
-Walk the directory tree, or run `git ls-files` if the directory is a git repository.
+Walk the directory tree, or run `git ls-files --cached --others --exclude-standard` if the directory is a git repository (this includes both tracked files and untracked files that are not gitignored).
 
-- Skip non-source files and ignored paths (`.gitignore`, `.code_tree/`, `__pycache__/`, `node_modules/`, build artifacts, binary files)
+- Skip non-source files and ignored paths (`.gitignore`, `.7aigent/`, `__pycache__/`, `node_modules/`, build artifacts, binary files)
 - Detect language per file by extension (`.py → python`, `.go → go`, `.rs → rust`, `.md → markdown`, `.c → c`, etc.)
 - Include documentation files (`.md`, `.rst`, `.txt`) — they are parsed too
 
@@ -79,7 +79,7 @@ Result: a list of `(path, language)` pairs.
 
 ### Step 2: Check the Cache
 
-Open `.code_tree/index.db` if it exists. This SQLite file contains the previously built `code` and `refs` tables, plus a `files` table:
+Open `.7aigent/code_tree/index.db` if it exists. This SQLite file contains the previously built `code` and `refs` tables, plus a `files` table:
 
 ```sql
 CREATE TABLE files (
@@ -199,51 +199,67 @@ For each node produced in Step 4, attempt to extract a summary from documentatio
 
 All summary extraction is heuristic. The `summary` column is NULL when nothing is found — it is never mechanically generated from structure.
 
-### Step 6: Extract Cross-References
+### Step 6: Extract Symbols
 
-For each function, method, or chunk node, scan its `source` for references:
+Symbol extraction runs in two passes to satisfy the Markdown ordering
+constraint.
 
-**Calls:** scan for patterns like `name(` or `obj.method(`. For each match:
-- Create a `refs` row: `from_id` = current node, `to_name` = matched name, `ref_kind = "call"`, `line` = line number of match
-- `to_id = NULL` for now (resolved in Step 7)
+**Pass 1 — non-Markdown files:**
 
-**Imports:** for each `kind=import` node, parse the import statement:
-- Create a `refs` row: `from_id` = the file node, `to_name` = imported symbol, `ref_kind = "import"`
+For each leaf node (`n_children = 0`) in a non-Markdown file, populate
+`db.symbols` using the language config's call and definition patterns.
 
-**Inheritance:** for each `kind=class` node, check the signature for base classes:
-- `class Searcher(BaseSearcher):` → `refs` row with `ref_kind = "inherit"`, `to_name = "BaseSearcher"`
+**Call symbols:** apply the config's call patterns to the leaf's source AST.
+For each matched call site, create a `symbols` row:
+- `node_id` = this leaf node's id
+- `symbol` = the called function or method name
+- `kind = "call"`
 
-This is text-pattern matching on source, not semantic analysis. It will produce some false positives (a variable called `search` used in an expression) and miss indirect calls. This is accepted — good enough for 90% of use cases without requiring a full type checker.
+Call symbols are always recorded — even if a function of the same name is
+defined elsewhere in the tree. This ensures that indirect references through
+overloaded functions are never silently dropped.
 
-### Step 7: Resolve Cross-Reference Targets
+**Variable reference symbols:** apply the config's definition patterns to the
+leaf's source AST to build the set of locally-defined names (assignment
+targets, loop variables, `with`-as variables, explicit declarations, etc.).
+For each identifier read in the leaf's source that does not appear in the
+locally-defined set, create a `symbols` row:
+- `node_id` = this leaf node's id
+- `symbol` = the identifier name
+- `kind = "var_ref"`
 
-For each `refs` row where `to_id` is NULL:
+**Pass 2 — Markdown files:**
 
-```sql
-SELECT id FROM code 
-WHERE name = :to_name 
-AND kind IN ('function', 'class', 'variable')
-```
+For each leaf node in a Markdown file, scan its source for code spans:
 
-- **Exactly one match**: set `to_id` to that match.
-- **Multiple matches**: leave `to_id = NULL` (ambiguous without scope analysis).
-- **Zero matches**: leave `to_id = NULL` (external dependency or unresolved).
+- **Fenced code blocks with a language tag**: parse the block content with
+  that language's tree-sitter grammar and apply its config patterns as in
+  Pass 1.
 
-For `ref_kind = "import"`, also update the file's parent module if the import target is in the same codebase.
+- **Fenced code blocks without a language tag**, **indented code blocks**,
+  and **inline backtick spans**: tokenize the content into identifier-like
+  tokens (`[A-Za-z_][A-Za-z0-9_!?.]*`) and intersect with the set of
+  `name` values from non-Markdown nodes already in `db.code`. For each
+  matching token, create a `symbols` row with `kind = "call"` if the token
+  is immediately followed by `(` in the span, otherwise `kind = "var_ref"`.
 
-### Step 8: Update the Cache
+No resolution of symbol names to `db.code` node ids is performed in either
+pass. The `symbols` table records names only.
 
-Delete all `code` rows where `file` is in the changed/deleted set. Delete all `refs` rows where `from_id` starts with any changed file's prefix.
+### Step 7: Update the Cache
+
+Delete all `code` rows where `file` is in the changed/deleted set. Delete all
+`symbols` rows where `node_id` starts with any changed file's prefix.
 
 Insert all newly produced rows.
 
 Update the `files` table with new hashes.
 
-Write to `.code_tree/index.db`.
+Write to `.7aigent/code_tree/index.db`.
 
-### Step 9: Return
+### Step 8: Return
 
-Return a handle to the populated database. The `code` and `refs` tables are ready for querying.
+Return a handle to the populated database. The `code` and `symbols` tables are ready for querying.
 
 ---
 
@@ -251,11 +267,17 @@ Return a handle to the populated database. The `code` and `refs` tables are read
 
 When the user modifies source code through the tool:
 
-1. **Write the modified file to disk.** The `code` table's `source` column is used to regenerate the file content. Since the spanning invariant holds, every line in the file is covered by exactly one chain of nodes — reconstruction is unambiguous.
+1. **Write the modified file to disk.** The file is reconstructed by
+   concatenating all leaf nodes' `source` values in `sibling_order`. Since
+   the spanning invariant holds, this is lossless and unambiguous.
 
-2. **Re-index the changed file** (Steps 4–7 for that file only). This takes milliseconds with tree-sitter.
+2. **Re-index the changed file** (Steps 4–6 for that file only). This takes
+   milliseconds with tree-sitter.
 
-3. **Re-resolve refs pointing into this file.** Any `refs` row where `to_id` was a node in the changed file needs re-resolution (the target node's `id` may have changed if the function was renamed or restructured).
+3. **Replace symbols for the changed file.** Remove all `symbols` rows whose
+   `node_id` belonged to the old leaf nodes of this file, and insert fresh
+   rows for the new leaf nodes. No cross-file work is needed since
+   `db.symbols` records names only, not target ids.
 
 4. **Update ancestor `n_children`** if nodes were added or removed.
 
@@ -268,20 +290,21 @@ LLM-generated summaries are stored in the `code` table. When a file is re-indexe
 For any node `n` in the `code` table:
 
 - If `n` has no children (`n_children = 0`): `n` is a leaf. Its `source` is stored directly.
-- If `n` has children: the children's `(line_start, line_end)` ranges must be non-overlapping, cover every line from `n.line_start + header_lines` to `n.line_end`, and be sorted in ascending order.
+- If `n` has children: the children's `(line_start, line_end)` ranges must be non-overlapping, cover every line from `n.line_start` to `n.line_end` inclusive, and be sorted in ascending order.
 
-Where `header_lines` = the number of lines in `n`'s declaration (signature) that precede the body. For a Python function, `header_lines = 1` (the `def` line). For a class with a multi-line declaration, it may be more.
+The declaration line(s) of a compound node (e.g. the `def foo():` line of a Python function) are always covered by the first chunk child of that node, not excluded from spanning. There is no `header_lines` concept — children span the full range including the declaration.
 
 This invariant ensures:
-- The file can always be reconstructed from the leaf nodes' `source` values, concatenated in `sibling_order`
+- The file can always be reconstructed by concatenating leaf nodes' `source` values in `sibling_order`
 - There is no "lost" source text
-- Querying `WHERE source LIKE '%pattern%'` at any level finds all occurrences (because compound nodes' `source` includes their children's text)
+- Searching `source` across all rows finds every occurrence in the codebase, since leaves collectively cover every line exactly once
 
 ---
 
 ## File Reconstruction
 
-Given the spanning invariant, any file can be reconstructed:
+Given the spanning invariant, any file can be reconstructed by concatenating
+its leaf nodes' `source` values in `line_start` order:
 
 ```sql
 -- Get all leaf nodes for a file, in order
@@ -292,7 +315,8 @@ ORDER BY line_start;
 -- Concatenate sources → original file content
 ```
 
-Or equivalently, the file node's own `source` column is the full file content — stored directly as a convenience.
+`source` is only populated for leaf nodes. Non-leaf nodes (functions, classes,
+files, modules) carry structural metadata but no source text.
 
 ---
 
@@ -321,9 +345,22 @@ compound_nodes:
 
 docstring_node:    expression_statement > string    # first such child of a function/class body
 header_comment:    comment                           # immediately preceding a compound node
+
+# Symbol extraction
+call_patterns:
+  - (call function: (identifier) @symbol)
+  - (call function: (attribute attribute: (identifier) @symbol))
+
+definition_patterns:
+  - (assignment left: (identifier) @symbol)
+  - (for_statement left: (identifier) @symbol)
+  - (with_statement alias: (identifier) @symbol)
+  - (parameters (identifier) @symbol)
+  - (import_statement name: (dotted_name (identifier) @symbol))
+  - (import_from_statement name: (dotted_name (identifier) @symbol))
 ```
 
-For an unsupported language (no config file), the entire file becomes a single leaf node. Summary extraction falls back to first-comment heuristic.
+For an unsupported language (no config file), the entire file becomes a single leaf node. No symbol extraction is performed.
 
 ---
 
@@ -336,6 +373,8 @@ For an unsupported language (no config file), the entire file becomes a single l
 | Compound node set | Configurable per language | Languages differ; keep config small |
 | Summary extraction | Documentation only (docstrings, comments, READMEs) | Mechanical reformatting adds noise; summaries should convey intent |
 | LLM summaries | On demand, not at index time | Cost, latency, and correctness — only generate when user needs it |
-| Cross-references | Heuristic (text pattern matching) | No full type checker; good enough for common cases |
+| Source storage | Leaf nodes only | Eliminates O(depth) redundancy; reconstruction from leaves is lossless via spanning invariant |
+| Symbol extraction | Call always + var_ref if not locally defined | Calls need always-record to handle overloads; var_refs filter locals to reduce noise |
+| No to_id resolution | Names only in symbols table | Name-to-node resolution is ambiguous under overloading; callers query db.code directly |
 | Cache | SHA256 per file | Language-agnostic, works without git, resilient to force-push |
 | Edit strategy | Write to disk → re-index | Always correct; tree-sitter re-parse is fast enough |

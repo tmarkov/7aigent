@@ -12,9 +12,9 @@ This document describes a relational schema for storing and querying source code
 
 The key insight is that code is fundamentally a tree with two types of cross-cutting needs:
 1. **Hierarchical navigation** (parent pointers, depth, ordering)
-2. **Cross-file references** (calls, imports, type uses)
+2. **External symbol dependencies** (what identifiers does each piece of code use from outside itself?)
 
-These two needs map naturally to two tables: `code` (the tree) and `refs` (the cross-references).
+These two needs map naturally to two tables: `code` (the tree) and `symbols` (external identifier references per leaf node).
 
 ---
 
@@ -44,14 +44,18 @@ The tradeoff: this schema can't answer questions that require semantic understan
 **Table 1: `code` (the tree)**
 Stores the hierarchical structure. Every query for "find functions," "navigate modules," "show summaries" hits this table.
 
-**Table 2: `refs` (cross-references)**
-Stores relationships between nodes that cross tree boundaries: function calls, imports, type uses, inheritance.
+**Table 2: `symbols` (external identifiers)**
+Stores, for each leaf node, the identifiers it uses that are not locally defined — function calls (always) and variable reads from outside the leaf. This enables cross-cutting dependency queries without requiring a full type checker or symbol resolver.
 
 Why separate?
 - Most code queries are hierarchical (navigate → filter → read)
-- Cross-file queries are less common but critical (dead code, dependency graph, call chains)
-- Refs must be precomputed at index time (building them on-the-fly is expensive)
-- Separating them keeps `code` lean and the ref-join queries explicit and debuggable
+- Symbol dependency queries are less common but critical (what does this function depend on? what code mentions this identifier?)
+- Symbols must be precomputed at index time (scanning every leaf on-the-fly is expensive)
+- Separating them keeps `code` lean and symbol-join queries explicit and debuggable
+
+Why not resolve symbol names to node ids?
+- Name-to-node resolution is ambiguous under function overloading and multiple dispatch (e.g. Julia), which would leave most entries unresolved anyway
+- Callers can always look up `db.code` by `name` directly; a resolved `to_id` would add complexity with little gain
 
 ### Why Store Summaries?
 
@@ -175,11 +179,11 @@ codebase:chess
   - "Board representation and move generation"
   - **This is the key value-add and cannot be derived**
 
-- **`source`**: Full source text
-  - Includes the entire function/class/file body
-  - Yes, this is redundant (children's source appears in parent), but it makes queries simpler
-  - In tidyverse: `code %>% filter(kind == "function", str_detect(source, "unsafe"))`
-  - Without full source at the function level, you'd need to join up to the file
+- **`source`**: Full source text — **leaf nodes only** (`n_children = 0`)
+  - Stored only at leaves; non-leaf nodes carry structural metadata but no source text
+  - Any file can be reconstructed by concatenating its leaf nodes' `source` in `line_start` order
+  - Searching `source` across all rows finds every occurrence in the codebase (leaves cover every line exactly once)
+  - Storing source at every level would cause O(depth) redundancy — the same text repeated in every ancestor
 
 - **`signature`**: Declaration line only (stored for convenience, derivable from source)
   - `def _minimax(self, board, depth, maximizing) -> tuple[int, Move]`
@@ -211,53 +215,60 @@ codebase:chess
 
 ---
 
-## Schema: `refs` Table
+## Schema: `symbols` Table
 
-Cross-file references (calls, imports, type uses, etc.).
+External identifier references, extracted from leaf nodes.
 
 ```sql
-CREATE TABLE refs (
-  from_id       TEXT NOT NULL,
-  to_name       TEXT NOT NULL,
-  to_id         TEXT,
-  line          INTEGER,
-  ref_kind      TEXT
+CREATE TABLE symbols (
+  node_id  TEXT NOT NULL,   -- FK to code.id; always a leaf (n_children = 0)
+  symbol   TEXT NOT NULL,
+  kind     TEXT NOT NULL    -- 'call' or 'var_ref'
 );
 
-CREATE INDEX idx_refs_to ON refs(to_name);
-CREATE INDEX idx_refs_from ON refs(from_id);
+CREATE INDEX idx_symbols_node   ON symbols(node_id);
+CREATE INDEX idx_symbols_symbol ON symbols(symbol);
+CREATE INDEX idx_symbols_kind   ON symbols(kind);
 ```
 
 ### Columns
 
-- **`from_id`**: Node containing the reference (FK to `code.id`)
-- **`to_name`**: Identifier being referenced (e.g., `_minimax`, `eval_position`)
-- **`to_id`**: Resolved target node (FK to `code.id`, NULL if external/unresolved)
-- **`line`**: Line number within the source where the reference occurs
-- **`ref_kind`**: Type of reference
+- **`node_id`**: The leaf node containing the reference (FK to `code.id`)
+- **`symbol`**: The identifier name (e.g., `_minimax`, `eval_position`, `Board`)
+- **`kind`**: Either `call` (a function or method called) or `var_ref` (a variable read from outside this leaf)
 
-### Reference Kinds
+### Extraction Rules
 
-| Kind | Meaning | Example |
-|------|---------|---------|
-| `call` | Function/method call | `_minimax(board, depth, not maximizing)` |
-| `import` | Import or require | `from engine.eval import eval_position` |
-| `type_use` | Type reference | `-> tuple[int, Move]` |
-| `read` | Variable/field read | `x + 1` |
-| `write` | Variable/field assignment | `x = 5` |
-| `inherit` | Class inheritance | `class Searcher(ABC)` |
+**Call symbols** — always recorded, even if a function of the same name is defined elsewhere in `db.code`. This ensures overloaded functions and higher-order uses are never silently dropped.
 
-### Why Separate?
+**Variable reference symbols** — recorded only when the identifier is not locally defined within the same leaf. Local definitions are identified per language by the config's definition patterns (assignment targets, loop variables, parameters, explicit declarations, etc.).
 
-This table enables queries that cross tree boundaries:
-- Dead code: `SELECT * FROM code c WHERE kind='function' AND NOT EXISTS (SELECT 1 FROM refs WHERE to_name = c.name)`
-- Callers of X: `SELECT from_id FROM refs WHERE to_name = 'X' AND ref_kind = 'call'`
-- Dependency graph: `SELECT DISTINCT c1.file, c2.file FROM refs r JOIN code c1 ON r.from_id = c1.id JOIN code c2 ON r.to_id = c2.id WHERE c1.file != c2.file`
+No name-to-node resolution is performed. `symbols` records names only. To find where a symbol is defined, query `db.code` by `name`.
 
-These are **precomputed** at index time because:
-- Building the `refs` table requires scanning the entire codebase
-- Queries like "what calls this?" must answer in milliseconds
-- Live extraction would be too slow for interactive use
+### Why Not Resolve to Node IDs?
+
+Languages with overloading (C++, Julia's multiple dispatch) have multiple `db.code` nodes sharing the same `name`. A call to `foo` in Julia could resolve to any of dozens of methods depending on argument types — information not available without a type checker. Storing an unresolved `to_id = missing` for the majority of entries would make the table largely useless. Names-only has perfect recall at the cost of requiring the caller to disambiguate when needed.
+
+### What This Enables
+
+```sql
+-- All leaf nodes that call _minimax
+SELECT c.id, c.file, c.line_start
+FROM symbols s JOIN code c ON s.node_id = c.id
+WHERE s.symbol = '_minimax' AND s.kind = 'call';
+
+-- All external symbols used by a given function (navigate to its leaves first)
+SELECT DISTINCT s.symbol, s.kind
+FROM symbols s
+JOIN code c ON s.node_id = c.id
+WHERE c.file = 'engine/search.py'
+  AND c.line_start >= 42 AND c.line_end <= 80;
+
+-- Which files reference eval_position?
+SELECT DISTINCT c.file
+FROM symbols s JOIN code c ON s.node_id = c.id
+WHERE s.symbol = 'eval_position';
+```
 
 ---
 
@@ -276,7 +287,7 @@ These are **precomputed** at index time because:
 | `qname` | Negligible | Disambiguation; critical when multiple `parse()` functions exist |
 | `language` | Negligible | Used to choose regex/parser for mutations |
 | `summary` | **High** | **Cannot be reliably derived from source code** |
-| `source` | Negligible | The data itself; must be stored |
+| `source` | Negligible | Leaf nodes only; the data itself. Non-leaf source would be O(depth) redundant. |
 | `signature` | Low | Derivable from `source`, but used in ~90% of function queries; worth caching |
 | `file` | Negligible | Physical location; used constantly |
 | `line_start`, `line_end` | Negligible | Enables precise navigation and rewriting |
@@ -291,11 +302,11 @@ These are **precomputed** at index time because:
 | `params` | `str_extract(signature, "\\((.*)\\)")` | T4: Functions with N parameters |
 | `visibility` | `if_else(str_starts(name, "_"), "private", "public")` | T9: Generate tests for public methods |
 | `is_async` | `str_detect(signature, "^async")` | Async/await analysis |
-| `is_recursive` | Inner join `refs` on same `to_name` and `from_id` | Find recursive functions |
-| `is_tested` | Join with test file's `refs` | Coverage analysis |
-| `complexity` | NestDepth of `source` via regex | Find overly complex functions |
-| `has_unsafe` | `str_detect(source, "unsafe")` | Security audit |
-| `external_callers` | `COUNT(refs.from_id WHERE to_name = name)` | Find entry points |
+| `is_recursive` | Join `symbols` where `symbol = name` and `node_id` is a leaf of the same function | Find recursive functions |
+| `is_tested` | Join with test file's `symbols` where `symbol = name` | Coverage analysis |
+| `complexity` | NestDepth of `source` via regex on leaf nodes | Find overly complex functions |
+| `has_unsafe` | `str_detect(source, "unsafe")` on leaf nodes | Security audit |
+| `external_callers` | `COUNT(symbols where symbol = name AND kind = 'call')` | Find entry points |
 
 ### Never Stored
 
@@ -303,7 +314,7 @@ These are **precomputed** at index time because:
 |---------|-----|
 | AST node | Use `source` + language-specific regex; don't embed parsed AST |
 | Type information | Would require semantic analysis (language-specific compiler/type-checker) |
-| Data flow graph | Too language-specific; precompute only `refs` (direct calls/imports) |
+| Data flow graph | Too language-specific; precompute only `symbols` (external identifier uses) |
 | Embeddings | Store separately if/when needed for similarity search |
 | Session state (expanded_set) | Hold in application memory, not the database |
 
@@ -357,20 +368,16 @@ SELECT name, qname, signature
 FROM code 
 WHERE kind = 'function' AND signature LIKE '%-> int%';
 
--- T6: Dead code (functions never called)
-SELECT c.name, c.qname 
-FROM code c
-WHERE c.kind = 'function'
-AND NOT EXISTS (
-  SELECT 1 FROM refs r 
-  WHERE r.to_name = c.name AND r.from_id != c.id
-);
-
 -- Functions larger than 50 lines
 SELECT name, qname, file, n_lines 
 FROM code 
 WHERE kind = 'function' AND n_lines > 50
 ORDER BY n_lines DESC;
+
+-- Search source text across all leaf nodes
+SELECT c.file, c.line_start, c.source
+FROM code c
+WHERE c.n_children = 0 AND c.source LIKE '%unsafe%';
 ```
 
 In tidyverse:
@@ -381,74 +388,74 @@ code %>%
   mutate(return_type = str_extract(signature, "-> (.+)$")) %>%
   filter(return_type == "int")
 
+# Find all leaves containing "unsafe"
 code %>%
-  filter(kind == "function") %>%
-  anti_join(refs, by = c("name" = "to_name")) %>%
-  select(name, qname)
+  filter(n_children == 0, str_detect(source, "unsafe")) %>%
+  select(file, line_start, source)
 ```
 
-### Cross-Cutting Analysis (Refs)
+### Cross-Cutting Analysis (Symbols)
 
-Find relationships across tree boundaries:
+Find identifier dependencies across the tree:
 
 ```sql
--- T3: All functions that call _minimax
-SELECT c.name, c.qname, c.file
-FROM refs r 
-JOIN code c ON r.from_id = c.id
-WHERE r.to_name = '_minimax' AND r.ref_kind = 'call';
+-- All leaf nodes that call _minimax
+SELECT c.file, c.line_start
+FROM symbols s JOIN code c ON s.node_id = c.id
+WHERE s.symbol = '_minimax' AND s.kind = 'call';
 
--- T12: File dependencies (who calls across file boundaries?)
-SELECT DISTINCT c1.file AS from_file, c2.file AS to_file
-FROM refs r
-JOIN code c1 ON r.from_id = c1.id
-JOIN code c2 ON r.to_id = c2.id
-WHERE c1.file != c2.file
-AND r.ref_kind = 'call';
+-- All external symbols used within a function's leaves
+SELECT DISTINCT s.symbol, s.kind
+FROM symbols s JOIN code c ON s.node_id = c.id
+WHERE c.file = 'engine/search.py'
+  AND c.line_start >= 42 AND c.line_end <= 80;
 
--- T5: Impact analysis (what must change if eval_position changes?)
--- Direct callers
-SELECT c.name, c.qname 
-FROM refs r 
-JOIN code c ON r.from_id = c.id
-WHERE r.to_name = 'eval_position';
+-- Which files reference eval_position?
+SELECT DISTINCT c.file
+FROM symbols s JOIN code c ON s.node_id = c.id
+WHERE s.symbol = 'eval_position';
+
+-- Functions whose leaves call _minimax (navigate up from leaf to enclosing function)
+SELECT DISTINCT p.name, p.qname, p.file
+FROM symbols s
+JOIN code leaf ON s.node_id = leaf.id
+JOIN code p    ON p.kind = 'function'
+              AND p.file = leaf.file
+              AND p.line_start <= leaf.line_start
+              AND p.line_end   >= leaf.line_end
+WHERE s.symbol = '_minimax' AND s.kind = 'call';
 ```
 
 ---
 
-## Integration with R / Tidyverse
+## Integration with Julia / DataFrames.jl
 
-The schema is designed for fluent tidyverse workflows:
+The schema is designed for fluent DataFrames.jl workflows:
 
-```r
-library(tidyverse)
-library(DBI)
-con <- dbConnect(RSQLite::SQLite(), "codebase.db")
+```julia
+using CodeTree, DataFrames, DataFramesMeta
 
-code <- tbl(con, "code")
-refs <- tbl(con, "refs")
+db = load("path/to/codebase", config)
+code    = db.code     # CodeTree <: AbstractDataFrame
+symbols = db.symbols  # CodeSymbols <: AbstractDataFrame
 
-# Navigate
-expanded <- c("root", "engine", "engine/search", "searcher")
-code %>% filter(parent %in% expanded) %>% arrange(depth)
+# Navigate — expand a set of nodes
+expanded = ["root", "engine", "engine/search", "Searcher"]
+@subset(code, :parent .∈ Ref(expanded)) |> x -> sort(x, [:depth, :sibling_order])
 
-# Filter
-code %>%
-  filter(kind == "function") %>%
-  mutate(lines = n_lines, visibility = if_else(str_starts(name, "_"), "private", "public")) %>%
-  filter(lines > 50, visibility == "public")
+# Filter functions by signature
+@subset(code, :kind .== "function", contains.(:signature, "-> Int"))
 
-# Aggregate
-code %>%
-  filter(kind == "function") %>%
-  group_by(file) %>%
-  summarize(n = n(), total_lines = sum(n_lines), avg_lines = mean(n_lines))
+# Read a leaf's source
+@subset(code, :n_children .== 0, :file .== "engine/search.py") |>
+  x -> sort(x, :line_start) |>
+  x -> join(x.source)
 
-# Join and analyze
-code %>%
-  filter(kind == "function") %>%
-  anti_join(refs %>% filter(ref_kind == "call"), by = c("name" = "to_name")) %>%
-  select(name, file, summary)
+# Which leaves call _minimax?
+innerjoin(
+  @subset(symbols, :symbol .== "_minimax", :kind .== "call"),
+  code, on = :node_id => :id
+) |> x -> select(x, :file, :line_start)
 ```
 
 ---
@@ -457,16 +464,16 @@ code %>%
 
 ```sql
 CREATE INDEX idx_code_parent ON code(parent);
-CREATE INDEX idx_code_kind ON code(kind);
-CREATE INDEX idx_code_file ON code(file);
-CREATE INDEX idx_code_qname ON code(qname);
+CREATE INDEX idx_code_kind   ON code(kind);
+CREATE INDEX idx_code_file   ON code(file);
+CREATE INDEX idx_code_qname  ON code(qname);
 
-CREATE INDEX idx_refs_to ON refs(to_name);
-CREATE INDEX idx_refs_from ON refs(from_id);
-CREATE INDEX idx_refs_kind ON refs(ref_kind);
+CREATE INDEX idx_symbols_node   ON symbols(node_id);
+CREATE INDEX idx_symbols_symbol ON symbols(symbol);
+CREATE INDEX idx_symbols_kind   ON symbols(kind);
 ```
 
-Most queries use `parent` (navigation), `kind` (filtering), or refs `to_name` (cross-references). Index these.
+Most queries use `parent` (navigation), `kind` (filtering), or `symbol` (cross-references). Index these.
 
 ---
 
@@ -501,6 +508,6 @@ This schema is designed for **interactive, exploratory analysis of codebases**:
 4. **Practical** by storing structure and summaries, deriving attributes on the fly
 5. **Queryable** via standard SQL, tidyverse, pandas, or any relational interface
 
-The two-table design (`code` + `refs`) separates the common case (hierarchical navigation) from the complex case (cross-file analysis).
+The two-table design (`code` + `symbols`) separates the common case (hierarchical navigation) from the dependency case (what does this code use from outside itself?).
 
 **The core value proposition: summaries at every level, enabling browsing by concept rather than by name.**
