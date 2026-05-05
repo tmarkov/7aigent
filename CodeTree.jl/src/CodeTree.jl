@@ -2,19 +2,22 @@ module CodeTree
 
 using DataFrames
 using DataFramesMeta
+using SQLite
 using SHA
+using TreeSitter
+using tree_sitter_cpp_jll
+using tree_sitter_julia_jll
 
 include("types.jl")
 include("config.jl")
 include("dataframes.jl")
 include("discovery.jl")
-
-# Stubs for phases 4+.
-load(root_path::AbstractString, config::LanguageConfig; kwargs...) =
-    error("load not yet implemented")
-reload(db::CodeTreeDB) = error("reload not yet implemented")
-update_source(db::CodeTreeDB, id, new_source) =
-    error("update_source not yet implemented")
+include("parser.jl")
+include("summaries.jl")
+include("builder.jl")
+include("cache.jl")
+include("load.jl")
+include("update_source.jl")
 
 # Public API exports
 export CodeTreeDB, load, reload, update_source

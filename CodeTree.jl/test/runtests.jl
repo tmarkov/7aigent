@@ -314,3 +314,168 @@ end
     @test ismissing(CodeTree.language_for_file(TEST_CONFIG, ".gitignore"))
 end
 
+# ---------------------------------------------------------------------------
+# Phase 4 — Tree Builder, Structural Nodes, Spanning
+# R6, R8, R10, R11, R12, R14, R14b, R14c, R15, R16
+# ---------------------------------------------------------------------------
+# Load the test codebase once; all Phase 4+ tests use this DB.
+const _DB = Ref{Any}(nothing)
+
+@testset "Phase 4 setup: load() completes without error" begin
+    _DB[] = CodeTree.load(TEST_CODEBASE, TEST_CONFIG)
+    @test _DB[] isa CodeTree.CodeTreeDB
+end
+
+# Accessor used in all subsequent tests
+_db() = _DB[]::CodeTree.CodeTreeDB
+
+@testset "R6: exactly one codebase root node" begin
+    roots = filter(r -> r.kind == "codebase", _db().code)
+    @test nrow(roots) == 1
+end
+
+@testset "R6: one module node per source-containing subdirectory" begin
+    mods = filter(r -> r.kind == "module", _db().code)
+    mod_names = Set(mods.name)
+    @test "src"   ∈ mod_names
+    @test "julia" ∈ mod_names
+    @test "docs"  ∈ mod_names
+    @test "data"  ∈ mod_names
+end
+
+@testset "R6: one file node per discovered file" begin
+    files = filter(r -> r.kind == "file", _db().code)
+    fnames = Set(files.name)
+    for expected in ["algorithms.cpp", "algorithms.hpp", "main.cpp",
+                     "core.jl", "utils.jl", "api.md", "overview.md",
+                     "README.md", "config.toml", ".gitignore"]
+        @test expected ∈ fnames
+    end
+end
+
+@testset "R7: language column set from file extension" begin
+    code = _db().code
+    cpp_row = only(filter(r -> r.kind == "file" && r.name == "algorithms.cpp", code))
+    @test cpp_row.language == "cpp"
+    jl_row  = only(filter(r -> r.kind == "file" && r.name == "core.jl", code))
+    @test jl_row.language == "julia"
+    md_row  = only(filter(r -> r.kind == "file" && r.name == "README.md", code))
+    @test md_row.language == "markdown"
+    toml_row = only(filter(r -> r.kind == "file" && r.name == "config.toml", code))
+    @test ismissing(toml_row.language)
+end
+
+@testset "R8: unknown-language file is a single leaf node with no children" begin
+    code = _db().code
+    toml_node = only(filter(r -> isequal(r.file, "data/config.toml") && r.kind == "file", code))
+    @test toml_node.n_children == 0
+    @test !ismissing(toml_node.source)
+end
+
+@testset "R10: landmark nodes always appear in db.code" begin
+    code = _db().code
+    for fname in ["quick_sort", "merge_sort", "swap", "bucket_sort",
+                  "timed_sort", "wacky"]
+        rows = filter(r -> r.name == fname && isequal(r.file, "src/algorithms.cpp"), code)
+        @test nrow(rows) >= 1
+    end
+    # R1: process appears twice — base name + $2
+    all_ids = Set(code.id)
+    @test any(id -> endswith(id, ":process"),    all_ids)
+    @test any(id -> endswith(id, ":process\$2"), all_ids)
+end
+
+@testset "R11: detail nodes suppressed when parent spans < detail_threshold (30)" begin
+    code = _db().code
+    # quick_sort spans ~26 lines (< 30); its inner if/while must NOT appear
+    qs = only(filter(r -> r.name == "quick_sort" && isequal(r.file, "src/algorithms.cpp"), code))
+    qs_children = filter(r -> isequal(r.parent, qs.id), code)
+    @test all(r -> r.kind == "chunk", eachrow(qs_children))
+end
+
+@testset "R11: detail nodes shown when parent spans >= detail_threshold (30)" begin
+    code = _db().code
+    # merge_sort spans ~36 lines (> 30); it must have at least one non-chunk child
+    ms = only(filter(r -> r.name == "merge_sort" && isequal(r.file, "src/algorithms.cpp"), code))
+    ms_children = filter(r -> isequal(r.parent, ms.id), code)
+    @test any(r -> r.kind != "chunk", eachrow(ms_children))
+end
+
+@testset "R12: default detail_threshold is 30" begin
+    # Calling load without explicit detail_threshold must yield the same R11 results
+    db2 = CodeTree.load(TEST_CODEBASE, TEST_CONFIG)
+    qs2 = only(filter(r -> r.name == "quick_sort" && isequal(r.file, "src/algorithms.cpp"), db2.code))
+    qs2_children = filter(r -> isequal(r.parent, qs2.id), db2.code)
+    @test all(r -> r.kind == "chunk", eachrow(qs2_children))
+end
+
+@testset "R14b: leading comment absorbed — quick_sort.line_start == 39" begin
+    code = _db().code
+    qs = only(filter(r -> r.name == "quick_sort" && isequal(r.file, "src/algorithms.cpp"), code))
+    # R14b: two comment lines above quick_sort (lines 39–40) are adjacent → absorbed
+    @test qs.line_start == 39
+end
+
+@testset "R14b: leading comment absorbed — merge_sort.line_start == 67" begin
+    code = _db().code
+    ms = only(filter(r -> r.name == "merge_sort" && isequal(r.file, "src/algorithms.cpp"), code))
+    # R14b: three comment lines above merge_sort (lines 67–69) are adjacent → absorbed
+    @test ms.line_start == 67
+end
+
+@testset "R14b negative: blank line prevents absorption — swap.line_start == 25" begin
+    code = _db().code
+    sw = only(filter(r -> r.name == "swap" && isequal(r.file, "src/algorithms.cpp"), code))
+    # Blank line 24 separates the comment block (21–23) from swap's declaration → NOT absorbed
+    @test sw.line_start == 25
+end
+
+@testset "R14c: no kind=chunk node consists entirely of blank lines" begin
+    code = _db().code
+    blank_chunks = filter(r -> r.kind == "chunk" &&
+                               !ismissing(r.source) &&
+                               all(isempty ∘ strip, split(r.source, '\n')), code)
+    @test nrow(blank_chunks) == 0
+end
+
+@testset "R14: spanning invariant — every non-leaf node's children cover its full line range" begin
+    code = _db().code
+    # Only check nodes with a file (skip codebase/module structural nodes)
+    nodes_with_lines = filter(r -> !ismissing(r.line_start) && r.n_children > 0, code)
+    for parent_row in eachrow(nodes_with_lines)
+        children = filter(r -> isequal(r.parent, parent_row.id) &&
+                               !ismissing(r.line_start), code)
+        nrow(children) == 0 && continue
+        covered = Set{Int}()
+        for c in eachrow(children)
+            union!(covered, c.line_start:c.line_end)
+        end
+        expected = Set(parent_row.line_start:parent_row.line_end)
+        @test covered == expected
+    end
+end
+
+@testset "R15: chunk nodes fill every gap between compound children" begin
+    code = _db().code
+    chunks = filter(r -> r.kind == "chunk", code)
+    # There must be at least one chunk in the database
+    @test nrow(chunks) > 0
+    # All chunk nodes are leaves (no children)
+    @test all(r -> r.n_children == 0, eachrow(chunks))
+end
+
+@testset "R16: siblings are ordered by ascending line_start" begin
+    code = _db().code
+    # R16 applies to code nodes with line numbers; skip structural nodes
+    # (codebase/module) whose children may have missing line_start.
+    nodes_with_lines = filter(r -> !ismissing(r.parent) && !ismissing(r.line_start), code)
+    for parent_id in unique(nodes_with_lines.parent)
+        siblings = sort(
+            filter(r -> isequal(r.parent, parent_id) && !ismissing(r.line_start), code),
+            :sibling_order,
+        )
+        nrow(siblings) < 2 && continue
+        @test issorted(siblings.line_start)
+    end
+end
+
