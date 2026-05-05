@@ -257,3 +257,60 @@ end
     end
 end
 
+# ---------------------------------------------------------------------------
+# Phase 3 — File Discovery
+# R5, R7
+# (R6 structural nodes require the tree builder and are tested in Phase 4)
+# ---------------------------------------------------------------------------
+
+const TEST_CODEBASE = joinpath(@__DIR__, "test_codebase")
+
+# All files expected to be discovered in the test codebase (relative paths)
+const EXPECTED_FILES = Set([
+    ".gitignore",
+    "README.md",
+    "data/config.toml",
+    "docs/api.md",
+    "docs/overview.md",
+    "julia/core.jl",
+    "julia/utils.jl",
+    "src/algorithms.cpp",
+    "src/algorithms.hpp",
+    "src/main.cpp",
+])
+
+@testset "R5: discover_files returns all tracked and untracked-non-ignored files" begin
+    paths = CodeTree.discover_files(TEST_CODEBASE)
+    path_set = Set(paths)
+    @test path_set == EXPECTED_FILES
+end
+
+@testset "R5: gitignored files are absent from discover_files results" begin
+    # Create a temporary .o file inside the test_codebase tree; it matches *.o
+    # in the .gitignore and must not appear in the results.
+    tmp_obj = joinpath(TEST_CODEBASE, "src", "tmp_test_artifact.o")
+    write(tmp_obj, "fake object file")
+    try
+        paths = CodeTree.discover_files(TEST_CODEBASE)
+        @test "src/tmp_test_artifact.o" ∉ Set(paths)
+    finally
+        rm(tmp_obj; force=true)
+    end
+end
+
+@testset "R7: language_for_file maps known extensions to language names" begin
+    lff = CodeTree.language_for_file
+    @test lff(TEST_CONFIG, "algorithms.cpp")  == "cpp"
+    @test lff(TEST_CONFIG, "algorithms.hpp")  == "cpp"
+    @test lff(TEST_CONFIG, "main.cpp")        == "cpp"
+    @test lff(TEST_CONFIG, "core.jl")         == "julia"
+    @test lff(TEST_CONFIG, "api.md")          == "markdown"
+    @test lff(TEST_CONFIG, "README.md")       == "markdown"
+end
+
+@testset "R7: language_for_file returns missing for unmapped extensions (R8 case)" begin
+    @test ismissing(CodeTree.language_for_file(TEST_CONFIG, "config.toml"))
+    @test ismissing(CodeTree.language_for_file(TEST_CONFIG, "Makefile"))
+    @test ismissing(CodeTree.language_for_file(TEST_CONFIG, ".gitignore"))
+end
+
