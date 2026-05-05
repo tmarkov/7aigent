@@ -828,3 +828,141 @@ end
         rm(tmp; recursive=true)
     end
 end
+
+# ===========================================================================
+# Phase 9 — update_source (R30–R35)
+# ===========================================================================
+
+@testset "R30: update_source succeeds and updates db.code" begin
+    tmp = _tmp_codebase()
+    try
+        db = load(tmp, TEST_CONFIG)
+        node = only(filter(r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"), db.code))
+
+        new_src = "function is_sorted(v)\n    return true\nend\n"
+        update_source(db, node.id, new_src)
+
+        updated = filter(r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"), db.code)
+        @test nrow(updated) >= 1
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R30a: external file change detected; db refreshed; error raised" begin
+    tmp = _tmp_codebase()
+    try
+        db = load(tmp, TEST_CONFIG)
+        node = only(filter(r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"), db.code))
+
+        # Tamper with the file externally (bypass update_source)
+        utils_path = joinpath(tmp, "julia", "utils.jl")
+        write(utils_path, "function external_fn()\n  99\nend\n")
+
+        @test_throws Exception update_source(db, node.id, "function is_sorted(v)\n  true\nend\n")
+
+        # db must now reflect the externally modified content
+        @test any(r -> isequal(r.name, "external_fn"), eachrow(db.code))
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R31: file content on disk after update is a splice of old content with new_source" begin
+    tmp = _tmp_codebase()
+    try
+        db = load(tmp, TEST_CONFIG)
+        node = only(filter(r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"), db.code))
+
+        utils_path     = joinpath(tmp, "julia", "utils.jl")
+        original_lines = readlines(utils_path; keep=true)
+        ls = node.line_start
+        le = node.line_end
+
+        new_src = "function is_sorted(v)\n    return true  # stub\nend\n"
+        update_source(db, node.id, new_src)
+
+        disk_lines = readlines(utils_path; keep=true)
+
+        # Lines before the replaced span unchanged
+        @test all(disk_lines[i] == original_lines[i] for i in 1:(ls - 1))
+        # Lines after the replaced span unchanged
+        orig_after = original_lines[(le + 1):end]
+        new_after  = disk_lines[(ls - 1 + length(readlines(IOBuffer(new_src); keep=true)) + 1):end]
+        @test orig_after == new_after
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R33 + R33a: db.code and db.symbols updated; old symbol rows replaced" begin
+    tmp = _tmp_codebase()
+    try
+        db = load(tmp, TEST_CONFIG)
+        node = only(filter(r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"), db.code))
+
+        update_source(db, node.id,
+            "function is_sorted(v)\n    return issorted(v)\nend\n")
+
+        # db.code has the updated function
+        @test any(r -> isequal(r.name, "is_sorted"), eachrow(db.code))
+
+        # Find updated node (id may have changed if line_start changed)
+        new_node = only(filter(r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"), db.code))
+
+        # No duplicate symbol rows for the new node
+        relevant = filter(r -> isequal(r.node_id, new_node.id), db.symbols)
+        @test nrow(unique(relevant)) == nrow(relevant)
+
+        # Old node id has no symbols if id changed
+        if new_node.id != node.id
+            @test nrow(filter(r -> isequal(r.node_id, node.id), db.symbols)) == 0
+        end
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R34: disk content after update_source matches db buffer" begin
+    tmp = _tmp_codebase()
+    try
+        db = load(tmp, TEST_CONFIG)
+        node = only(filter(r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"), db.code))
+
+        update_source(db, node.id,
+            "function is_sorted(v)\n    return issorted(v)\nend\n")
+
+        disk_content   = read(joinpath(tmp, node.file), String)
+        buffer_content = db._buffer[node.file]
+        @test disk_content == buffer_content
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R35: failed disk write rolls back db to pre-call state" begin
+    tmp = _tmp_codebase()
+    try
+        db = load(tmp, TEST_CONFIG)
+        node = only(filter(r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"), db.code))
+
+        ids_before        = sort(copy(db.code.id))
+        buf_before        = db._buffer[node.file]  # String is immutable
+        syms_count_before = nrow(db.symbols)
+
+        # Make the file read-only so the disk write fails
+        utils_path = joinpath(tmp, "julia", "utils.jl")
+        chmod(utils_path, 0o444)
+
+        @test_throws Exception update_source(db, node.id,
+            "function is_sorted(v)\n    return issorted(v)\nend\n")
+
+        @test sort(db.code.id)      == ids_before
+        @test db._buffer[node.file] == buf_before
+        @test nrow(db.symbols)      == syms_count_before
+
+        chmod(utils_path, 0o644)
+    finally
+        rm(tmp; recursive=true)
+    end
+end
