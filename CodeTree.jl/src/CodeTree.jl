@@ -1,16 +1,20 @@
 module CodeTree
 
-# Phase 0 skeleton — source files added incrementally in later phases.
+using DataFrames
+using DataFramesMeta
+using SHA
 
-"""Stub: full implementation added in later phases."""
-struct CodeTreeDB end
+include("types.jl")
+include("dataframes.jl")
 
+# Stubs for phases 3+.
 load(root_path::AbstractString, config; kwargs...) =
     error("load not yet implemented")
 reload(db::CodeTreeDB) = error("reload not yet implemented")
 update_source(db::CodeTreeDB, id, new_source) =
     error("update_source not yet implemented")
 
+# Public API exports
 export CodeTreeDB, load, reload, update_source
 
 end # module CodeTree
