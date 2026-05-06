@@ -1,4 +1,4 @@
-{ stdenv, julia, lib, gvisor, codeTree, juliaEnv, cacert }:
+{ stdenv, julia, lib, gvisor, codeTree, juliaEnv, cacert, bubblewrap }:
 
 let
   # juliaEnv is the single shared environment defined in flake.nix,
@@ -78,7 +78,7 @@ stdenv.mkDerivation {
       "-t", "2",
       "--startup-file=no",
       "$out/share/sandbox/startup.jl",
-      "@SOCKETS_DIR@/kernel.json"
+      "/sockets/kernel-internal.json"
     ],
     "env": [
       "JULIA_DEPOT_PATH=/tmp/julia-depot:$out/julia-depot",
@@ -123,6 +123,10 @@ EOCONFIG
       -e "s|@rootfs_dir@|$out/share/sandbox/rootfs|g" \
       -e "s|@config_template@|$out/share/sandbox/config.json.template|g" \
       -e "s|@runsc@|${gvisor}/bin/runsc|g" \
+      -e "s|@bwrap@|${bubblewrap}/bin/bwrap|g" \
+      -e "s|@julia@|${juliaRaw}|g" \
+      -e "s|@sandbox_out@|$out|g" \
+      -e "s|@codeTree@|${codeTree}|g" \
       7aigent-sandbox > $out/bin/7aigent-sandbox
 
     chmod +x $out/bin/7aigent-sandbox

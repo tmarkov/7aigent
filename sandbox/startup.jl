@@ -5,4 +5,4 @@
 using CodeTree
 using IJulia
 
-IJulia.run_kernel(ARGS[1])
+IJulia.run_kernel()

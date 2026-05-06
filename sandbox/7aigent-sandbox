@@ -49,8 +49,24 @@ cp -r @rootfs_dir@ "$BUNDLE_DIR/rootfs"
 # S9: generate a fresh UUID4 as the HMAC key
 KEY=$(cat /proc/sys/kernel/random/uuid)
 
-# S8, S9: write the Jupyter connection file
+# S8, S9: write two Jupyter connection files:
+#   kernel.json         — for external clients (host paths for IPC sockets)
+#   kernel-internal.json — for Julia inside the container (container paths)
 cat > "$SOCKETS_DIR/kernel.json" << EOF
+{
+  "transport": "ipc",
+  "ip": "$SOCKETS_DIR/kernel",
+  "shell_port": 1,
+  "iopub_port": 2,
+  "stdin_port": 3,
+  "control_port": 4,
+  "hb_port": 5,
+  "signature_scheme": "hmac-sha256",
+  "key": "$KEY"
+}
+EOF
+
+cat > "$SOCKETS_DIR/kernel-internal.json" << EOF
 {
   "transport": "ipc",
   "ip": "/sockets/kernel",
@@ -92,6 +108,45 @@ fi
 # --rootless: run without root privileges (skips cgroup setup).
 # --host-uds=create: allow the kernel to create ZMQ IPC sockets on the
 #   bind-mounted /sockets directory (host Unix-domain socket creation).
+#
+# SANDBOX_RUNNER=bwrap selects bubblewrap as an alternative runner for
+# environments where runsc/gvisor is unavailable (e.g. CI, nested containers).
+# bwrap provides namespace isolation but NOT gvisor's syscall filtering.
+# Only use for development/testing — not for production security.
+if [ "${SANDBOX_RUNNER:-}" = "bwrap" ]; then
+    # Extract env and args from the OCI config using the Julia binary directly.
+    # bwrap does not read OCI bundles; we reconstruct the invocation manually.
+    JULIA=@julia@
+    SANDBOX_OUT=@sandbox_out@
+    CODETR=@codeTree@
+
+    exec @bwrap@ \
+        --ro-bind /nix/store /nix/store \
+        --bind "$WORKSPACE" /workspace \
+        $( [ -d "$WORKSPACE/.git" ] && echo "--ro-bind $WORKSPACE/.git /workspace/.git" ) \
+        --bind "$SOCKETS_DIR" /sockets \
+        --tmpfs /tmp \
+        --tmpfs /home/julia \
+        --dev /dev \
+        --proc /proc \
+        --unshare-pid \
+        --unshare-ipc \
+        --unshare-uts \
+        --die-with-parent \
+        --chdir /workspace \
+        --setenv HOME /home/julia \
+        --setenv JULIA_DEPOT_PATH "/tmp/julia-depot:$SANDBOX_OUT/julia-depot" \
+        --setenv JULIA_PROJECT "$CODETR/project" \
+        --setenv JULIA_LOAD_PATH "@:@v#.#:@stdlib" \
+        --setenv JULIA_PKG_SERVER "" \
+        --setenv PATH "$JULIA/bin" \
+        -- "$JULIA/bin/julia" \
+        -t 2 \
+        --startup-file=no \
+        "$SANDBOX_OUT/share/sandbox/startup.jl" \
+        "/sockets/kernel-internal.json"
+fi
+
 exec @runsc@ \
     --rootless \
     --platform=kvm \
