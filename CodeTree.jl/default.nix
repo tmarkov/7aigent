@@ -1,16 +1,10 @@
-{ stdenv, julia, lib, cacert, git }:
+{ stdenv, julia, lib, cacert, git, juliaEnv }:
 
 let
-  # Pre-build a depot with all of CodeTree's direct dependencies.
-  # This is a fixed-output derivation (fetched by nixpkgs with known hashes)
-  # so it runs with network access.  Our buildPhase is then fully offline.
-  juliaEnv = julia.withPackages [
-    "DBInterface" "DataFrames" "DataFramesMeta" "SHA" "SQLite" "Tables"
-    "TreeSitter"
-  ];
+  # juliaEnv is the single shared environment defined in flake.nix,
+  # containing both CodeTree's deps and IJulia.
   juliaRaw       = juliaEnv.passthru.julia;
   juliaDepot     = juliaEnv.passthru.projectAndDepot;
-  minimalRegistry = juliaEnv.passthru.minimalRegistry;
 in
 stdenv.mkDerivation {
   pname   = "CodeTree";

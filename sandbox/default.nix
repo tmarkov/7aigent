@@ -1,9 +1,8 @@
-{ stdenv, julia, lib, gvisor, codeTree }:
+{ stdenv, julia, lib, gvisor, codeTree, juliaEnv }:
 
 let
-  # Pre-built Julia environment with IJulia and all transitive deps in the
-  # Nix store.  No internet access or Pkg.add needed at runtime.
-  juliaEnv = julia.withPackages [ "IJulia" ];
+  # juliaEnv is the single shared environment defined in flake.nix,
+  # containing CodeTree's deps and IJulia.
 
   # Raw Julia binary (not the makeWrapper shell script) so we can call it
   # directly from the OCI process spec without needing /bin/sh in the rootfs.

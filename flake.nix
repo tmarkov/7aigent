@@ -9,9 +9,28 @@
   outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs     = nixpkgs.legacyPackages.${system};
-        codeTree = pkgs.callPackage ./CodeTree.jl { cacert = pkgs.cacert; inherit (pkgs) git; };
-        sandbox  = pkgs.callPackage ./sandbox     { inherit codeTree; gvisor = pkgs.gvisor; };
+        pkgs = nixpkgs.legacyPackages.${system};
+
+        # Single combined Julia environment used by both codeTree (build/test)
+        # and sandbox (runtime depot).  Adding a package here automatically
+        # makes it available inside the sandbox without any other changes.
+        juliaEnv = pkgs.julia.withPackages [
+          # CodeTree.jl runtime dependencies
+          "DBInterface" "DataFrames" "DataFramesMeta" "SHA" "SQLite" "Tables"
+          "TreeSitter"
+          # Sandbox kernel
+          "IJulia"
+        ];
+
+        codeTree = pkgs.callPackage ./CodeTree.jl {
+          cacert   = pkgs.cacert;
+          inherit (pkgs) git;
+          inherit juliaEnv;
+        };
+        sandbox = pkgs.callPackage ./sandbox {
+          inherit codeTree juliaEnv;
+          gvisor = pkgs.gvisor;
+        };
       in {
         packages = {
           inherit codeTree sandbox;
