@@ -1,8 +1,16 @@
-{ stdenv, julia, lib, codeTree }:
+{ stdenv, julia, lib, gvisor, codeTree }:
 
 let
-  # All external Julia packages come from nixpkgs — no depot, no Manifest.toml.
-  juliaEnv = julia.withPackages [ "RemoteREPL" ];
+  # Pre-built Julia environment with IJulia and all transitive deps in the
+  # Nix store.  No internet access or Pkg.add needed at runtime.
+  juliaEnv = julia.withPackages [ "IJulia" ];
+
+  # Raw Julia binary (not the makeWrapper shell script) so we can call it
+  # directly from the OCI process spec without needing /bin/sh in the rootfs.
+  juliaRaw   = juliaEnv.passthru.julia;
+
+  # Pre-built depot (packages + project) placed in the Nix store.
+  juliaDepot = juliaEnv.passthru.projectAndDepot;
 in
 stdenv.mkDerivation {
   pname   = "7aigent-sandbox";
@@ -10,24 +18,85 @@ stdenv.mkDerivation {
 
   src = ./.;
 
+  nativeBuildInputs = [ ];
+
   installPhase = ''
     mkdir -p $out/bin $out/share/sandbox
 
-    cp startup.jl $out/share/sandbox/
+    # ── startup script ────────────────────────────────────────────────────
+    cp startup.jl $out/share/sandbox/startup.jl
 
-    cat > $out/bin/7aigent-sandbox << EOF
-    #!/bin/sh
-    export CODETREE_PATH="${codeTree}"
-    exec ${juliaEnv}/bin/julia \\
-      --startup-file=no \\
-      $out/share/sandbox/startup.jl "\$@"
-    EOF
+    # ── static rootfs skeleton (empty mount-point directories) ───────────
+    cp -r rootfs $out/share/sandbox/rootfs
+
+    # ── OCI config.json template ─────────────────────────────────────────
+    # Build-time Nix store paths are baked in here.
+    # Runtime placeholders that the launcher fills in: @WORKSPACE@ @SOCKETS_DIR@
+    cat > $out/share/sandbox/config.json.template << EOCONFIG
+{
+  "ociVersion": "1.0.0",
+  "process": {
+    "terminal": false,
+    "user": { "uid": 0, "gid": 0 },
+    "args": [
+      "${juliaRaw}/bin/julia",
+      "-t", "2",
+      "--startup-file=no",
+      "$out/share/sandbox/startup.jl",
+      "@SOCKETS_DIR@/kernel.json"
+    ],
+    "env": [
+      "JULIA_DEPOT_PATH=/tmp/julia-depot:${juliaDepot}/depot",
+      "JULIA_PROJECT=${juliaDepot}/project",
+      "JULIA_LOAD_PATH=@:${juliaDepot}/project/Project.toml:@v#.#:@stdlib",
+      "CODETREE_PATH=${codeTree}",
+      "HOME=/home/julia",
+      "JULIA_PKG_SERVER=",
+      "PATH=${juliaRaw}/bin"
+    ],
+    "cwd": "/workspace"
+  },
+  "root": { "path": "rootfs", "readonly": true },
+  "mounts": [
+    { "destination": "/proc",       "type": "proc",  "source": "proc" },
+    { "destination": "/dev",        "type": "tmpfs", "source": "tmpfs",
+      "options": ["nosuid", "noexec", "mode=755", "size=65536k"] },
+    { "destination": "/tmp",        "type": "tmpfs", "source": "tmpfs" },
+    { "destination": "/home/julia", "type": "tmpfs", "source": "tmpfs" },
+    { "destination": "/nix/store",  "type": "bind",  "source": "/nix/store",
+      "options": ["rbind", "ro"] },
+    { "destination": "/workspace",  "type": "bind",  "source": "@WORKSPACE@",
+      "options": ["rbind", "rw"] },
+    { "destination": "/workspace/.git", "type": "bind",
+      "source": "@WORKSPACE@/.git", "options": ["rbind", "ro"] },
+    { "destination": "/sockets",    "type": "bind",  "source": "@SOCKETS_DIR@",
+      "options": ["rbind", "rw"] }
+  ],
+  "linux": {
+    "namespaces": [
+      { "type": "pid"     },
+      { "type": "mount"   },
+      { "type": "ipc"     },
+      { "type": "uts"     },
+      { "type": "network" }
+    ]
+  }
+}
+EOCONFIG
+
+    # ── launcher script ───────────────────────────────────────────────────
+    # Substitute build-time placeholders into the source template.
+    sed \
+      -e "s|@rootfs_dir@|$out/share/sandbox/rootfs|g" \
+      -e "s|@config_template@|$out/share/sandbox/config.json.template|g" \
+      -e "s|@runsc@|${gvisor}/bin/runsc|g" \
+      7aigent-sandbox > $out/bin/7aigent-sandbox
 
     chmod +x $out/bin/7aigent-sandbox
   '';
 
   meta = with lib; {
-    description = "Sandboxed Julia REPL for 7aigent codebase exploration";
+    description = "Sandboxed IJulia kernel for 7aigent codebase exploration";
     license     = licenses.mit;
     mainProgram = "7aigent-sandbox";
   };

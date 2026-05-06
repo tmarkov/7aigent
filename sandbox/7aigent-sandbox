@@ -1,0 +1,90 @@
+#!/bin/sh
+# 7aigent-sandbox — launch the sandboxed IJulia kernel
+#
+# Usage: 7aigent-sandbox <workspace-path>
+#
+# Prints the absolute path of kernel.json to stdout, then blocks until the
+# container exits.  Set SANDBOX_DRY_RUN=1 to generate files and exit without
+# starting the container (used by tests).
+#
+# Build-time placeholders filled in by the Nix installPhase:
+#   @rootfs_dir@      — path to the static rootfs skeleton
+#   @config_template@ — path to the OCI config.json template
+#   @runsc@           — path to the runsc (gvisor) binary
+
+set -e
+
+WORKSPACE="$1"
+
+# S21: require exactly one argument
+if [ -z "$WORKSPACE" ]; then
+    echo "Usage: 7aigent-sandbox <workspace-path>" >&2
+    exit 1
+fi
+
+# S22: workspace must exist and be a directory
+if [ ! -d "$WORKSPACE" ]; then
+    echo "Error: workspace '$WORKSPACE' does not exist or is not a directory" >&2
+    exit 1
+fi
+
+WORKSPACE=$(realpath "$WORKSPACE")
+
+# Create runtime directory
+RUNTIME_DIR=$(mktemp -d /tmp/7aigent-XXXXXX)
+
+# S17: remove runtime directory on exit (clean or signal)
+cleanup() {
+    rm -rf "$RUNTIME_DIR"
+}
+trap cleanup EXIT INT TERM
+
+SOCKETS_DIR="$RUNTIME_DIR/sockets"
+BUNDLE_DIR="$RUNTIME_DIR/bundle"
+mkdir -p "$SOCKETS_DIR" "$BUNDLE_DIR"
+
+# Copy rootfs skeleton (empty mount-point directories only)
+cp -r @rootfs_dir@ "$BUNDLE_DIR/rootfs"
+
+# S9: generate a fresh UUID4 as the HMAC key
+KEY=$(cat /proc/sys/kernel/random/uuid)
+
+# S8, S9: write the Jupyter connection file
+cat > "$SOCKETS_DIR/kernel.json" << EOF
+{
+  "transport": "ipc",
+  "ip": "/sockets/kernel",
+  "shell_port": 1,
+  "iopub_port": 2,
+  "stdin_port": 3,
+  "control_port": 4,
+  "hb_port": 5,
+  "signature_scheme": "hmac-sha256",
+  "key": "$KEY"
+}
+EOF
+
+# Instantiate the OCI config from the template (fill runtime placeholders)
+sed \
+    -e "s|@WORKSPACE@|$WORKSPACE|g" \
+    -e "s|@SOCKETS_DIR@|$SOCKETS_DIR|g" \
+    @config_template@ > "$BUNDLE_DIR/config.json"
+
+# S15: print kernel.json path before the container starts accepting connections
+echo "$SOCKETS_DIR/kernel.json"
+
+# Dry-run mode: generate files but do not start the container (for tests)
+if [ "${SANDBOX_DRY_RUN:-0}" = "1" ]; then
+    # Prevent cleanup trap from removing the files the test needs to inspect.
+    # Re-register a no-op trap; the test runner's process exit will reclaim /tmp.
+    trap '' EXIT INT TERM
+    exit 0
+fi
+
+# S1, S2: run the container under gvisor with KVM platform and no network
+exec @runsc@ \
+    --platform=kvm \
+    --network=none \
+    run \
+    --bundle "$BUNDLE_DIR" \
+    "7aigent-$(basename "$RUNTIME_DIR")"

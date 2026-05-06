@@ -11,7 +11,7 @@
       let
         pkgs     = nixpkgs.legacyPackages.${system};
         codeTree = pkgs.callPackage ./CodeTree.jl { };
-        sandbox  = pkgs.callPackage ./sandbox     { inherit codeTree; };
+        sandbox  = pkgs.callPackage ./sandbox     { inherit codeTree; gvisor = pkgs.gvisor; };
       in {
         packages = {
           inherit codeTree sandbox;
@@ -19,12 +19,13 @@
         };
 
         devShells.default = pkgs.mkShell {
-          buildInputs = with pkgs; [ julia sqlite ];
+          buildInputs = with pkgs; [ julia sqlite gvisor python3Packages.pytest ];
           shellHook = ''
             echo "7aigent dev shell"
             echo "  julia --project=CodeTree.jl       — work on the Julia package"
             echo "  nix build .#sandbox               — build the sandbox"
             echo "  nix build .#codeTree              — build and test CodeTree.jl"
+            echo "  pytest sandbox/test/              — run sandbox tests (needs nix build .#sandbox first)"
           '';
         };
       });

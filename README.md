@@ -44,29 +44,35 @@ nix build .#codeTree
 
 ### Sandbox
 
-Initialise the sandbox Julia environment (one-time, after cloning):
-
-```sh
-julia --project=sandbox -e 'using Pkg; Pkg.instantiate()'
-```
-
 Build the sandbox derivation:
 
 ```sh
 nix build .#sandbox
 ```
 
-Start the sandbox:
+Start the sandbox against a workspace:
 
 ```sh
-./result/bin/7aigent-sandbox
+./result/bin/7aigent-sandbox /path/to/workspace
+# prints: /tmp/7aigent-XXXXX/sockets/kernel.json
 ```
 
-Connect from another Julia session:
+Connect from Python using `jupyter_client`:
 
-```julia
-using RemoteREPL
-connect_repl()   # connects to localhost:27754
+```python
+import jupyter_client, json
+from pathlib import Path
+
+conn_file = "/tmp/7aigent-XXXXX/sockets/kernel.json"
+km = jupyter_client.BlockingKernelClient(connection_file=conn_file)
+km.load_connection_file()
+km.execute("1 + 1")
+```
+
+Run the sandbox tests (requires a prior `nix build .#sandbox`):
+
+```sh
+pytest sandbox/test/
 ```
 
 ## Design

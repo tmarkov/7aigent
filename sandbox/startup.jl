@@ -1,18 +1,12 @@
-# Startup script for the 7aigent sandbox REPL.
-# Invoked by the sandbox wrapper with CODETREE_PATH set to the
-# CodeTree.jl Nix store path ($out from its derivation).
-
-# Make CodeTree.jl loadable.  The Nix derivation installs it as:
-#   ${codeTree}/CodeTree/src/CodeTree.jl
-# so pushing ${codeTree} onto LOAD_PATH lets Julia find it by name.
+# Startup script for the 7aigent sandbox kernel.
+# Loads CodeTree.jl then starts the IJulia kernel.
+# The connection file path is passed as the first positional argument.
+# CODETREE_PATH env var must point to the CodeTree.jl Nix store path.
 let codetree = get(ENV, "CODETREE_PATH", nothing)
     codetree !== nothing && push!(LOAD_PATH, codetree)
 end
 
 using CodeTree
-using RemoteREPL
+using IJulia
 
-@info "7aigent sandbox ready"
-@info "RemoteREPL listening on localhost:27754 — connect with: connect_repl()"
-
-serve_repl()   # blocks; CTRL-C to stop
+IJulia.run_kernel()
