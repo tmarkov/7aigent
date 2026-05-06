@@ -10,7 +10,7 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs     = nixpkgs.legacyPackages.${system};
-        codeTree = pkgs.callPackage ./CodeTree.jl { };
+        codeTree = pkgs.callPackage ./CodeTree.jl { cacert = pkgs.cacert; inherit (pkgs) git; };
         sandbox  = pkgs.callPackage ./sandbox     { inherit codeTree; gvisor = pkgs.gvisor; };
       in {
         packages = {

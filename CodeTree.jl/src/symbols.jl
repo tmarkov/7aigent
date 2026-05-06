@@ -50,10 +50,15 @@ function extract_symbols!(db::CodeTreeDB)
 
         root_node = TreeSitter.root(tree)
 
-        # Pre-run all queries once per file; bucket captures by row range
-        call_caps  = _run_queries(lang_entry.call_patterns,       src, root_node, lang)
-        def_caps   = _run_queries(lang_entry.definition_patterns, src, root_node, lang)
-        ref_caps   = _run_ident_query(src, root_node, lang)
+        # Pre-run all queries once per file; bucket captures by row range.
+        # GC.@preserve keeps tree alive — 0.1.0 Node doesn't hold a tree ref.
+        call_caps, def_caps, ref_caps = GC.@preserve tree begin
+            (
+                _run_queries(lang_entry.call_patterns,       src, root_node, lang),
+                _run_queries(lang_entry.definition_patterns, src, root_node, lang),
+                _run_ident_query(src, root_node, lang),
+            )
+        end
 
         for lrow in eachrow(file_leaves)
             ls0 = lrow.line_start - 1  # 0-indexed
@@ -130,18 +135,29 @@ function _run_queries(
     results = Tuple{String,String,Int,Int}[]
     isempty(patterns) && return results
     lang_obj = language == "cpp" ?
-        Language(tree_sitter_cpp_jll) :
-        Language(tree_sitter_julia_jll)
+        Language(:cpp) :
+        Language(:julia)
     for pat in patterns
         q = try Query(lang_obj, pat) catch; continue end
         cursor = TreeSitter.QueryCursor()
         TreeSitter.exec(cursor, q, root_node)
-        for m in cursor
-            for cap in TreeSitter.captures(m)
-                text = String(TreeSitter.slice(src, cap.node))
-                rs   = Int(TreeSitter.start_point(cap.node).row)
-                re   = Int(TreeSitter.end_point(cap.node).row)
-                push!(results, (TreeSitter.capture_name(q, cap), text, rs, re))
+        # TreeSitter 0.1.0 does not define iterate(::QueryCursor); use next_match.
+        # Captures are Node values directly; capture name needs the raw index.
+        while true
+            m = TreeSitter.next_match(cursor)
+            m === nothing && break
+            for i in 1:TreeSitter.capture_count(m)
+                raw_cap   = unsafe_load(m.obj.captures, i)
+                cap_node  = TreeSitter.Node(raw_cap.node)
+                name_len  = Ref{UInt32}(0)
+                name_ptr  = TreeSitter.API.ts_query_capture_name_for_id(
+                                q.ptr, raw_cap.index, name_len)
+                # name_ptr is Cstring (null-terminated); cast for length-bounded copy
+                cap_name  = unsafe_string(Ptr{UInt8}(name_ptr), name_len[])
+                text      = String(TreeSitter.slice(src, cap_node))
+                rs        = Int(TreeSitter.API.ts_node_start_point(cap_node.ptr).row)
+                re        = Int(TreeSitter.API.ts_node_end_point(cap_node.ptr).row)
+                push!(results, (cap_name, text, rs, re))
             end
         end
     end
@@ -238,8 +254,10 @@ function _parse_block_symbols(block::String, language::String)::Set{String}
     result = Set{String}()
     tree = parse_source(block, language)
     isnothing(tree) && return result
-    root_node = TreeSitter.root(tree)
-    caps = _run_ident_query(block, root_node, language)
+    caps = GC.@preserve tree begin
+        root_node = TreeSitter.root(tree)
+        _run_ident_query(block, root_node, language)
+    end
     for (_, text, _, _) in caps
         push!(result, text)
     end

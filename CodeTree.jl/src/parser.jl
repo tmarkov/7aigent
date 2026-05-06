@@ -4,9 +4,9 @@ const _PARSERS = Dict{String,Any}()
 function _get_parser(language::String)
     return get!(_PARSERS, language) do
         if language == "cpp"
-            Parser(Language(tree_sitter_cpp_jll))
+            Parser(Language(:cpp))
         elseif language == "julia"
-            Parser(Language(tree_sitter_julia_jll))
+            Parser(Language(:julia))
         else
             error("No tree-sitter parser for language: $language")
         end

@@ -27,12 +27,9 @@ end
 
 function _cpp_name(node::TreeSitter.Node, src::String, t::String)::Union{String,Nothing}
     if t == "function_definition"
-        try
-            decl = TreeSitter.child(node, "declarator")
-            return _cpp_decl_name(decl, src)
-        catch
-            return nothing
-        end
+        decl = TreeSitter.child(node, "declarator")
+        !TreeSitter.is_null(decl) && return _cpp_decl_name(decl, src)
+        return nothing
     elseif t ∈ ("struct_specifier", "class_specifier")
         for gc in TreeSitter.named_children(node)
             TreeSitter.node_type(gc) == "type_identifier" &&
@@ -63,10 +60,15 @@ function _julia_name(node::TreeSitter.Node, src::String, t::String)::Union{Strin
         ncs = collect(TreeSitter.named_children(node))
         isempty(ncs) && return nothing
         sig = ncs[1]
-        TreeSitter.node_type(sig) != "signature" && return nothing
-        sig_ncs = collect(TreeSitter.named_children(sig))
-        isempty(sig_ncs) && return nothing
-        return _julia_call_name(sig_ncs[1], src)
+        if TreeSitter.node_type(sig) == "signature"
+            # Grammar versions that wrap in a signature node
+            sig_ncs = collect(TreeSitter.named_children(sig))
+            isempty(sig_ncs) && return nothing
+            return _julia_call_name(sig_ncs[1], src)
+        else
+            # Grammar versions where first child is identifier/call_expression directly
+            return _julia_call_name(sig, src)
+        end
     elseif t == "short_function_definition"
         ncs = collect(TreeSitter.named_children(node))
         isempty(ncs) && return nothing
@@ -142,10 +144,9 @@ end
 function _body_node(node::TreeSitter.Node, language::String)::TreeSitter.Node
     if language == "cpp"
         for field in ("body", "consequence")
-            try
-                return TreeSitter.child(node, field)
-            catch
-            end
+            n = TreeSitter.child(node, field)
+            # ts_node_child_by_field_name returns a null node when the field is absent
+            !TreeSitter.is_null(n) && return n
         end
         # Fallback: find the first compound_statement among named children.
         for gc in TreeSitter.named_children(node)
@@ -197,8 +198,8 @@ function _build_level(
         t = TreeSitter.node_type(node)
         is_comment = TreeSitter.is_extra(node)
         mapping = is_comment ? nothing : classify_node(config, language, t)
-        rs = Int(TreeSitter.start_point(node).row)   # 0-indexed
-        re = Int(TreeSitter.end_point(node).row)     # 0-indexed
+        rs = Int(TreeSitter.API.ts_node_start_point(node.ptr).row)   # 0-indexed
+        re = Int(TreeSitter.API.ts_node_end_point(node.ptr).row)     # 0-indexed
         (; ts_node=node, is_comment, mapping, row_start=rs, row_end=re)
     end
 
@@ -250,7 +251,7 @@ function _build_level(
                     j -= 1
                     continue
                 end
-                if TreeSitter.node_type(prev.ts_node) == "string_literal"
+                if TreeSitter.node_type(prev.ts_node) ∈ ("string_literal", "triple_string")
                     summary_src = String(TreeSitter.slice(src, prev.ts_node))
                 end
                 break
@@ -278,7 +279,7 @@ function _build_level(
     # A comment node is "absorbed" if its row range overlaps any adjusted span's ls.
     absorbed_rows = Set{Int}()
     for sp in spans
-        for r in (sp.ls - 1):(sp.ts_node === nothing ? sp.ls - 1 : Int(TreeSitter.start_point(sp.ts_node).row))
+        for r in (sp.ls - 1):(sp.ts_node === nothing ? sp.ls - 1 : Int(TreeSitter.API.ts_node_start_point(sp.ts_node.ptr).row))
             push!(absorbed_rows, r)
         end
     end
@@ -479,11 +480,16 @@ function build_file_rows(
         return [file_row]
     end
 
-    root_node = TreeSitter.root(tree)
-    child_rows = _build_level(
-        root_node, src, src_lines, language, config, detail_threshold,
-        file_id, file_path, depth + 1, 1, n_lines,
-    )
+    # GC.@preserve keeps `tree` alive for the entire node traversal.
+    # TreeSitter 0.1.0 Node does not hold a reference to its Tree, so without
+    # this the GC could free the tree while nodes are still in use.
+    child_rows = GC.@preserve tree begin
+        root_node = TreeSitter.root(tree)
+        _build_level(
+            root_node, src, src_lines, language, config, detail_threshold,
+            file_id, file_path, depth + 1, 1, n_lines,
+        )
+    end
 
     file_row[:n_children] = count(r -> r[:parent] == file_id, child_rows)
     return vcat([file_row], child_rows)
