@@ -1,4 +1,4 @@
-{ stdenv, julia, lib, gvisor, codeTree, juliaEnv }:
+{ stdenv, julia, lib, gvisor, codeTree, juliaEnv, cacert }:
 
 let
   # juliaEnv is the single shared environment defined in flake.nix,
@@ -17,7 +17,43 @@ stdenv.mkDerivation {
 
   src = ./.;
 
-  nativeBuildInputs = [ ];
+  nativeBuildInputs = [ juliaRaw ];
+
+  buildPhase = ''
+    export HOME=$TMPDIR
+
+    # Precompile all runtime packages (CodeTree + IJulia + transitive deps) into
+    # $out/julia-depot/compiled/ with a fixed, reproducible JULIA_CPU_TARGET.
+    #
+    # Why not use juliaDepot's compiled caches directly?  juliaDepot is a
+    # fixed-output derivation (FOD) whose .so files are compiled with the *native*
+    # CPU of whatever machine performed the initial build.  That machine happened
+    # to have avxvnni/hreset/ptwrite (Alder Lake extensions beyond AVX2).
+    # gvisor's KVM virtual CPU does not expose those features via CPUID, so Julia's
+    # cache validator rejects juliaDepot's .so on every sandbox launch.
+    #
+    # The Nix-correct fix is to compile with an explicit target here so the output
+    # is reproducible regardless of the build machine.  x86-64-v3 (AVX2, no
+    # Alder-Lake extensions) is the standard nixpkgs "modern x86" level and is
+    # fully exposed by gvisor KVM.
+    #
+    # $out/julia-depot structure:
+    #   compiled/  - freshly compiled x86-64-v3 caches (written by this step)
+    #   packages/  - symlink to juliaDepot packages (source for compilation + @depot)
+    #   artifacts/ - symlink to juliaDepot artifacts (JLL shared libraries)
+    #   registries/- symlink to juliaDepot registries
+    mkdir -p $out/julia-depot
+    ln -s ${juliaDepot}/depot/packages   $out/julia-depot/packages
+    ln -s ${juliaDepot}/depot/artifacts  $out/julia-depot/artifacts
+    ln -s ${juliaDepot}/depot/registries $out/julia-depot/registries
+
+    JULIA_CPU_TARGET="x86-64-v3" \
+      JULIA_DEPOT_PATH=$out/julia-depot \
+      JULIA_PROJECT=${codeTree}/project \
+      JULIA_SSL_CA_ROOTS_PATH="${cacert}/etc/ssl/certs/ca-bundle.crt" \
+      JULIA_PKG_SERVER="" \
+      ${juliaRaw}/bin/julia --startup-file=no -e 'using CodeTree; using IJulia'
+  '';
 
   installPhase = ''
     mkdir -p $out/bin $out/share/sandbox
@@ -45,10 +81,9 @@ stdenv.mkDerivation {
       "@SOCKETS_DIR@/kernel.json"
     ],
     "env": [
-      "JULIA_DEPOT_PATH=/tmp/julia-depot:${juliaDepot}/depot",
-      "JULIA_PROJECT=${juliaDepot}/project",
-      "JULIA_LOAD_PATH=@:${juliaDepot}/project/Project.toml:@v#.#:@stdlib",
-      "CODETREE_PATH=${codeTree}",
+      "JULIA_DEPOT_PATH=/tmp/julia-depot:$out/julia-depot",
+      "JULIA_PROJECT=${codeTree}/project",
+      "JULIA_LOAD_PATH=@:@v#.#:@stdlib",
       "HOME=/home/julia",
       "JULIA_PKG_SERVER=",
       "PATH=${juliaRaw}/bin"
@@ -66,8 +101,7 @@ stdenv.mkDerivation {
       "options": ["rbind", "ro"] },
     { "destination": "/workspace",  "type": "bind",  "source": "@WORKSPACE@",
       "options": ["rbind", "rw"] },
-    { "destination": "/workspace/.git", "type": "bind",
-      "source": "@WORKSPACE@/.git", "options": ["rbind", "ro"] },
+    { "destination": "/workspace/.git", "type": "bind", "source": "@WORKSPACE@/.git", "options": ["rbind", "ro"] },
     { "destination": "/sockets",    "type": "bind",  "source": "@SOCKETS_DIR@",
       "options": ["rbind", "rw"] }
   ],
@@ -100,3 +134,4 @@ EOCONFIG
     mainProgram = "7aigent-sandbox";
   };
 }
+

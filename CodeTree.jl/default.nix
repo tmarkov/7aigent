@@ -18,21 +18,26 @@ stdenv.mkDerivation {
     export HOME=$TMPDIR
     export CODETREE_SRC=$(pwd)
 
-    # Build a consistent project from the pre-built depot's manifest, then
-    # inject CodeTree as a local path entry — no Pkg operations, no network.
-    mkdir -p $TMPDIR/project
-    cp ${juliaDepot}/project/Project.toml $TMPDIR/project/
-    cp ${juliaDepot}/project/Manifest.toml $TMPDIR/project/
-    chmod u+w $TMPDIR/project/Project.toml $TMPDIR/project/Manifest.toml
+    # Install source into $out/CodeTree first so the manifest path entry
+    # points to the final stable store path, making the precompile cache
+    # valid for anyone who adds $out to JULIA_DEPOT_PATH + LOAD_PATH.
+    mkdir -p $out/CodeTree/src
+    cp Project.toml $out/CodeTree/
+    cp src/*.jl $out/CodeTree/src/
 
-    # Add CodeTree to project deps
+    # Build a project in $out/project with CodeTree injected as a path dep.
+    # Using $out (not TMPDIR) as the project root ensures the precompile cache
+    # hash is keyed to the stable store path, not an ephemeral build directory.
+    mkdir -p $out/project
+    cp ${juliaDepot}/project/Project.toml $out/project/
+    cp ${juliaDepot}/project/Manifest.toml $out/project/
+    chmod u+w $out/project/Project.toml $out/project/Manifest.toml
+
     echo 'CodeTree = "342842c8-1a2a-4ebb-ae0f-32d4c88624eb"' \
-      >> $TMPDIR/project/Project.toml
+      >> $out/project/Project.toml
 
-    # Add CodeTree as a path entry in the manifest (deps list is required so Julia
-    # knows which packages CodeTree is allowed to `using`).
     printf '\n[[deps.CodeTree]]\ndeps = ["DBInterface", "DataFrames", "DataFramesMeta", "SHA", "SQLite", "Tables", "TreeSitter"]\nuuid = "342842c8-1a2a-4ebb-ae0f-32d4c88624eb"\npath = "%s"\n' \
-      "$CODETREE_SRC" >> $TMPDIR/project/Manifest.toml
+      "$out/CodeTree" >> $out/project/Manifest.toml
 
     # Initialise a minimal git repo inside the test_codebase fixture so that
     # discover_files can use `git ls-files --others --exclude-standard` and
@@ -40,9 +45,9 @@ stdenv.mkDerivation {
     git -C "$CODETREE_SRC/test/test_codebase" init -q
     git -C "$CODETREE_SRC/test/test_codebase" add .
 
-    mkdir -p $TMPDIR/depot
-    export JULIA_PROJECT=$TMPDIR/project
-    export JULIA_DEPOT_PATH=$TMPDIR/depot:${juliaDepot}/depot
+    # $out is the depot root: compiled cache lands in $out/compiled/
+    export JULIA_PROJECT=$out/project
+    export JULIA_DEPOT_PATH=$out:${juliaDepot}/depot
     export JULIA_SSL_CA_ROOTS_PATH="${cacert}/etc/ssl/certs/ca-bundle.crt"
     export JULIA_PKG_SERVER=""
     export GIT_CONFIG_NOSYSTEM=1
@@ -53,17 +58,25 @@ stdenv.mkDerivation {
 
     ${juliaRaw}/bin/julia --startup-file=no \
       "$CODETREE_SRC/test/runtests.jl"
+
+    # Precompile CodeTree into $out/compiled/ so the sandbox can load it
+    # without any precompilation at runtime.
+    #
+    # JULIA_DEPOT_PATH=$out:${juliaDepot}/depot means:
+    # - Julia searches ${juliaDepot}/depot/compiled/ first for existing caches
+    #   (all transitive deps such as DataFrames, TreeSitter, etc. are already
+    #   there, compiled by julia.withPackages — we leave them untouched)
+    # - Only CodeTree is missing, so only CodeTree is compiled fresh into $out
+    # - The resulting .ji records @depot/packages/... paths (using juliaDepot's
+    #   packages/ directly, no extra symlink layer) which are identical to what
+    #   juliaDepot itself uses — so cache fingerprints stay consistent
+    JULIA_DEPOT_PATH=$out:${juliaDepot}/depot \
+      ${juliaRaw}/bin/julia --startup-file=no -e 'using CodeTree; using IJulia'
   '';
 
-  # Install into $out/CodeTree/ so that callers can push $out onto
-  # Julia's LOAD_PATH and load the package with `using CodeTree`.
-  # Julia searches LOAD_PATH entries for subdirectories named after
-  # the package (i.e. CodeTree/src/CodeTree.jl).
-  installPhase = ''
-    mkdir -p $out/CodeTree/src
-    cp Project.toml $out/CodeTree/
-    cp src/*.jl $out/CodeTree/src/
-  '';
+  # Source, project, and compiled cache are all written to $out during
+  # buildPhase; nothing left to do here.
+  installPhase = "true";
 
   meta = with lib; {
     description = "Julia package providing the code/refs schema for codebase indexing and querying";
