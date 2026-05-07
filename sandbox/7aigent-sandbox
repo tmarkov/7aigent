@@ -104,13 +104,15 @@ if [ "${SANDBOX_DRY_RUN:-0}" = "1" ]; then
     exit 0
 fi
 
-# S1, S2: run the container under gvisor with KVM platform and no network.
+# S1, S2: run the container under gvisor with no network.
 # --rootless: run without root privileges (skips cgroup setup).
 # --host-uds=create: allow the kernel to create ZMQ IPC sockets on the
 #   bind-mounted /sockets directory (host Unix-domain socket creation).
+# SANDBOX_PLATFORM selects the gvisor platform (default: kvm).
+#   Use systrap in environments without KVM (e.g. QEMU VMs in CI).
 #
 # SANDBOX_RUNNER=bwrap selects bubblewrap as an alternative runner for
-# environments where runsc/gvisor is unavailable (e.g. CI, nested containers).
+# environments where runsc/gvisor is unavailable.
 # bwrap provides namespace isolation but NOT gvisor's syscall filtering.
 # Only use for development/testing — not for production security.
 if [ "${SANDBOX_RUNNER:-}" = "bwrap" ]; then
@@ -149,7 +151,7 @@ fi
 
 exec @runsc@ \
     --rootless \
-    --platform=kvm \
+    "--platform=${SANDBOX_PLATFORM:-kvm}" \
     --network=none \
     --host-uds=create \
     run \

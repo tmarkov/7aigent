@@ -31,10 +31,22 @@
           inherit codeTree juliaEnv;
           gvisor = pkgs.gvisor;
         };
+        testCodebase = pkgs.stdenv.mkDerivation {
+          name = "test-codebase";
+          src = ./CodeTree.jl/test/test_codebase;
+          installPhase = "cp -r . $out";
+        };
+
       in {
         packages = {
           inherit codeTree sandbox;
           default = sandbox;
+        };
+
+        checks = {
+          sandbox-e2e = pkgs.callPackage ./test/sandbox-vm.nix {
+            inherit sandbox codeTree testCodebase;
+          };
         };
 
         devShells.default = pkgs.mkShell {
@@ -45,6 +57,7 @@
             echo "  nix build .#sandbox               — build the sandbox"
             echo "  nix build .#codeTree              — build and test CodeTree.jl"
             echo "  pytest sandbox/test/              — run sandbox tests (needs nix build .#sandbox first)"
+            echo "  nix flake check                   — run all checks including VM test"
           '';
         };
       });

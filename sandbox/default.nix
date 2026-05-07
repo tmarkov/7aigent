@@ -1,4 +1,4 @@
-{ stdenv, julia, lib, gvisor, codeTree, juliaEnv, cacert, bubblewrap }:
+{ stdenv, julia, lib, gvisor, codeTree, juliaEnv, cacert, bubblewrap, coreutils, bash, iputils }:
 
 let
   # juliaEnv is the single shared environment defined in flake.nix,
@@ -86,7 +86,7 @@ stdenv.mkDerivation {
       "JULIA_LOAD_PATH=@:@v#.#:@stdlib",
       "HOME=/home/julia",
       "JULIA_PKG_SERVER=",
-      "PATH=${juliaRaw}/bin"
+      "PATH=${juliaRaw}/bin:${coreutils}/bin:${bash}/bin:${iputils}/bin"
     ],
     "cwd": "/workspace"
   },

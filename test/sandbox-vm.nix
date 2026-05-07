@@ -1,0 +1,177 @@
+{ pkgs, sandbox, codeTree, testCodebase }:
+let
+  # This script runs inside the VM (not in the type-checked test driver).
+  # It connects to the running Julia kernel and exercises all required behaviours.
+  kernelTestPy = pkgs.writeText "kernel-test.py" ''
+    import sys, time
+    import jupyter_client
+
+    kf = sys.argv[1]
+    km = jupyter_client.BlockingKernelClient(connection_file=kf)
+    km.load_connection_file()
+    km.start_channels()
+    time.sleep(2)
+
+    def run(code, timeout=60, expect_error=False):
+        """Execute code in the kernel; return all text output."""
+        km.execute(code)
+        reply = km.get_shell_msg(timeout=timeout)
+        status = reply["content"]["status"]
+        output = []
+        while True:
+            msg = km.get_iopub_msg(timeout=15)
+            if msg["msg_type"] == "execute_result":
+                output.append(msg["content"]["data"].get("text/plain", ""))
+            elif msg["msg_type"] == "stream":
+                output.append(msg["content"]["text"])
+            elif msg["msg_type"] == "error":
+                tb = "\n".join(msg["content"].get("traceback", []))
+                output.append(f"ERROR: {msg['content'].get('ename')}: {msg['content'].get('evalue')}\n{tb}")
+            elif msg["msg_type"] == "status" and msg["content"]["execution_state"] == "idle":
+                break
+        text = "\n".join(output)
+        if expect_error:
+            assert status == "error", f"Expected error but got status={status!r}; output={text!r}"
+        else:
+            evalue = reply["content"].get("evalue", "")
+            assert status == "ok", f"Kernel error for {code!r}\n  evalue={evalue!r}\n  output={text!r}"
+        return text
+
+    # 1. Basic arithmetic
+    result = run("1 + 1")
+    assert "2" in result, f"Expected 2, got: {result!r}"
+    print(f"PASS: 1 + 1 = {result.strip()}")
+
+    # 2. Load CodeTree (which also loads TreeSitter and SQLite internally).
+    #    The sandbox CWD is /workspace = the test-codebase copy.
+    run("using CodeTree; using DataFrames")
+    print("PASS: using CodeTree")
+
+    # 2b. Build the LanguageConfig (separate cell to isolate failures)
+    run("""
+    global config = CodeTree.LanguageConfig(Dict(
+        "cpp" => CodeTree.LanguageEntry(
+            Dict(
+                "function_definition" => CodeTree.NodeMapping(:landmark, "function"),
+                "class_specifier"     => CodeTree.NodeMapping(:landmark, "class"),
+            ),
+            ["(call_expression function: (identifier) @call)"],
+            ["(declaration declarator: (identifier) @def)"],
+        ),
+        "julia" => CodeTree.LanguageEntry(
+            Dict(
+                "function_definition"       => CodeTree.NodeMapping(:landmark, "function"),
+                "short_function_definition" => CodeTree.NodeMapping(:landmark, "function"),
+                "struct_definition"         => CodeTree.NodeMapping(:landmark, "class"),
+            ),
+            ["(call_expression (identifier) @call)"],
+            ["(assignment left: (identifier) @def)"],
+        ),
+        "markdown" => CodeTree.LanguageEntry(
+            Dict("Header" => CodeTree.NodeMapping(:landmark, "function")),
+            String[], String[],
+        ),
+    ), Dict(".cpp" => "cpp", ".cc" => "cpp", ".hpp" => "cpp", ".h" => "cpp",
+            ".jl" => "julia", ".md" => "markdown"))
+    println("config created ok")
+    """)
+    print("PASS: LanguageConfig created")
+
+    # 2c. Load the codebase — global assignment avoids top-level scoping issues.
+    #     Use println to bypass IJulia's display machinery (avoids stack-overflow
+    #     in show when displaying large DataFrames).
+    result = run("global db = CodeTree.load(pwd(), config); println(nrow(db.code))",
+                 timeout=120)
+    n = result.strip().splitlines()[-1].strip()
+    assert n.isdigit() and int(n) > 0, f"Expected node count > 0, got: {result!r}"
+    print(f"PASS: CodeTree.load indexed {n} nodes from test codebase")
+
+    # 3. Bash command via Julia's run() — test that process spawning works
+    #    inside gvisor. Output of the child process goes to the kernel's stdout.
+    #    We capture it with readchomp/read and print so Python can see it.
+    result = run("""
+    try
+        output = readchomp(`ls -la`)
+        println(output)
+    catch e
+        err_type = string(typeof(e))
+        err_msg  = hasfield(typeof(e), :msg)    ? e.msg    : ""
+        err_pre  = hasfield(typeof(e), :prefix) ? e.prefix : ""
+        println("SPAWN_ERROR_TYPE: ", err_type)
+        println("SPAWN_ERROR_MSG: ",  err_msg)
+        println("SPAWN_ERROR_PRE: ",  err_pre)
+        rethrow(ErrorException("spawn test failed: " * err_type * ": " * err_msg))
+    end
+    """)
+    assert "SPAWN_ERROR_TYPE" not in result, f"Process spawn failed:\n{result}"
+    assert len(result.strip()) > 0, "ls -la produced no output"
+    print(f"PASS: run(`ls -la`) succeeded (process spawning works in gvisor):\n{result.strip()[:300]}")
+
+    # 4. Network isolation: ping 1.1.1.1 must fail inside the sandbox.
+    #    We expect an error from process.jl because --network=none means no
+    #    network interface is present — the ping binary will fail immediately.
+    run("""run(`ping -c 1 -W 2 1.1.1.1`)""", expect_error=True)
+    print("PASS: network isolated — ping 1.1.1.1 raised an error as expected")
+
+    km.stop_channels()
+    print("\nAll sandbox e2e tests passed!")
+  '';
+in
+pkgs.testers.nixosTest {
+  name = "7aigent-sandbox-e2e";
+
+  # jupyter_client is imported inside the VM script (kernelTestPy above),
+  # not in the test-driver Python that gets type-checked.
+  skipTypeCheck = true;
+
+  nodes.machine = { ... }: {
+    boot.loader.grub.enable = false;
+    virtualisation = {
+      cores = 4;
+      memorySize = 4096;
+      graphics = false;
+    };
+    environment.systemPackages = [
+      (pkgs.python3.withPackages (ps: [ ps.jupyter-client ]))
+      pkgs.gvisor
+      pkgs.iputils
+    ];
+  };
+
+  testScript = ''
+    machine.wait_for_unit("multi-user.target")
+
+    # Set up a writable copy of the test codebase as the workspace
+    machine.execute("cp -r ${testCodebase} /tmp/test-codebase && chmod -R u+w /tmp/test-codebase")
+
+    # Start the sandbox under runsc with systrap platform.
+    # systrap uses ptrace-based syscall interception — no KVM required — so it
+    # works inside the QEMU VM used by NixOS tests.
+    machine.execute(
+        "SANDBOX_PLATFORM=systrap ${sandbox}/bin/7aigent-sandbox /tmp/test-codebase"
+        " >/tmp/sandbox.log 2>&1 </dev/null &"
+    )
+
+    # Wait for the kernel IPC sockets to appear (means Julia started successfully)
+    machine.wait_for_file("/tmp/7aigent-*/sockets/kernel.json", timeout=120)
+    _, kf = machine.execute("ls /tmp/7aigent-*/sockets/kernel.json | head -1")
+    kf = kf.strip()
+    print(f"Kernel connection file: {kf}")
+
+    # Allow IJulia kernel event loop to settle before connecting
+    machine.sleep(5)
+
+    # Run all e2e tests via the Jupyter client (inside the VM).
+    # Print sandbox.log on failure for diagnosis.
+    rc, _ = machine.execute(f"python3 ${kernelTestPy} {kf} 2>&1 | tee /tmp/kernel-test.log")
+    if rc != 0:
+        _, log = machine.execute("cat /tmp/sandbox.log")
+        print("=== sandbox.log ===\n" + log)
+        _, klog = machine.execute("cat /tmp/kernel-test.log")
+        print("=== kernel-test.log ===\n" + klog)
+        raise Exception("kernel test failed — see logs above")
+    _, klog = machine.execute("cat /tmp/kernel-test.log")
+    print(klog)
+  '';
+}
+
