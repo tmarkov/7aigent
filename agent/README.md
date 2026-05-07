@@ -2,11 +2,11 @@
 
 The agent runner — the ReACT loop between the LLM and the sandbox REPL.
 
-**Language TBD.** This component will:
+**Written in PureScript (compiled to Node.js).** This component:
 
-1. Spawn `7aigent-sandbox` and connect to its RemoteREPL socket
-2. Send the user's goal to an LLM along with available Julia tools
-3. Receive Julia expressions from the LLM, forward them to the sandbox, and feed results back
-4. Repeat until the LLM emits a final answer
+1. Spawns `7aigent-sandbox` and connects to its IJulia Jupyter kernel
+2. Sends the user's goal to an LLM (OpenAI-compatible API) along with available tools
+3. Executes tool calls (`julia_repl`, `git_diff`, `git_commit`), feeds results back to the LLM
+4. Repeats until the LLM emits a final answer with no tool call
 
-See [`../design/`](../design/) for the schema the sandbox exposes.
+See [`../design/agent-requirements.md`](../design/agent-requirements.md) for the full specification.

@@ -139,11 +139,15 @@ Code structure is classified into these kinds, which map across languages:
 | `file` | Source file | `engine/search.py` |
 | `class` | Class, struct, interface, trait | `Searcher`, `Board` |
 | `function` | Function, method, subroutine | `search`, `_minimax`, `legal_moves` |
-| `block` | Structural block | `for`, `while`, `if`, `try/catch` |
+| `loop` | For/while loop | `for i in range(n)`, `while running` |
+| `conditional` | If/else/switch statement | `if depth == 0`, `switch piece` |
+| `try` | Try/catch/rescue block | `try ... catch e` |
+| `with` | With/using block | `with open(f) as fh` |
 | `import` | Import, require, include statement | `from engine.eval import eval_position` |
 | `variable` | Module/class-level constant or field | `PST` (piece-square table) |
 | `type` | Type def, typedef, alias | `type Piece = ...` |
 | `comment` | Docstrings, doc comments | Module docstring, class docstring |
+| `chunk` | Gap-filling leaf; lines not covered by any compound child | Declaration lines, trailing code |
 
 ### Tree Structure
 

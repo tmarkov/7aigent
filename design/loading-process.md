@@ -5,7 +5,7 @@
 `load_codebase(path)` parses a directory of source files and populates two tables:
 
 - **`code`**: A hierarchical tree of all code and documentation nodes
-- **`refs`**: Cross-references (calls, imports, type uses) between nodes
+- **`symbols`**: External identifier references (calls and variable reads) per leaf node
 
 The result is a queryable, navigable representation of the codebase. The process is incremental: unchanged files are loaded from cache; only new or changed files are re-parsed.
 
@@ -79,7 +79,7 @@ Result: a list of `(path, language)` pairs.
 
 ### Step 2: Check the Cache
 
-Open `.7aigent/code_tree/index.db` if it exists. This SQLite file contains the previously built `code` and `refs` tables, plus a `files` table:
+Open `.7aigent/code_tree/index.db` if it exists. This SQLite file contains the previously built `code` and `symbols` tables, plus a `files` table:
 
 ```sql
 CREATE TABLE files (
@@ -126,7 +126,7 @@ Parse the file using the appropriate language grammar. This produces a concrete 
 Create a `kind=file` row:
 - `name` = filename
 - `qname` = relative path from codebase root
-- `source` = entire file contents
+- `source` = NULL (file nodes are non-leaf nodes once children are added; source is stored only on leaf nodes)
 - `line_start = 1`, `line_end` = total line count
 - `summary` = module-level docstring or header comment if present (see Step 5); else NULL
 
