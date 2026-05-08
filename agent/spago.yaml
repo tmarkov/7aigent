@@ -1,0 +1,33 @@
+package:
+  name: agent
+  version: 0.0.1
+  dependencies:
+    - prelude
+    - effect
+    - console
+    - aff
+    - either
+    - maybe
+    - tuples
+    - arrays
+    - strings
+    - integers
+    - node-fs
+    - node-fs-aff
+    - node-process
+    - node-child-process
+    - node-readline
+    - node-streams
+    - node-http
+    - argonaut-core
+    - argonaut-codecs
+  test:
+    main: Test.Main
+    dependencies:
+      - spec
+
+workspace:
+  # Run `spago install` after editing this file to regenerate spago.lock,
+  # then update the outputHash in agent/default.nix.
+  packageSet:
+    registry: 56.8.0

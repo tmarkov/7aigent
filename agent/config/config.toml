@@ -1,0 +1,12 @@
+# 7aigent workspace configuration.
+# This file is created on first run. Edit it before starting a session.
+
+api_endpoint           = "https://openrouter.ai/api/v1"
+model                  = "anthropic/claude-opus-4-5"
+api_key_env            = "OPENROUTER_API_KEY"
+output_threshold_chars = 20000
+max_api_retries        = 3
+max_tokens_per_turn    = 200000
+compaction_threshold   = 150000
+preserve_initial       = 20000
+preserve_final         = 40000

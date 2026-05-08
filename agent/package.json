@@ -1,0 +1,16 @@
+{
+  "name": "7aigent",
+  "version": "0.0.1",
+  "private": true,
+  "description": "ReACT agent runner for 7aigent codebase exploration",
+  "scripts": {
+    "build": "spago bundle-app --main Main --to index.js",
+    "test":  "spago test --main Test.Main"
+  },
+  "dependencies": {
+    "zeromq":                    "^6.1.3",
+    "@modelcontextprotocol/sdk": "^1.10.2",
+    "eventsource-parser":        "^3.0.1",
+    "smol-toml":                 "^1.3.4"
+  }
+}

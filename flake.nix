@@ -31,6 +31,7 @@
           inherit codeTree juliaEnv;
           gvisor = pkgs.gvisor;
         };
+        agent = pkgs.callPackage ./agent { };
         testCodebase = pkgs.stdenv.mkDerivation {
           name = "test-codebase";
           src = ./CodeTree.jl/test/test_codebase;
@@ -39,7 +40,7 @@
 
       in {
         packages = {
-          inherit codeTree sandbox;
+          inherit codeTree sandbox agent;
           default = sandbox;
         };
 
@@ -50,12 +51,15 @@
         };
 
         devShells.default = pkgs.mkShell {
-          buildInputs = with pkgs; [ julia sqlite gvisor python3Packages.pytest ];
+          buildInputs = with pkgs; [ julia sqlite gvisor python3Packages.pytest purescript spago nodejs ];
           shellHook = ''
             echo "7aigent dev shell"
             echo "  julia --project=CodeTree.jl       — work on the Julia package"
             echo "  nix build .#sandbox               — build the sandbox"
             echo "  nix build .#codeTree              — build and test CodeTree.jl"
+            echo "  nix build .#agent                 — build the agent runner"
+            echo "  spago test                        — run agent PureScript tests"
+            echo "  npm install (in agent/)           — install JS deps locally"
             echo "  pytest sandbox/test/              — run sandbox tests (needs nix build .#sandbox first)"
             echo "  nix flake check                   — run all checks including VM test"
           '';
