@@ -41,6 +41,7 @@
         agent = pkgs.callPackage ./agent {
           spago = pkgs.spago-unstable;
           purescript = pkgs.purs;
+          inherit sandbox;
         };
         testCodebase = pkgs.stdenv.mkDerivation {
           name = "test-codebase";

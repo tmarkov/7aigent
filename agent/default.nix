@@ -1,4 +1,4 @@
-{ lib, stdenv, buildNpmPackage, nodejs, purescript, spago, zeromq, pkg-config, makeWrapper, git, esbuild, julia, cacert }:
+{ lib, stdenv, buildNpmPackage, nodejs, purescript, spago, zeromq, pkg-config, makeWrapper, git, esbuild, julia, cacert, sandbox }:
 
 let
   # Fixed-output derivation: runs `spago install` to populate the spago
@@ -82,7 +82,8 @@ buildNpmPackage {
     cp -r config $out/lib/7aigent/
 
     makeWrapper ${nodejs}/bin/node $out/bin/7aigent \
-      --add-flags "$out/lib/7aigent/index.js"
+      --add-flags "$out/lib/7aigent/index.js" \
+      --prefix PATH : ${sandbox}/bin
 
     runHook postInstall
   '';

@@ -67,12 +67,11 @@ export const connectKernelImpl = (kernelJsonPath) => (onError) => (onSuccess) =>
   const sessionId = crypto.randomUUID();
   const key = config.key;
 
-  // For IPC transport the port fields hold socket file paths
+  // For IPC transport: address is ipc://<ip>-<port> (Jupyter spec separator is hyphen)
+  // For TCP transport: address is tcp://<ip>:<port>
   function addr(port) {
-    // port may already be an ipc path or a number
-    if (typeof port === "string" && port.startsWith("/")) return "ipc://" + port;
-    if (typeof port === "number") return "ipc://" + port; // shouldn't happen for IPC
-    return "ipc://" + port;
+    if (config.transport === "tcp") return `tcp://${config.ip}:${port}`;
+    return `ipc://${config.ip}-${port}`;
   }
 
   const shell = new zmq.Dealer();
