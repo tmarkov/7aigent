@@ -57,7 +57,8 @@ buildNpmPackage {
     mkdir -p $HOME/.cache
     cp -r --no-preserve=mode ${spagoDeps} $HOME/.cache/spago-nodejs
 
-    spago bundle --module Main --outfile index.js --bundle-type app
+    spago bundle --module Main --outfile index.js --bundle-type app --platform node \
+      --bundler-args "--external:zeromq"
 
     runHook postBuild
   '';
