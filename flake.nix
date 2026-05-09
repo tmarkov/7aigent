@@ -4,12 +4,19 @@
   inputs = {
     nixpkgs.url     = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    purescript-overlay = {
+      url = "github:thomashoneyman/purescript-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, purescript-overlay }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ purescript-overlay.overlays.default ];
+        };
 
         # Single combined Julia environment used by both codeTree (build/test)
         # and sandbox (runtime depot).  Adding a package here automatically
@@ -31,7 +38,10 @@
           inherit codeTree juliaEnv;
           gvisor = pkgs.gvisor;
         };
-        agent = pkgs.callPackage ./agent { };
+        agent = pkgs.callPackage ./agent {
+          spago = pkgs.spago-unstable;
+          purescript = pkgs.purs;
+        };
         testCodebase = pkgs.stdenv.mkDerivation {
           name = "test-codebase";
           src = ./CodeTree.jl/test/test_codebase;
@@ -51,7 +61,7 @@
         };
 
         devShells.default = pkgs.mkShell {
-          buildInputs = with pkgs; [ julia sqlite gvisor python3Packages.pytest purescript spago nodejs ];
+          buildInputs = with pkgs; [ julia sqlite gvisor python3Packages.pytest purs spago-unstable nodejs ];
           shellHook = ''
             echo "7aigent dev shell"
             echo "  julia --project=CodeTree.jl       — work on the Julia package"

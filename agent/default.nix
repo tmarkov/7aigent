@@ -1,56 +1,63 @@
-{ lib, stdenv, buildNpmPackage, nodejs, purescript, spago, zeromq, pkg-config, makeWrapper }:
+{ lib, stdenv, buildNpmPackage, nodejs, purescript, spago, zeromq, pkg-config, makeWrapper, git, esbuild, julia, cacert }:
 
-# Pre-fetch all PureScript registry packages as a fixed-output derivation.
-# This mirrors the pattern buildNpmPackage uses for npm deps: network access is
-# allowed here (and hash-verified), then the main build runs fully offline.
 let
+  # Fixed-output derivation: runs `spago install` to populate the spago
+  # package cache, then copies it to $out (excluding .git dirs).
+  # dontFixup avoids patchelf/strip failing on the registry git objects.
+  #
+  # To update after changing spago.yaml / spago.lock:
+  #   1. Set outputHash = lib.fakeHash
+  #   2. Run: nix build .#agent 2>&1 | grep "got:"
+  #   3. Paste the "got:" hash here
   spagoDeps = stdenv.mkDerivation {
-    name = "7aigent-agent-spago-deps";
-    src  = ./.;  # needs spago.yaml + spago.lock
+    name = "7aigent-spago-deps";
+    src  = ./.;
 
-    nativeBuildInputs = [ spago nodejs ];
+    nativeBuildInputs = [ spago purescript git nodejs cacert ];
+
+    outputHashAlgo = "sha256";
+    outputHashMode = "recursive";
+    outputHash     = "sha256-c1ubex6Wdv+G0rWsTrJgT5dGBT2sbm+mPug7GIuJsq4=";
 
     buildPhase = ''
       export HOME=$TMPDIR
-      spago install --offline false
+      export GIT_SSL_CAINFO=${cacert}/etc/ssl/certs/ca-bundle.crt
+      export SSL_CERT_FILE=${cacert}/etc/ssl/certs/ca-bundle.crt
+      spago install
     '';
 
-    # spago v2 (0.21+) stores packages under XDG_DATA_HOME (~/.local/share/spago).
     installPhase = ''
-      cp -r $HOME/.local/share/spago $out
+      cp -r --no-preserve=mode $HOME/.cache/spago-nodejs $out
+      find $out -name ".git" -type d -exec rm -rf {} + 2>/dev/null || true
     '';
 
-    outputHashMode = "recursive";
-    outputHashAlgo = "sha256";
-    # Update this hash by running:
-    #   nix build .#spagoDeps 2>&1 | grep "got:"
-    # after editing spago.yaml or spago.lock.
-    outputHash = lib.fakeHash;
+    dontFixup = true;
   };
 
-in buildNpmPackage {
+in
+buildNpmPackage {
   pname   = "7aigent";
   version = "0.0.1";
   src     = ./.;
 
   # Update with: nix run nixpkgs#prefetch-npm-deps agent/package-lock.json
-  npmDepsHash = lib.fakeHash;
+  npmDepsHash = "sha256-EvtaZjdW/+5cFywhCi24EQQ9sykdQu/U8KEec27Zc88=";
 
   # pkg-config + zeromq: required to compile the zeromq native Node.js addon.
   # purescript + spago: compile PureScript source and run tests.
   # makeWrapper: wrap the installed Node.js entry point.
-  nativeBuildInputs = [ purescript spago nodejs pkg-config makeWrapper ];
+  # julia: needed at test time for A29/A30 (isPureDefinitionImpl spawns julia).
+  nativeBuildInputs = [ purescript spago nodejs pkg-config makeWrapper git esbuild julia ];
   buildInputs       = [ zeromq ];
 
   buildPhase = ''
     runHook preBuild
 
-    # Inject pre-fetched PureScript packages into the location spago expects.
     export HOME=$TMPDIR
-    mkdir -p $HOME/.local/share
-    ln -s ${spagoDeps} $HOME/.local/share/spago
+    mkdir -p $HOME/.cache
+    cp -r --no-preserve=mode ${spagoDeps} $HOME/.cache/spago-nodejs
 
-    spago bundle-app --main Main --to index.js
+    spago bundle --module Main --outfile index.js --bundle-type app
 
     runHook postBuild
   '';
@@ -60,13 +67,7 @@ in buildNpmPackage {
   doCheck = true;
   checkPhase = ''
     runHook preCheck
-
-    export HOME=$TMPDIR
-    mkdir -p $HOME/.local/share
-    ln -sf ${spagoDeps} $HOME/.local/share/spago
-
     spago test --main Test.Main
-
     runHook postCheck
   '';
 
