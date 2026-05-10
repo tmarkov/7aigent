@@ -84,6 +84,42 @@ getTs = liftEffect nowIsoImpl
 -- Utilities
 -- ---------------------------------------------------------------------------
 
+-- | Produce a one-or-more-line summary of a tool call's input for display.
+-- | For julia_repl, shows the code (capped at 10 lines).
+-- | For git tools, shows the relevant fields.
+formatToolInput :: String -> String -> String
+formatToolInput "julia_repl" input =
+    let code = fromMaybe input do
+            json <- case JP.jsonParser input of
+                Right j -> Just j
+                Left _  -> Nothing
+            obj  <- J.toObject json
+            val  <- FO.lookup "code" obj
+            J.toString val
+        ls     = String.split (String.Pattern "\n") code
+        kept   = Array.take 10 ls
+        more   = Array.length ls > 10
+    in String.joinWith "\n" kept <> if more then "\n..." else ""
+formatToolInput "git_diff" _ = ""
+formatToolInput "git_commit" input =
+    let msg = do
+            json   <- case JP.jsonParser input of
+                Right j -> Just j
+                Left _  -> Nothing
+            obj    <- J.toObject json
+            msgVal <- FO.lookup "message" obj
+            J.toString msgVal
+        what = do
+            json    <- case JP.jsonParser input of
+                Right j -> Just j
+                Left _  -> Nothing
+            obj     <- J.toObject json
+            whatVal <- FO.lookup "what" obj
+            J.toString whatVal
+    in "message: " <> fromMaybe "(none)" msg
+       <> "  what: " <> fromMaybe "all" what
+formatToolInput _ input = input
+
 estimateTokens :: String -> TokenCount
 estimateTokens s = TokenCount (max 1 (String.length s / 4))
 
@@ -452,6 +488,9 @@ doTool ws sessionId config kernel history tc knownHunks = do
         , input: tc.input
         })
     liftEffect $ printLn ("\n[Tool: " <> tc.name <> "]")
+    let inputSummary = formatToolInput tc.name tc.input
+    when (not (String.null inputSummary)) do
+        liftEffect $ printLn inputSummary
 
     Tuple rawOut hunks' <- dispatchTool ws config kernel tc knownHunks
 
