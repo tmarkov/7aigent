@@ -58,6 +58,8 @@ Base.setindex!(::CodeTree, args...)    = throw(MutationError(MUTATION_MSG))
 # Results are plain DataFrames — read-only protection applies only to direct
 # mutation of db.code/db.symbols, not to derived query results.
 Base.filter(f, ct::CodeTree)                                   = filter(f, getfield(ct, :_df))
+# Resolve ambiguity with DataFrames.filter(::Pair, ::AbstractDataFrame):
+DataFrames.filter(pair::Pair, ct::CodeTree; kw...)             = filter(pair, getfield(ct, :_df); kw...)
 DataFrames.select(ct::CodeTree, args...; kw...)                = select(getfield(ct, :_df), args...; kw...)
 DataFrames.subset(ct::CodeTree, args...; kw...)                = subset(getfield(ct, :_df), args...; kw...)
 DataFrames.groupby(ct::CodeTree, args...; kw...)               = groupby(getfield(ct, :_df), args...; kw...)
@@ -65,6 +67,7 @@ Base.sort(ct::CodeTree, args...; kw...)                        = sort(getfield(c
 DataFrames._check_consistency(ct::CodeTree)                    = DataFrames._check_consistency(getfield(ct, :_df))
 DataFrames.metadatakeys(ct::CodeTree)                          = metadatakeys(getfield(ct, :_df))
 DataFrames.metadata(ct::CodeTree, k; kw...)                    = metadata(getfield(ct, :_df), k; kw...)
+DataFrames.colmetadatakeys(ct::CodeTree)                       = colmetadatakeys(getfield(ct, :_df))
 DataFrames.colmetadatakeys(ct::CodeTree, col)                  = colmetadatakeys(getfield(ct, :_df), col)
 DataFrames.colmetadata(ct::CodeTree, col, k; kw...)            = colmetadata(getfield(ct, :_df), col, k; kw...)
 
@@ -104,6 +107,8 @@ end
 Base.setindex!(::CodeSymbols, args...)  = throw(MutationError(MUTATION_MSG))
 
 Base.filter(f, cs::CodeSymbols)                                = filter(f, getfield(cs, :_df))
+# Resolve ambiguity with DataFrames.filter(::Pair, ::AbstractDataFrame):
+DataFrames.filter(pair::Pair, cs::CodeSymbols; kw...)          = filter(pair, getfield(cs, :_df); kw...)
 DataFrames.select(cs::CodeSymbols, args...; kw...)             = select(getfield(cs, :_df), args...; kw...)
 DataFrames.subset(cs::CodeSymbols, args...; kw...)             = subset(getfield(cs, :_df), args...; kw...)
 DataFrames.groupby(cs::CodeSymbols, args...; kw...)            = groupby(getfield(cs, :_df), args...; kw...)
@@ -111,6 +116,7 @@ Base.sort(cs::CodeSymbols, args...; kw...)                     = sort(getfield(c
 DataFrames._check_consistency(cs::CodeSymbols)                 = DataFrames._check_consistency(getfield(cs, :_df))
 DataFrames.metadatakeys(cs::CodeSymbols)                       = metadatakeys(getfield(cs, :_df))
 DataFrames.metadata(cs::CodeSymbols, k; kw...)                 = metadata(getfield(cs, :_df), k; kw...)
+DataFrames.colmetadatakeys(cs::CodeSymbols)                    = colmetadatakeys(getfield(cs, :_df))
 DataFrames.colmetadatakeys(cs::CodeSymbols, col)               = colmetadatakeys(getfield(cs, :_df), col)
 DataFrames.colmetadata(cs::CodeSymbols, col, k; kw...)         = colmetadata(getfield(cs, :_df), col, k; kw...)
 
