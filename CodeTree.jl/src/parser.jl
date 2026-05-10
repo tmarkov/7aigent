@@ -1,26 +1,20 @@
-# Lazily-initialised parser cache — one parser per language.
-const _PARSERS = Dict{String,Any}()
+# Lazily-initialised parser cache — one parser per grammar symbol.
+const _PARSERS = Dict{Symbol,Any}()
 
-function _get_parser(language::String)
-    return get!(_PARSERS, language) do
-        if language == "cpp"
-            Parser(Language(:cpp))
-        elseif language == "julia"
-            Parser(Language(:julia))
-        else
-            error("No tree-sitter parser for language: $language")
-        end
+function _get_parser(grammar::Symbol)
+    return get!(_PARSERS, grammar) do
+        Parser(Language(grammar))
     end
 end
 
 """
-    parse_source(src, language) -> Union{TreeSitter.Tree, Nothing}
+    parse_source(src, grammar) -> Union{TreeSitter.Tree, Nothing}
 
-Parse `src` with the tree-sitter grammar for `language`.  Returns `nothing`
-when no grammar is available for the given language (e.g. "markdown").
+Parse `src` with the tree-sitter grammar identified by `grammar` (a `Symbol`
+such as `:cpp` or `:julia`). Returns `nothing` when `grammar` is `nothing`.
 """
-function parse_source(src::String, language::String)::Union{Any,Nothing}
-    language ∉ ("cpp", "julia") && return nothing
-    parser = _get_parser(language)
+function parse_source(src::String, grammar::Union{Symbol,Nothing})::Union{Any,Nothing}
+    isnothing(grammar) && return nothing
+    parser = _get_parser(grammar)
     return TreeSitter.parse(parser, src)
 end

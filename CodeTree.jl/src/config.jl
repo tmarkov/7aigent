@@ -20,7 +20,7 @@ end
     LanguageEntry
 
 Configuration for a single language: AST node type classifications and
-tree-sitter query patterns for symbol extraction.
+tree-sitter query patterns for symbol extraction and tree building.
 
 Fields:
 - `node_types::Dict{String,NodeMapping}` — maps tree-sitter (or stdlib)
@@ -33,26 +33,45 @@ Fields:
   to this language, e.g. `[".cpp", ".cc", ".hpp"]`. Used when constructing a
   `LanguageConfig` from a dict of entries (extensions map derived automatically).
   Pass an empty vector when the extensions are managed by the caller instead.
+- `grammar_symbol::Union{Symbol,Nothing}` — tree-sitter grammar symbol (e.g.
+  `:cpp`, `:julia`), or `nothing` for languages without a tree-sitter grammar.
+- `name_patterns::Vector{String}` — tree-sitter query strings, each capturing
+  `@name`. The earliest capture (by row, then column) is used as the node name.
+- `body_fields::Vector{String}` — ordered list of named field names to try when
+  finding the body node to recurse into (e.g. `["body", "consequence"]`).
+- `body_node_types::Vector{String}` — fallback: node types to look for among
+  named children when no `body_fields` match (e.g. `["compound_statement"]`).
+- `docstring_types::Vector{String}` — AST node types that represent docstrings
+  immediately preceding a definition (e.g. `["string_literal", "triple_string"]`
+  for Julia). Empty for languages without docstring conventions.
 """
-struct LanguageEntry
+Base.@kwdef struct LanguageEntry
     node_types::Dict{String, NodeMapping}
-    call_patterns::Vector{String}
-    definition_patterns::Vector{String}
-    extensions::Vector{String}
+    call_patterns::Vector{String}       = String[]
+    definition_patterns::Vector{String} = String[]
+    extensions::Vector{String}          = String[]
+    grammar_symbol::Union{Symbol, Nothing} = nothing
+    name_patterns::Vector{String}       = String[]
+    body_fields::Vector{String}         = String[]
+    body_node_types::Vector{String}     = String[]
+    docstring_types::Vector{String}     = String[]
 end
 
 """
     LanguageEntry(node_types, call_patterns, definition_patterns) -> LanguageEntry
 
-Convenience constructor with no extensions (they are derived from the
-`LanguageConfig` extensions map, or managed by the caller).
+Convenience constructor with no extensions and no tree-sitter fields.
 """
 function LanguageEntry(
     node_types::Dict{String, NodeMapping},
     call_patterns::Vector{String},
     definition_patterns::Vector{String},
 )::LanguageEntry
-    return LanguageEntry(node_types, call_patterns, definition_patterns, String[])
+    return LanguageEntry(
+        node_types          = node_types,
+        call_patterns       = call_patterns,
+        definition_patterns = definition_patterns,
+    )
 end
 
 """

@@ -15,113 +15,79 @@ mutable struct _Span
 end
 
 # ---------------------------------------------------------------------------
-# Name extraction — language-specific traversal rules
+# Name extraction — driven by entry.name_patterns (tree-sitter queries)
 # ---------------------------------------------------------------------------
 
-function extract_name(node::TreeSitter.Node, src::String, language::String)::Union{String,Nothing}
-    t = TreeSitter.node_type(node)
-    language == "cpp"   && return _cpp_name(node, src, t)
-    language == "julia" && return _julia_name(node, src, t)
-    return nothing
-end
+"""
+    _query_name(entry, node, src) -> Union{String, Nothing}
 
-function _cpp_name(node::TreeSitter.Node, src::String, t::String)::Union{String,Nothing}
-    if t == "function_definition"
-        decl = TreeSitter.child(node, "declarator")
-        !TreeSitter.is_null(decl) && return _cpp_decl_name(decl, src)
-        return nothing
-    elseif t ∈ ("struct_specifier", "class_specifier")
-        for gc in TreeSitter.named_children(node)
-            TreeSitter.node_type(gc) == "type_identifier" &&
-                return String(TreeSitter.slice(src, gc))
-        end
-    elseif t == "namespace_definition"
-        for gc in TreeSitter.named_children(node)
-            TreeSitter.node_type(gc) ∈ ("identifier", "namespace_identifier") &&
-                return String(TreeSitter.slice(src, gc))
-        end
-    end
-    return nothing
-end
+Run the `entry.name_patterns` queries against `node`'s subtree and return
+the text of the `@name` capture with the earliest (row, column) position
+among captures within the first five lines of `node`. Returns `nothing` when
+no patterns match or when `entry.grammar_symbol` is `nothing`.
+"""
+function _query_name(
+    entry::LanguageEntry,
+    node::TreeSitter.Node,
+    src::String,
+)::Union{String, Nothing}
+    isnothing(entry.grammar_symbol) && return nothing
+    isempty(entry.name_patterns)   && return nothing
 
-function _cpp_decl_name(node::TreeSitter.Node, src::String)::Union{String,Nothing}
-    t = TreeSitter.node_type(node)
-    # "identifier" covers free functions/constructors; "field_identifier" covers
-    # member functions inside class/struct bodies; "qualified_identifier" covers
-    # scoped names like Ns::foo.
-    t ∈ ("identifier", "field_identifier", "qualified_identifier") && return String(TreeSitter.slice(src, node))
-    for gc in TreeSitter.named_children(node)
-        r = _cpp_decl_name(gc, src)
-        isnothing(r) || return r
-    end
-    return nothing
-end
+    lang_obj   = Language(entry.grammar_symbol)
+    node_start = Int(TreeSitter.API.ts_node_start_point(node.ptr).row)
 
-function _julia_name(node::TreeSitter.Node, src::String, t::String)::Union{String,Nothing}
-    if t == "function_definition"
-        ncs = collect(TreeSitter.named_children(node))
-        isempty(ncs) && return nothing
-        sig = ncs[1]
-        if TreeSitter.node_type(sig) == "signature"
-            # Grammar versions that wrap in a signature node
-            sig_ncs = collect(TreeSitter.named_children(sig))
-            isempty(sig_ncs) && return nothing
-            return _julia_call_name(sig_ncs[1], src)
-        else
-            # Grammar versions where first child is identifier/call_expression directly
-            return _julia_call_name(sig, src)
-        end
-    elseif t == "short_function_definition"
-        ncs = collect(TreeSitter.named_children(node))
-        isempty(ncs) && return nothing
-        return _julia_call_name(ncs[1], src)
-    elseif t ∈ ("struct_definition", "abstract_definition")
-        for gc in TreeSitter.named_children(node)
-            tt = TreeSitter.node_type(gc)
-            if tt == "type_head"
-                for ggc in TreeSitter.named_children(gc)
-                    TreeSitter.node_type(ggc) == "identifier" &&
-                        return String(TreeSitter.slice(src, ggc))
+    best_text = nothing
+    best_row  = typemax(Int)
+    best_col  = typemax(Int)
+
+    for pat in entry.name_patterns
+        q = try Query(lang_obj, pat) catch; continue end
+        cursor = TreeSitter.QueryCursor()
+        TreeSitter.exec(cursor, q, node)
+        while true
+            m = TreeSitter.next_match(cursor)
+            m === nothing && break
+            for i in 1:TreeSitter.capture_count(m)
+                raw_cap  = unsafe_load(m.obj.captures, i)
+                cap_node = TreeSitter.Node(raw_cap.node)
+                pt = TreeSitter.API.ts_node_start_point(cap_node.ptr)
+                rs = Int(pt.row)
+                cs = Int(pt.column)
+                # Only consider captures in the first few lines (name is in the header)
+                rs > node_start + 4 && continue
+                if rs < best_row || (rs == best_row && cs < best_col)
+                    best_row  = rs
+                    best_col  = cs
+                    best_text = String(TreeSitter.slice(src, cap_node))
                 end
             end
-            tt == "identifier" && return String(TreeSitter.slice(src, gc))
         end
-    elseif t == "module_definition"
-        for gc in TreeSitter.named_children(node)
-            TreeSitter.node_type(gc) == "identifier" &&
-                return String(TreeSitter.slice(src, gc))
-        end
-    elseif t == "macro_definition"
-        ncs = collect(TreeSitter.named_children(node))
-        isempty(ncs) && return nothing
-        return _julia_call_name(ncs[1], src)
     end
-    return nothing
+
+    return best_text
 end
 
-function _julia_call_name(node::TreeSitter.Node, src::String)::Union{String,Nothing}
-    t = TreeSitter.node_type(node)
-    t == "identifier" && return String(TreeSitter.slice(src, node))
-    if t == "call_expression"
-        ncs = collect(TreeSitter.named_children(node))
-        isempty(ncs) && return nothing
-        return _julia_call_name(ncs[1], src)
+# ---------------------------------------------------------------------------
+# Body finding — driven by entry.body_fields / entry.body_node_types
+# ---------------------------------------------------------------------------
+
+"""
+    _find_body(entry, node) -> TreeSitter.Node
+
+Return the body sub-node to recurse into for `node`, using the field names
+in `entry.body_fields` first, then the node types in `entry.body_node_types`.
+Falls back to `node` itself when nothing matches.
+"""
+function _find_body(entry::LanguageEntry, node::TreeSitter.Node)::TreeSitter.Node
+    for field in entry.body_fields
+        n = TreeSitter.child(node, field)
+        !TreeSitter.is_null(n) && return n
     end
-    if t == "field_expression"
-        # e.g. Base.show → return "show"
-        for gc in TreeSitter.named_children(node)
-            TreeSitter.node_type(gc) ∈ ("field_identifier", "identifier") &&
-                return String(TreeSitter.slice(src, gc))
-        end
-        return nothing
+    for gc in TreeSitter.named_children(node)
+        TreeSitter.node_type(gc) ∈ entry.body_node_types && return gc
     end
-    if t == "typed_expression"
-        # e.g. sort_array(...)::RetType — delegate to the inner call
-        ncs = collect(TreeSitter.named_children(node))
-        isempty(ncs) && return nothing
-        return _julia_call_name(ncs[1], src)
-    end
-    return nothing
+    return node
 end
 
 # ---------------------------------------------------------------------------
@@ -133,34 +99,6 @@ function _all_blank(src_lines::Vector{<:AbstractString}, from::Int, to::Int)::Bo
         isempty(strip(src_lines[i])) || return false
     end
     return true
-end
-
-# ---------------------------------------------------------------------------
-# Body extraction — find the compound statement / block to recurse into.
-#
-# For C++ compound nodes the body is accessed via a named field;
-# for Julia it is a `block` node (last named child of the kind listed).
-# Returning the original node is a safe fallback (recurse into everything).
-# ---------------------------------------------------------------------------
-
-function _body_node(node::TreeSitter.Node, language::String)::TreeSitter.Node
-    if language == "cpp"
-        for field in ("body", "consequence")
-            n = TreeSitter.child(node, field)
-            # ts_node_child_by_field_name returns a null node when the field is absent
-            !TreeSitter.is_null(n) && return n
-        end
-        # Fallback: find the first compound_statement among named children.
-        for gc in TreeSitter.named_children(node)
-            TreeSitter.node_type(gc) == "compound_statement" && return gc
-        end
-    elseif language == "julia"
-        # The body is always a `block` node, typically the last named child.
-        for gc in TreeSitter.named_children(node)
-            TreeSitter.node_type(gc) == "block" && return gc
-        end
-    end
-    return node
 end
 
 # ---------------------------------------------------------------------------
@@ -180,6 +118,7 @@ function _build_level(
     parent_ts_node::TreeSitter.Node,
     src::String,
     src_lines::Vector{<:AbstractString},
+    entry::LanguageEntry,
     language::String,
     config::LanguageConfig,
     detail_threshold::Int,
@@ -199,7 +138,7 @@ function _build_level(
     classified = map(raw) do node
         t = TreeSitter.node_type(node)
         is_comment = TreeSitter.is_extra(node)
-        mapping = is_comment ? nothing : classify_node(config, language, t)
+        mapping = is_comment ? nothing : get(entry.node_types, t, nothing)
         rs = Int(TreeSitter.API.ts_node_start_point(node.ptr).row)   # 0-indexed
         re = Int(TreeSitter.API.ts_node_end_point(node.ptr).row)     # 0-indexed
         (; ts_node=node, is_comment, mapping, row_start=rs, row_end=re)
@@ -240,12 +179,12 @@ function _build_level(
     spans = _Span[]
     for vi in visible_indices
         c = classified[vi]
-        name = something(extract_name(c.ts_node, src, language), c.mapping.kind)
+        name = something(_query_name(entry, c.ts_node, src), c.mapping.kind)
 
         # R17: check if the immediately preceding non-comment sibling is a
-        # string_literal (Julia docstring).
+        # docstring node for this language.
         summary_src::Union{String,Nothing} = nothing
-        if language == "julia"
+        if !isempty(entry.docstring_types)
             j = vi - 1
             while j >= 1
                 prev = classified[j]
@@ -253,7 +192,7 @@ function _build_level(
                     j -= 1
                     continue
                 end
-                if TreeSitter.node_type(prev.ts_node) ∈ ("string_literal", "triple_string")
+                if TreeSitter.node_type(prev.ts_node) ∈ entry.docstring_types
                     summary_src = String(TreeSitter.slice(src, prev.ts_node))
                 end
                 break
@@ -394,7 +333,7 @@ function _build_level(
             :name          => sp.name,
             :qname         => missing,
             :language      => language,
-            :summary       => _extract_summary(sp.summary_src, language),
+            :summary       => _extract_summary(sp.summary_src),
             :source        => span_src,
             :signature     => missing,
             :file          => file_path,
@@ -405,9 +344,9 @@ function _build_level(
         )
 
         if sp.kind != "chunk" && !isnothing(sp.ts_node)
-            body = _body_node(sp.ts_node, language)
+            body = _find_body(entry, sp.ts_node)
             child_rows = _build_level(
-                body, src, src_lines, language, config, detail_threshold,
+                body, src, src_lines, entry, language, config, detail_threshold,
                 node_id, file_path, depth + 1, sp.ls, sp.le,
             )
             row[:n_children] = count(r -> r[:parent] == node_id, child_rows)
@@ -470,13 +409,14 @@ function build_file_rows(
         :n_children    => 0,
     )
 
-    # R8: unknown language → single leaf
-    if ismissing(language) || language ∉ ("cpp", "julia")
+    # R8: unknown language or no tree-sitter grammar → single leaf
+    entry = ismissing(language) ? nothing : get(config.languages, language, nothing)
+    if isnothing(entry) || isnothing(entry.grammar_symbol)
         file_row[:source] = src
         return [file_row]
     end
 
-    tree = parse_source(src, language)
+    tree = parse_source(src, entry.grammar_symbol)
     if isnothing(tree)
         file_row[:source] = src
         return [file_row]
@@ -488,7 +428,7 @@ function build_file_rows(
     child_rows = GC.@preserve tree begin
         root_node = TreeSitter.root(tree)
         _build_level(
-            root_node, src, src_lines, language, config, detail_threshold,
+            root_node, src, src_lines, entry, language, config, detail_threshold,
             file_id, file_path, depth + 1, 1, n_lines,
         )
     end

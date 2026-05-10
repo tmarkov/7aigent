@@ -150,18 +150,18 @@ function _extract_symbols_for_file(
     lang_val = language_for_file(db.config, file_rel)
     (ismissing(lang_val) || lang_val == "markdown") && return NamedTuple[]
     lang = lang_val
-    lang ∉ ("cpp", "julia") && return NamedTuple[]
 
     lang_entry = get(db.config.languages, lang, nothing)
     isnothing(lang_entry) && return NamedTuple[]
+    isnothing(lang_entry.grammar_symbol) && return NamedTuple[]
 
-    tree = parse_source(new_src, lang)
+    tree = parse_source(new_src, lang_entry.grammar_symbol)
     isnothing(tree) && return NamedTuple[]
     root_node = TreeSitter.root(tree)
 
-    call_caps = _run_queries(lang_entry.call_patterns,       new_src, root_node, lang)
-    def_caps  = _run_queries(lang_entry.definition_patterns, new_src, root_node, lang)
-    ref_caps  = _run_ident_query(new_src, root_node, lang)
+    call_caps = _run_queries(lang_entry.call_patterns,       new_src, root_node, lang_entry.grammar_symbol)
+    def_caps  = _run_queries(lang_entry.definition_patterns, new_src, root_node, lang_entry.grammar_symbol)
+    ref_caps  = _run_ident_query(new_src, root_node, lang_entry.grammar_symbol)
 
     new_code_df = _rows_to_dataframe(new_code_rows)
     file_leaves = filter(r -> r.n_children == 0, new_code_df)

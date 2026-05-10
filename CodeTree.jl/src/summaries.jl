@@ -5,7 +5,7 @@
 # handled separately in load.jl.
 
 """
-    _extract_summary(src, language) -> Union{String, Missing}
+    _extract_summary(src) -> Union{String, Missing}
 
 Extract a human-readable one-to-three-line summary from `src`, which may be:
   - A Julia triple-quoted docstring `\"\"\"…\"\"\"`
@@ -14,7 +14,7 @@ Extract a human-readable one-to-three-line summary from `src`, which may be:
 
 Returns `missing` when `src` is `nothing` or all-blank after stripping.
 """
-function _extract_summary(src::Union{String,Nothing}, language::String)::Union{String,Missing}
+function _extract_summary(src::Union{String,Nothing})::Union{String,Missing}
     isnothing(src) && return missing
     lines = split(src, '\n')
 

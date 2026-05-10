@@ -32,14 +32,14 @@ function extract_symbols!(db::CodeTreeDB)
         ismissing(lang_val) && continue
         lang = lang_val
         lang == "markdown" && continue
-        lang ∉ ("cpp", "julia") && continue
-
-        src  = get(buffer, file_rel, "")
-        tree = parse_source(src, lang)
-        isnothing(tree) && continue
 
         lang_entry = get(config.languages, lang, nothing)
         isnothing(lang_entry) && continue
+        isnothing(lang_entry.grammar_symbol) && continue
+
+        src  = get(buffer, file_rel, "")
+        tree = parse_source(src, lang_entry.grammar_symbol)
+        isnothing(tree) && continue
 
         # leaf nodes for this file
         file_leaves = filter(
@@ -54,9 +54,9 @@ function extract_symbols!(db::CodeTreeDB)
         # GC.@preserve keeps tree alive — 0.1.0 Node doesn't hold a tree ref.
         call_caps, def_caps, ref_caps = GC.@preserve tree begin
             (
-                _run_queries(lang_entry.call_patterns,       src, root_node, lang),
-                _run_queries(lang_entry.definition_patterns, src, root_node, lang),
-                _run_ident_query(src, root_node, lang),
+                _run_queries(lang_entry.call_patterns,       src, root_node, lang_entry.grammar_symbol),
+                _run_queries(lang_entry.definition_patterns, src, root_node, lang_entry.grammar_symbol),
+                _run_ident_query(src, root_node, lang_entry.grammar_symbol),
             )
         end
 
@@ -130,13 +130,12 @@ function _run_queries(
     patterns::Vector{String},
     src::String,
     root_node::TreeSitter.Node,
-    language::String,
+    grammar::Union{Symbol, Nothing},
 )::Vector{Tuple{String,String,Int,Int}}
     results = Tuple{String,String,Int,Int}[]
     isempty(patterns) && return results
-    lang_obj = language == "cpp" ?
-        Language(:cpp) :
-        Language(:julia)
+    isnothing(grammar) && return results
+    lang_obj = Language(grammar)
     for pat in patterns
         q = try Query(lang_obj, pat) catch; continue end
         cursor = TreeSitter.QueryCursor()
@@ -168,10 +167,10 @@ end
 function _run_ident_query(
     src::String,
     root_node::TreeSitter.Node,
-    language::String,
+    grammar::Union{Symbol, Nothing},
 )::Vector{Tuple{String,String,Int,Int}}
     pat = "(identifier) @ref"
-    return _run_queries([pat], src, root_node, language)
+    return _run_queries([pat], src, root_node, grammar)
 end
 
 # Filter captures to those whose start row falls in [ls0, le0] (0-indexed).
@@ -221,10 +220,13 @@ function _extract_markdown_symbols(
         if !isempty(lang_tag)
             # Tagged block: use language grammar (R21a first rule)
             block_lang = get(config.extensions, "." * lang_tag, nothing)
-            if !isnothing(block_lang) && block_lang ∈ ("cpp", "julia")
-                syms = _parse_block_symbols(block, block_lang)
-                union!(result, syms)
-                continue
+            if !isnothing(block_lang)
+                block_entry = get(config.languages, block_lang, nothing)
+                if !isnothing(block_entry) && !isnothing(block_entry.grammar_symbol)
+                    syms = _parse_block_symbols(block, block_entry.grammar_symbol)
+                    union!(result, syms)
+                    continue
+                end
             end
             # Unknown tag → fall through to intersection
         end
@@ -248,15 +250,15 @@ function _extract_markdown_symbols(
     return result
 end
 
-# Parse a code block string with the given language grammar and return
+# Parse a code block string with the given grammar and return
 # all identifier names found in the AST (tagged block, R21a).
-function _parse_block_symbols(block::String, language::String)::Set{String}
+function _parse_block_symbols(block::String, grammar::Symbol)::Set{String}
     result = Set{String}()
-    tree = parse_source(block, language)
+    tree = parse_source(block, grammar)
     isnothing(tree) && return result
     caps = GC.@preserve tree begin
         root_node = TreeSitter.root(tree)
-        _run_ident_query(block, root_node, language)
+        _run_ident_query(block, root_node, grammar)
     end
     for (_, text, _, _) in caps
         push!(result, text)

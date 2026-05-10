@@ -124,76 +124,7 @@ end
 # ---------------------------------------------------------------------------
 
 # Shared test config used throughout the test suite (Phase 2 onwards).
-# Constructed once here; imported by later tests via `TEST_CONFIG`.
-TEST_CONFIG = CodeTree.LanguageConfig(Dict(
-    "cpp" => CodeTree.LanguageEntry(
-        # R9: mapping of C++ AST node type names to (class, kind)
-        Dict(
-            "function_definition" => CodeTree.NodeMapping(:landmark, "function"),
-            "class_specifier"     => CodeTree.NodeMapping(:landmark, "class"),
-            "struct_specifier"    => CodeTree.NodeMapping(:landmark, "class"),
-            "namespace_definition"=> CodeTree.NodeMapping(:landmark, "module"),
-            "if_statement"        => CodeTree.NodeMapping(:detail, "conditional"),
-            "while_statement"     => CodeTree.NodeMapping(:detail, "loop"),
-            "for_statement"       => CodeTree.NodeMapping(:detail, "loop"),
-            "do_statement"        => CodeTree.NodeMapping(:detail, "loop"),
-            "try_statement"       => CodeTree.NodeMapping(:detail, "try"),
-            "switch_statement"    => CodeTree.NodeMapping(:detail, "conditional"),
-        ),
-        # R9a: call patterns (tree-sitter query strings)
-        ["(call_expression function: (identifier) @call)",
-         "(call_expression function: (field_expression field: (field_identifier) @call))"],
-        # R9a: definition patterns
-        ["(declaration declarator: (identifier) @def)",
-         "(init_declarator declarator: (identifier) @def)",
-         "(parameter_declaration declarator: (identifier) @def)",
-         "(array_declarator declarator: (identifier) @def)",
-         "(pointer_declarator declarator: (identifier) @def)",
-         "(for_range_loop left: (identifier) @def)"],
-    ),
-    "julia" => CodeTree.LanguageEntry(
-        Dict(
-            "function_definition" => CodeTree.NodeMapping(:landmark, "function"),
-            "short_function_definition" => CodeTree.NodeMapping(:landmark, "function"),
-            "macro_definition"    => CodeTree.NodeMapping(:landmark, "function"),
-            "struct_definition"   => CodeTree.NodeMapping(:landmark, "class"),
-            "abstract_definition" => CodeTree.NodeMapping(:landmark, "type"),
-            "module_definition"   => CodeTree.NodeMapping(:landmark, "module"),
-            "if_statement"        => CodeTree.NodeMapping(:detail, "conditional"),
-            "elseif_clause"       => CodeTree.NodeMapping(:detail, "conditional"),
-            "for_statement"       => CodeTree.NodeMapping(:detail, "loop"),
-            "while_statement"     => CodeTree.NodeMapping(:detail, "loop"),
-            "try_statement"       => CodeTree.NodeMapping(:detail, "try"),
-            "do_clause"           => CodeTree.NodeMapping(:detail, "with"),
-        ),
-        ["(call_expression (identifier) @call)",
-         "(call_expression (field_expression field: (identifier) @call))"],
-        ["(assignment left: (identifier) @def)",
-         "(local_declaration (identifier) @def)",
-         "(for_binding left: (identifier) @def)",
-         "(parameter_list (identifier) @def)",
-         "(typed_parameter . (identifier) @def)"],
-    ),
-    "markdown" => CodeTree.LanguageEntry(
-        # R13: Markdown uses Julia stdlib type names, config-driven
-        Dict(
-            "Header"    => CodeTree.NodeMapping(:landmark, "function"),
-            "Paragraph" => CodeTree.NodeMapping(:detail, "chunk"),
-            "Code"      => CodeTree.NodeMapping(:detail, "chunk"),
-        ),
-        String[],   # no call patterns for Markdown
-        String[],   # no definition patterns for Markdown
-    ),
-), Dict(
-    # R7: extension → language name mapping
-    ".cpp"  => "cpp",
-    ".cc"   => "cpp",
-    ".cxx"  => "cpp",
-    ".hpp"  => "cpp",
-    ".h"    => "cpp",
-    ".jl"   => "julia",
-    ".md"   => "markdown",
-))
+const TEST_CONFIG = CodeTree.DEFAULT_CONFIG
 
 @testset "R9: config maps AST node type names to (class, kind) per language" begin
     classify = CodeTree.classify_node
