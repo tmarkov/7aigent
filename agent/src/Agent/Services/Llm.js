@@ -105,7 +105,7 @@ export const streamLlmImpl =
   const options = {
     hostname: url.hostname,
     port: Number(port),
-    path: url.pathname.replace(/\/$/, "") + "/chat/completions",
+    path: url.pathname + (url.search || ""),
     method: "POST",
     headers: {
       "Content-Type": "application/json",
