@@ -1,10 +1,11 @@
 # load() and reload() — with SQLite cache support (R24–R28).
 
 """
-    load(root_path, config; detail_threshold=30) -> CodeTreeDB
+    load(root_path[, config]; detail_threshold=30) -> CodeTreeDB
 
-Index the codebase rooted at `root_path` using `config` and return a read-only
-`CodeTreeDB` containing `db.code` and `db.symbols`.
+Index the codebase rooted at `root_path` using `config` (defaults to
+`DEFAULT_CONFIG`, which covers C/C++, Julia, and Markdown) and return a
+read-only `CodeTreeDB` containing `db.code` and `db.symbols`.
 
 `detail_threshold` (default 30): compound nodes whose parent spans fewer lines
 than this threshold are suppressed from `db.code` (R11, R12).
@@ -14,7 +15,7 @@ SQLite cache under `.7aigent/code_tree/index.db` without re-parsing (R26).
 """
 function load(
     root_path::AbstractString,
-    config::LanguageConfig;
+    config::LanguageConfig = DEFAULT_CONFIG;
     detail_threshold::Int = 30,
 )::CodeTreeDB
 

@@ -21,9 +21,10 @@ stdenv.mkDerivation {
     # Install source into $out/CodeTree first so the manifest path entry
     # points to the final stable store path, making the precompile cache
     # valid for anyone who adds $out to JULIA_DEPOT_PATH + LOAD_PATH.
-    mkdir -p $out/CodeTree/src
+    mkdir -p $out/CodeTree/src/config
     cp Project.toml $out/CodeTree/
     cp src/*.jl $out/CodeTree/src/
+    cp src/config/*.jl $out/CodeTree/src/config/
 
     # Build a project in $out/project with CodeTree injected as a path dep.
     # Using $out (not TMPDIR) as the project root ensures the precompile cache
