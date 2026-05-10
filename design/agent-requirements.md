@@ -539,3 +539,19 @@ final LLM message — the first response in that loop that contains no tool
 call. If the ReACT loop fails (sandbox crash, API errors exhausted, context
 too large, etc.), the tool returns an error string describing the failure
 instead of an LLM message.
+
+### Workspace Directory Override
+
+**A44** — If the first CLI argument looks like a filesystem path — that is, it
+starts with `/`, `./`, `../`, or `~` — it is interpreted as an explicit
+workspace directory and used instead of the current working directory. The
+remaining arguments are then parsed as the command in the normal way (A40–A43).
+
+```
+7aigent /path/to/project           # start new session in /path/to/project
+7aigent /path/to/project sessions  # list sessions for /path/to/project
+7aigent /path/to/project resume 3  # resume session 3 in /path/to/project
+```
+
+If no path argument is present the workspace defaults to the current working
+directory (preserving the existing behaviour described in A40–A43).

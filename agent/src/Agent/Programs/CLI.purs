@@ -7,7 +7,8 @@ import Prelude
 import Data.Array as Array
 import Data.Int as Int
 import Data.Maybe (Maybe(..))
-import Agent.Types (SessionId(..), Port(..))
+import Data.String as String
+import Agent.Types (SessionId(..), Port(..), WorkspacePath(..))
 
 data CLIMode
     = StartSession
@@ -27,8 +28,25 @@ instance Show CLIMode where
     show (CLIError msg) =
         "(CLIError " <> show msg <> ")"
 
-parseCLIArgs :: Array String -> CLIMode
-parseCLIArgs args = case Array.uncons args of
+parseCLIArgs :: Array String -> { workspace :: Maybe WorkspacePath, mode :: CLIMode }
+parseCLIArgs args =
+    case Array.uncons args of
+        Just { head, tail } | looksLikePath head ->
+            { workspace: Just (WorkspacePath head), mode: parseMode tail }
+        _ ->
+            { workspace: Nothing, mode: parseMode args }
+
+-- | Returns true when a string looks like a filesystem path rather than a
+-- | command keyword. Paths start with '/', './', '../', or '~'.
+looksLikePath :: String -> Boolean
+looksLikePath s =
+    String.take 1 s == "/"
+    || String.take 2 s == "./"
+    || String.take 3 s == "../"
+    || String.take 1 s == "~"
+
+parseMode :: Array String -> CLIMode
+parseMode args = case Array.uncons args of
     Nothing -> StartSession
     Just { head: "sessions", tail: _ } -> ListSessions
     Just { head: "resume", tail } ->
@@ -51,5 +69,5 @@ parseCLIArgs args = case Array.uncons args of
         CLIError
             ( "Unknown command: " <> cmd
             <> ". Usage: 7aigent "
-            <> "[sessions|resume <id>|mcp <port>]"
+            <> "[<dir>] [sessions|resume <id>|mcp <port>]"
             )
