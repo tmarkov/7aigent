@@ -966,3 +966,22 @@ end
         rm(tmp; recursive=true)
     end
 end
+
+@testset "R10: C++ member function names extracted correctly from class body" begin
+    # Bug: tree-sitter-cpp uses field_identifier (not identifier) for member
+    # function names inside a class body. Without the field_identifier fix,
+    # methods fall through to parameter names or the kind fallback "function".
+    db = load(TEST_CODEBASE, TEST_CONFIG)
+    main_fns = filter(r -> isequal(r.file, "src/main.cpp") && r.kind == "function", db.code)
+    names = Set(main_fns.name)
+    # Sorter class methods
+    @test "sort"  ∈ names   # bool sort(const char *algorithm)
+    @test "find"  ∈ names   # int find(int target) const
+    @test "print" ∈ names   # void print() const
+    @test "begin" ∈ names   # Iterator begin() const
+    # Ensure parameter names did NOT leak in
+    @test "algorithm" ∉ names
+    @test "target"    ∉ names
+    # Ensure the fallback kind "function" did NOT leak in as a node name
+    @test "function" ∉ names
+end

@@ -44,10 +44,12 @@ function _cpp_name(node::TreeSitter.Node, src::String, t::String)::Union{String,
     return nothing
 end
 
-# Recurse through pointer/reference declarator wrappers to find the identifier.
 function _cpp_decl_name(node::TreeSitter.Node, src::String)::Union{String,Nothing}
     t = TreeSitter.node_type(node)
-    t ∈ ("identifier", "qualified_identifier") && return String(TreeSitter.slice(src, node))
+    # "identifier" covers free functions/constructors; "field_identifier" covers
+    # member functions inside class/struct bodies; "qualified_identifier" covers
+    # scoped names like Ns::foo.
+    t ∈ ("identifier", "field_identifier", "qualified_identifier") && return String(TreeSitter.slice(src, node))
     for gc in TreeSitter.named_children(node)
         r = _cpp_decl_name(gc, src)
         isnothing(r) || return r
