@@ -84,6 +84,11 @@ cliSpec = do
         ResumeSession sid -> sid `shouldEqual` SessionId 5
         _ -> fail "Expected ResumeSession"
 
+    it "A44: relative path with slash recognised as path" do
+      let parsed = parseCLIArgs ["relative/path"]
+      parsed.workspace `shouldEqual` Just (WorkspacePath "relative/path")
+      parsed.mode `shouldEqual` StartSession
+
     it "A44: './' prefix recognised as path" do
       let parsed = parseCLIArgs ["./myproject"]
       parsed.workspace `shouldEqual` Just (WorkspacePath "./myproject")
@@ -94,9 +99,9 @@ cliSpec = do
       parsed.workspace `shouldEqual` Just (WorkspacePath "../sibling")
       parsed.mode `shouldEqual` StartSession
 
-    it "A44: '~' prefix recognised as path" do
-      let parsed = parseCLIArgs ["~/projects/myproject"]
-      parsed.workspace `shouldEqual` Just (WorkspacePath "~/projects/myproject")
+    it "A44: '.' alone recognised as path" do
+      let parsed = parseCLIArgs ["."]
+      parsed.workspace `shouldEqual` Just (WorkspacePath ".")
       parsed.mode `shouldEqual` StartSession
 
     it "A44: no path → workspace is Nothing" do

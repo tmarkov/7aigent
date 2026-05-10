@@ -543,13 +543,14 @@ instead of an LLM message.
 ### Workspace Directory Override
 
 **A44** — If the first CLI argument looks like a filesystem path — that is, it
-starts with `/`, `./`, `../`, or `~` — it is interpreted as an explicit
+starts with `.` or contains a `/` — it is interpreted as an explicit
 workspace directory and used instead of the current working directory. The
 remaining arguments are then parsed as the command in the normal way (A40–A43).
 
 ```
 7aigent /path/to/project           # start new session in /path/to/project
-7aigent /path/to/project sessions  # list sessions for /path/to/project
+7aigent relative/path              # start new session in relative/path
+7aigent ./myproject sessions       # list sessions for ./myproject
 7aigent /path/to/project resume 3  # resume session 3 in /path/to/project
 ```
 

@@ -37,13 +37,11 @@ parseCLIArgs args =
             { workspace: Nothing, mode: parseMode args }
 
 -- | Returns true when a string looks like a filesystem path rather than a
--- | command keyword. Paths start with '/', './', '../', or '~'.
+-- | command keyword. A path either starts with '.' or contains '/'.
 looksLikePath :: String -> Boolean
 looksLikePath s =
-    String.take 1 s == "/"
-    || String.take 2 s == "./"
-    || String.take 3 s == "../"
-    || String.take 1 s == "~"
+    String.take 1 s == "."
+    || String.contains (String.Pattern "/") s
 
 parseMode :: Array String -> CLIMode
 parseMode args = case Array.uncons args of
