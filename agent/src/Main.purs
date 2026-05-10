@@ -28,9 +28,9 @@ main = launchAff_ do
         ListSessions ->
             runListSessions ws
         ResumeSession sid ->
-            runResumeSession ws sid
+            runResumeSession ws sid parsed.prompt
         McpServer _port -> do
             liftEffect $ printErr "MCP server mode is not yet implemented."
             liftEffect $ Process.exit' 1
         StartSession ->
-            runNewSession ws
+            runNewSession ws parsed.prompt

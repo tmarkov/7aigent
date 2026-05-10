@@ -112,3 +112,39 @@ cliSpec = do
       let parsed = parseCLIArgs ["sessions"]
       shouldEqual true (isNothing parsed.workspace)
       parsed.mode `shouldEqual` ListSessions
+
+  describe "A45: CLI single-turn prompt flag" do
+
+    it "A45: '-p prompt' alone → StartSession with prompt" do
+      let parsed = parseCLIArgs ["-p", "hello world"]
+      parsed.mode `shouldEqual` StartSession
+      parsed.prompt `shouldEqual` Just "hello world"
+
+    it "A45: '-p prompt' + 'resume 7' → ResumeSession with prompt" do
+      let parsed = parseCLIArgs ["resume", "7", "-p", "do the thing"]
+      case parsed.mode of
+        ResumeSession sid -> sid `shouldEqual` SessionId 7
+        _ -> fail "Expected ResumeSession"
+      parsed.prompt `shouldEqual` Just "do the thing"
+
+    it "A45: '-p' before subcommand is parsed correctly" do
+      let parsed = parseCLIArgs ["-p", "hi", "resume", "2"]
+      case parsed.mode of
+        ResumeSession sid -> sid `shouldEqual` SessionId 2
+        _ -> fail "Expected ResumeSession"
+      parsed.prompt `shouldEqual` Just "hi"
+
+    it "A45: no '-p' flag → prompt is Nothing" do
+      let parsed = parseCLIArgs []
+      shouldEqual true (isNothing parsed.prompt)
+
+    it "A45: '-p' without argument → CLIError" do
+      case (parseCLIArgs ["-p"]).mode of
+        CLIError _ -> pure unit
+        _ -> fail "Expected CLIError for missing prompt argument"
+
+    it "A45: '-p prompt' with workspace path → workspace and prompt set" do
+      let parsed = parseCLIArgs ["/my/project", "-p", "go"]
+      parsed.workspace `shouldEqual` Just (WorkspacePath "/my/project")
+      parsed.mode `shouldEqual` StartSession
+      parsed.prompt `shouldEqual` Just "go"

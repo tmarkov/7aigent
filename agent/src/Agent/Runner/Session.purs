@@ -27,6 +27,7 @@ import Effect (Effect)
 import Effect.Aff (Aff, attempt)
 import Effect.Class (liftEffect)
 import Effect.Exception (message)
+import Foreign.Object as FO
 import Node.Encoding (Encoding(..))
 import Node.FS.Aff as FS
 import Node.Process as Process
@@ -168,15 +169,15 @@ computeDuration _ _ = Nothing
 -- A40: start a new session
 -- ---------------------------------------------------------------------------
 
-runNewSession :: WorkspacePath -> Aff Unit
-runNewSession ws = startSession ws Nothing (ConversationHistory { messages: [] })
+runNewSession :: WorkspacePath -> Maybe String -> Aff Unit
+runNewSession ws prompt = startSession ws Nothing (ConversationHistory { messages: [] }) prompt
 
 -- ---------------------------------------------------------------------------
 -- A42: resume a session
 -- ---------------------------------------------------------------------------
 
-runResumeSession :: WorkspacePath -> SessionId -> Aff Unit
-runResumeSession ws sid = do
+runResumeSession :: WorkspacePath -> SessionId -> Maybe String -> Aff Unit
+runResumeSession ws sid prompt = do
     result <- loadSessionForResume ws sid
     case result of
         ResumeError msg -> do
@@ -184,14 +185,14 @@ runResumeSession ws sid = do
             exit1
         ResumeReady r -> do
             liftEffect $ for_ r.warnings printErr
-            startSession ws (Just sid) r.history
+            startSession ws (Just sid) r.history prompt
 
 -- ---------------------------------------------------------------------------
 -- Core session startup
 -- ---------------------------------------------------------------------------
 
-startSession :: WorkspacePath -> Maybe SessionId -> ConversationHistory -> Aff Unit
-startSession ws@(WorkspacePath wp) resumedFrom existingHistory = do
+startSession :: WorkspacePath -> Maybe SessionId -> ConversationHistory -> Maybe String -> Aff Unit
+startSession ws@(WorkspacePath wp) resumedFrom existingHistory prompt = do
 
     -- A2a: place default config files
     placed <- placeDefaultConfigs ws
@@ -268,7 +269,7 @@ startSession ws@(WorkspacePath wp) resumedFrom existingHistory = do
                 existingHistory
 
     -- Enter the main user ↔ LLM loop
-    runUserLoop ws sessionId config apiKey kernel initHistory Set.empty
+    runUserLoop ws sessionId config apiKey kernel initHistory Set.empty prompt
 
     -- Cleanup
     liftEffect $ closeKernel kernel
@@ -338,10 +339,16 @@ runUserLoop
     -> KernelHandle
     -> ConversationHistory
     -> Set HunkId
+    -> Maybe String
     -> Aff Unit
-runUserLoop ws sessionId config apiKey kernel history knownHunks = do
-    liftEffect $ writePrompt "\n> "
-    line <- readLine
+runUserLoop ws sessionId config apiKey kernel history knownHunks maybePrompt = do
+    line <- case maybePrompt of
+        Just p -> do
+            liftEffect $ printLn ("\n> " <> p)
+            pure p
+        Nothing -> do
+            liftEffect $ writePrompt "\n> "
+            readLine
 
     -- EOF → clean exit
     when (String.null line) do
@@ -355,8 +362,14 @@ runUserLoop ws sessionId config apiKey kernel history knownHunks = do
     knownHunks' <-
         runReactLoop ws sessionId config apiKey kernel history' (TokenCount 0) knownHunks
 
-    -- Loop back to wait for the next user message
-    runUserLoop ws sessionId config apiKey kernel history' knownHunks'
+    case maybePrompt of
+        -- Single-turn mode: exit after the turn completes
+        Just _ -> do
+            finishSession ws sessionId kernel history' "prompt"
+            liftEffect $ Process.exit' 0
+        -- Interactive mode: loop back to wait for the next user message
+        Nothing ->
+            runUserLoop ws sessionId config apiKey kernel history' knownHunks' Nothing
 
 -- ---------------------------------------------------------------------------
 -- A1: inner loop — LLM calls + tool execution
@@ -466,7 +479,14 @@ dispatchTool
 dispatchTool ws _config kernel tc knownHunks =
     case tc.name of
         "julia_repl" -> do
-            out <- executeCode kernel (RawJulia tc.input) (liftEffect <<< printStr)
+            let code = fromMaybe tc.input do
+                    json <- case JP.jsonParser tc.input of
+                        Right j -> Just j
+                        Left _  -> Nothing
+                    obj  <- J.toObject json
+                    val  <- FO.lookup "code" obj
+                    J.toString val
+            out <- executeCode kernel (RawJulia code) (const (pure unit))
             pure (Tuple out knownHunks)
 
         "git_diff" -> do
@@ -475,13 +495,31 @@ dispatchTool ws _config kernel tc knownHunks =
             pure (Tuple diff ids)
 
         "git_commit" -> do
-            case parseCommitWhat tc.input knownHunks of
-                Left err -> pure (Tuple (show err) knownHunks)
-                Right cw -> do
-                    commitR <- runGitCommit ws cw "Commit" Nothing
-                    case commitR of
-                        Left err  -> pure (Tuple (show err) knownHunks)
-                        Right msg -> pure (Tuple msg Set.empty)
+            let parsed = do
+                    json <- case JP.jsonParser tc.input of
+                        Right j -> Just j
+                        Left _  -> Nothing
+                    obj <- J.toObject json
+                    whatJson <- FO.lookup "what" obj
+                    let whatStr = fromMaybe (J.stringify whatJson)
+                                    (J.toString whatJson)
+                    let msg = fromMaybe "Commit" do
+                                  msgJson <- FO.lookup "message" obj
+                                  J.toString msgJson
+                    let body = do
+                                  bodyJson <- FO.lookup "body" obj
+                                  J.toString bodyJson
+                    pure { what: whatStr, message: msg, body }
+            case parsed of
+                Nothing -> pure (Tuple "Invalid git_commit input" knownHunks)
+                Just r ->
+                    case parseCommitWhat r.what knownHunks of
+                        Left err -> pure (Tuple (show err) knownHunks)
+                        Right cw -> do
+                            commitR <- runGitCommit ws cw r.message r.body
+                            case commitR of
+                                Left err  -> pure (Tuple (show err) knownHunks)
+                                Right msg -> pure (Tuple msg Set.empty)
 
         other ->
             pure (Tuple ("Unknown tool: " <> other) knownHunks)

@@ -6,7 +6,8 @@ module Agent.Programs.CLI
 import Prelude
 import Data.Array as Array
 import Data.Int as Int
-import Data.Maybe (Maybe(..))
+import Data.Either (Either(..))
+import Data.Maybe (Maybe(..), fromMaybe)
 import Data.String as String
 import Agent.Types (SessionId(..), Port(..), WorkspacePath(..))
 
@@ -28,13 +29,34 @@ instance Show CLIMode where
     show (CLIError msg) =
         "(CLIError " <> show msg <> ")"
 
-parseCLIArgs :: Array String -> { workspace :: Maybe WorkspacePath, mode :: CLIMode }
+parseCLIArgs :: Array String -> { workspace :: Maybe WorkspacePath, mode :: CLIMode, prompt :: Maybe String }
 parseCLIArgs args =
-    case Array.uncons args of
-        Just { head, tail } | looksLikePath head ->
-            { workspace: Just (WorkspacePath head), mode: parseMode tail }
-        _ ->
-            { workspace: Nothing, mode: parseMode args }
+    case extractPrompt args of
+        Left msg ->
+            { workspace: Nothing, mode: CLIError msg, prompt: Nothing }
+        Right { remaining, prompt } ->
+            case Array.uncons remaining of
+                Just { head, tail } | looksLikePath head ->
+                    { workspace: Just (WorkspacePath head), mode: parseMode tail, prompt }
+                _ ->
+                    { workspace: Nothing, mode: parseMode remaining, prompt }
+
+-- | Extract the `-p <prompt>` flag from the argument list, returning the
+-- | remaining args and the prompt value (if present).
+extractPrompt :: Array String -> Either String { remaining :: Array String, prompt :: Maybe String }
+extractPrompt args =
+    case Array.findIndex (_ == "-p") args of
+        Nothing ->
+            Right { remaining: args, prompt: Nothing }
+        Just i ->
+            case Array.index args (i + 1) of
+                Nothing ->
+                    Left "-p requires a prompt argument"
+                Just p ->
+                    let remaining = fromMaybe args do
+                            a1 <- Array.deleteAt (i + 1) args
+                            Array.deleteAt i a1
+                    in Right { remaining, prompt: Just p }
 
 -- | Returns true when a string looks like a filesystem path rather than a
 -- | command keyword. A path either starts with '.' or contains '/'.

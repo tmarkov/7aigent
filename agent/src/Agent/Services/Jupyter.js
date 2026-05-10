@@ -105,9 +105,12 @@ export const connectKernelImpl = (kernelJsonPath) => (onError) => (onSuccess) =>
           break;
         }
         case "error": {
-          const text = (parsed.content.traceback || []).join("\n");
-          handler.onToken(text)();
-          handler.output.push(text);
+          const rawText = (parsed.content.traceback || []).join("\n");
+          // Strip ANSI escape codes for the stored output (sent to the LLM);
+          // keep them for the terminal display via onToken.
+          const plainText = rawText.replace(/\x1b\[[0-9;]*[mGKJH]/g, "");
+          handler.onToken(rawText)();
+          handler.output.push(plainText);
           break;
         }
         case "status":

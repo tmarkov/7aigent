@@ -1,14 +1,18 @@
 import * as https from "node:https";
 import * as http from "node:http";
-import { EventSourceParserStream } from "eventsource-parser/stream";
-import { Readable } from "node:stream";
 
 // ---------------------------------------------------------------------------
 // Message encoding for the OpenAI Chat Completions API
 // ---------------------------------------------------------------------------
 
+// PureScript data constructors compile to `new ConstructorName2(value0)` instances.
+// They do NOT set a `.tag` property; identify them by constructor name instead.
+function msgTag(msg) {
+  return msg?.constructor?.name?.replace(/\d+$/, "") ?? "";
+}
+
 function encodeMessage(msg) {
-  switch (msg.tag) {
+  switch (msgTag(msg)) {
     case "SystemMessage":
       return { role: "system", content: msg.value0.content };
     case "UserMessage":
@@ -17,15 +21,11 @@ function encodeMessage(msg) {
       const r = { role: "assistant", content: msg.value0.content || null };
       const tcs = msg.value0.toolCalls;
       if (tcs && tcs.length > 0) {
+        // ToolCallId is a newtype erased to a plain string at runtime.
         r.tool_calls = tcs.map((tc) => ({
-          id: tc.id,  // ToolCallId is a newtype; unwrap
+          id: typeof tc.id === "object" ? tc.id.value0 : tc.id,
           type: "function",
           function: { name: tc.name, arguments: tc.input },
-        }));
-        // unwrap ToolCallId newtype
-        r.tool_calls = r.tool_calls.map((tc) => ({
-          ...tc,
-          id: typeof tc.id === "object" ? tc.id.value0 : tc.id,
         }));
       }
       return r;
@@ -39,7 +39,7 @@ function encodeMessage(msg) {
         content: msg.value0.output,
       };
     default:
-      return { role: "user", content: "" };
+      return { role: "user", content: String(msg) };
   }
 }
 
@@ -62,13 +62,6 @@ function encodeTool(td) {
       },
     },
   };
-}
-
-// Unwrap ConversationHistory and extract messages
-function unwrapHistory(history) {
-  // ConversationHistory is a newtype wrapping { messages: Array { message, tokens } }
-  const inner = history.value0 || history;
-  return (inner.messages || []).map((m) => m.message);
 }
 
 // ---------------------------------------------------------------------------
@@ -99,7 +92,7 @@ export const streamLlmImpl =
 
   let url;
   try {
-    url = new URL(endpoint + "/chat/completions");
+    url = new URL(endpoint);
   } catch (e) {
     onError("Invalid API endpoint: " + e.message)();
     return;
