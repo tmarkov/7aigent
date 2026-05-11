@@ -83,7 +83,8 @@ buildNpmPackage {
 
     makeWrapper ${nodejs}/bin/node $out/bin/7aigent \
       --add-flags "$out/lib/7aigent/index.js" \
-      --prefix PATH : ${sandbox}/bin
+      --prefix PATH : ${sandbox}/bin \
+      --set AGENT_CONFIG_DIR "$out/lib/7aigent/config"
 
     runHook postInstall
   '';

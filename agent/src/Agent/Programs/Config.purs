@@ -48,6 +48,8 @@ foreign import parseTomlPure
 
 foreign import lookupEnvImpl :: String -> Effect (Nullable String)
 
+foreign import lookupEnvSync :: String -> Nullable String
+
 ----------------------------------------------------------------------------
 -- A37: config parsing (pure)
 ----------------------------------------------------------------------------
@@ -101,23 +103,22 @@ placeDefaultConfigs :: WorkspacePath -> Aff (Array String)
 placeDefaultConfigs (WorkspacePath wp) = do
     let configDir = wp <> "/.7aigent"
     FS.mkdir' configDir { recursive: true, mode: permsAll }
-    let files =
-            [ { name: "config.toml", content: defaultConfigToml }
-            , { name: "system_prompt.md", content: defaultSystemPrompt }
-            , { name: "compaction_prompt.md", content: defaultCompactionPrompt }
-            , { name: "summary_message.md", content: defaultSummaryMessage }
-            , { name: "startup.jl", content: defaultStartupJl }
-            ]
+    let fileNames = [ "config.toml", "system_prompt.md", "compaction_prompt.md"
+                    , "summary_message.md", "startup.jl" ]
+    let mSrcDir = toMaybe (lookupEnvSync "AGENT_CONFIG_DIR")
     results <- traverse
-        (\f -> do
-            let filePath = configDir <> "/" <> f.name
-            exists <- fileExists filePath
+        (\name -> do
+            let destPath = configDir <> "/" <> name
+            exists <- fileExists destPath
             if exists
             then pure Nothing
             else do
-                FS.writeTextFile UTF8 filePath f.content
-                pure (Just ("Created " <> ".7aigent/" <> f.name))
-        ) files
+                content <- case mSrcDir of
+                    Just srcDir -> FS.readTextFile UTF8 (srcDir <> "/" <> name)
+                    Nothing     -> pure ""
+                FS.writeTextFile UTF8 destPath content
+                pure (Just ("Created " <> ".7aigent/" <> name))
+        ) fileNames
     pure (Array.catMaybes results)
 
 fileExists :: String -> Aff Boolean
@@ -126,86 +127,3 @@ fileExists path = do
     case result of
         Nothing -> pure true
         Just _ -> pure false
-
--- Default file contents
-
-defaultConfigToml :: String
-defaultConfigToml = String.joinWith "\n"
-    [ "# 7aigent workspace configuration."
-    , "# This file is created on first run. Edit it before starting a session."
-    , ""
-    , "# Full URL of the chat completions endpoint (used as-is, nothing is appended)."
-    , "# Example: https://openrouter.ai/api/v1/chat/completions"
-    , "api_endpoint           = \"YOUR_API_ENDPOINT_HERE\""
-    , "model                  = \"YOUR_MODEL_HERE\""
-    , "api_key_env            = \"OPENROUTER_API_KEY\""
-    , "output_threshold_chars = 20000"
-    , "max_api_retries        = 3"
-    , "max_tokens_per_turn    = 200000"
-    , "compaction_threshold   = 150000"
-    , "preserve_initial       = 20000"
-    , "preserve_final         = 40000"
-    ]
-
-defaultSystemPrompt :: String
-defaultSystemPrompt = String.joinWith "\n"
-    [ "You are 7aigent, an AI assistant for interactive codebase exploration and editing."
-    , ""
-    , "**Date/time:** {{datetime}}"
-    , "**Model:** {{model}}"
-    , ""
-    , "## Workspace"
-    , ""
-    , "The workspace has been indexed into a CodeTree database. Use the `julia_repl`"
-    , "tool to query it. The Julia kernel is pre-loaded with `CodeTree` and a database"
-    , "bound to `db` in `Main`."
-    , ""
-    , "**Startup output:**"
-    ]
-
-defaultCompactionPrompt :: String
-defaultCompactionPrompt = String.joinWith "\n"
-    [ "The following is a conversation between an AI assistant and a user. Summarise"
-    , "the middle section of the conversation so the key facts, decisions, and code"
-    , "changes are preserved, but token usage is reduced."
-    , ""
-    , "## Initial messages"
-    , ""
-    , "{{initial_messages}}"
-    , ""
-    , "## Middle messages to summarise"
-    , ""
-    , "{{compacted_messages}}"
-    , ""
-    , "## Recent messages (do not summarise)"
-    , ""
-    , "{{final_messages}}"
-    , ""
-    , "Write a concise summary of the middle messages. Focus on: goals discussed,"
-    , "findings from tool calls, code written or modified, and any open questions."
-    ]
-
-defaultSummaryMessage :: String
-defaultSummaryMessage = String.joinWith "\n"
-    [ "Earlier in this conversation the following context was summarised to save space:"
-    , ""
-    , "{{summary}}"
-    , ""
-    , "The full conversation history from this point forward is included below."
-    ]
-
-defaultStartupJl :: String
-defaultStartupJl = String.joinWith "\n"
-    [ "# Default startup: index the workspace and bind the database to Main.db."
-    , "# Edit .7aigent/startup.jl in your workspace to customise this behaviour."
-    , ""
-    , "# Workaround: IJulia's stdio type is missing ioproperties in Julia 1.12+,"
-    , "# which causes IOContext construction to fail when printing arrays/vectors."
-    , "try"
-    , "    Base.eval(:(ioproperties(io::$(typeof(stdout))) = ImmutableDict{Symbol,Any}()))"
-    , "catch e"
-    , "    @warn \"ioproperties patch failed\" e"
-    , "end"
-    , ""
-    , "db = CodeTree.load(\"/workspace\");"
-    ]

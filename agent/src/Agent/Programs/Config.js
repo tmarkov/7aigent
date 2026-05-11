@@ -53,3 +53,9 @@ export const lookupEnvImpl = (name) => () => {
     const val = process.env[name];
     return val === undefined ? null : val;
 };
+
+// lookupEnvSync :: String -> Nullable String
+export const lookupEnvSync = (name) => {
+    const val = process.env[name];
+    return val === undefined ? null : val;
+};
