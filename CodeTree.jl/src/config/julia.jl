@@ -20,7 +20,7 @@ const JULIA_ENTRY = LanguageEntry(
         "(call_expression (field_expression field: (identifier) @call))",
     ],
     definition_patterns = [
-        "(assignment left: (identifier) @def)",
+        "(assignment_expression (identifier) @def)",
         "(local_declaration (identifier) @def)",
         "(for_binding left: (identifier) @def)",
         "(parameter_list (identifier) @def)",

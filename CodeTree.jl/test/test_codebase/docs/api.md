@@ -72,6 +72,20 @@ Binary search. Returns 1-based index or `-1`.
 
 ---
 
+## Tagged Julia example (R21a language-specific extraction)
+
+The tagged block below must use Julia's configured symbol extraction rules.
+`compute_stats` and `clamp_value` are calls; `data`, `limit`, `low`, and `high`
+are external variable references; `stats` and `clamped` are local definitions
+and must not appear in `db.symbols`.
+
+```julia
+stats = compute_stats(data)
+clamped = clamp_value(limit, low, high)
+```
+
+---
+
 ## Untagged example (R21a intersection test)
 
 The block below has no language tag. Tokens are intersected with known names.
@@ -80,6 +94,7 @@ The block below has no language tag. Tokens are intersected with known names.
 ```
 result = compute_stats(data)
 s = DataStats(n, min_val, max_val, median)
+bucket_sort(raw)
 x = MyUnknownType()
 ```
 

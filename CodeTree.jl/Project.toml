@@ -7,10 +7,15 @@ authors = []
 DBInterface = "a10d1c49-ce27-4219-8d33-6db1a4562965"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 DataFramesMeta = "1313f7d8-7da2-5740-9ea0-a2ca25f37964"
+Markdown = "d6f4376e-aef5-505a-96c1-9c027394607a"
 SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 SQLite = "0aa819cd-b072-5ff4-a722-6bc24af294d9"
 Tables = "bd369af6-aec1-5ad0-b16a-f7cc5008161c"
 TreeSitter = "f42328cb-ece0-4cf2-995f-9e7abb27d006"
+
+[weakdeps]
+tree_sitter_cpp_jll = "4cb3d9e2-03f4-5706-b945-2b2b5629a975"
+tree_sitter_julia_jll = "2e0cd83c-7b71-5a85-84c3-a8c9cf75e5ab"
 
 [compat]
 DBInterface = "2.6.1"

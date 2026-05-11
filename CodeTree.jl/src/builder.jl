@@ -380,6 +380,137 @@ function _build_level(
     return all_rows
 end
 
+function _markdown_block_name(block::MarkdownBlock, kind::String)::String
+    if block.type_name == "Header"
+        header = replace(strip(first(split(block.source, '\n'))), r"^#+\s*" => "")
+        return replace(header, "`" => "")
+    end
+    return kind
+end
+
+function _build_markdown_rows(
+    src::String,
+    entry::LanguageEntry,
+    detail_threshold::Int,
+    file_id::NodeId,
+    file_path::FilePath,
+    parent_id::NodeId,
+    depth::Int,
+    parent_qname::QName=QName(""),
+)::Vector{CodeRow}
+    src_lines = split(src, '\n')
+    if !isempty(src_lines) && isempty(src_lines[end])
+        pop!(src_lines)
+    end
+    n_lines = max(length(src_lines), 1)
+
+    file_name = basename(file_path.val)
+    file_qname = isempty(parent_qname) ? QName(file_name) :
+                 QName(parent_qname.val * "." * file_name)
+
+    file_row = CodeRow(
+        file_id.val,
+        parent_id.val,
+        depth,
+        0,
+        "file",
+        file_name,
+        file_qname.val,
+        "markdown",
+        missing,
+        missing,
+        missing,
+        file_path.val,
+        1,
+        n_lines,
+        n_lines,
+        0,
+    )
+
+    blocks = parse_markdown_blocks(src)
+    visible_blocks = NamedTuple{(:block, :mapping), Tuple{MarkdownBlock,NodeMapping}}[]
+    for block in blocks
+        mapping = get(entry.node_types, block.type_name, nothing)
+        isnothing(mapping) && continue
+        if mapping.class == :landmark || (mapping.class == :detail && n_lines >= detail_threshold)
+            push!(visible_blocks, (block = block, mapping = mapping))
+        end
+    end
+
+    if isempty(visible_blocks)
+        file_row.source = src
+        return [file_row]
+    end
+
+    spans = _Span[]
+    prev_le = 0
+    for vb in visible_blocks
+        gap_ls = prev_le + 1
+        gap_le = vb.block.line_start - 1
+        block_ls = vb.block.line_start
+        if gap_ls <= gap_le && !_all_blank(src_lines, gap_ls, gap_le)
+            push!(spans, _Span("chunk", "chunk", gap_ls, gap_le, nothing, nothing))
+        elseif gap_ls <= gap_le && !isempty(spans)
+            spans[end].le = gap_le
+        elseif gap_ls <= gap_le
+            block_ls = gap_ls
+        end
+
+        push!(spans, _Span(
+            vb.mapping.kind,
+            _markdown_block_name(vb.block, vb.mapping.kind),
+            block_ls,
+            vb.block.line_end,
+            nothing,
+            nothing,
+        ))
+        prev_le = vb.block.line_end
+    end
+
+    if prev_le < n_lines
+        gap_ls = prev_le + 1
+        gap_le = n_lines
+        if !_all_blank(src_lines, gap_ls, gap_le)
+            push!(spans, _Span("chunk", "chunk", gap_ls, gap_le, nothing, nothing))
+        elseif !isempty(spans)
+            spans[end].le = gap_le
+        end
+    end
+
+    span_names = [sp.name for sp in spans]
+    span_starts = [sp.ls for sp in spans]
+    id_suffixes = assign_ordinal_ids(span_names, span_starts)
+    qname_suffixes = assign_ordinal_ids(span_names, span_starts)
+
+    child_rows = CodeRow[]
+    for (i, sp) in enumerate(spans)
+        node_qname = isempty(file_qname) ? QName(qname_suffixes[i]) :
+                     QName(file_qname.val * "." * qname_suffixes[i])
+        span_src = join(src_lines[max(1, sp.ls):min(length(src_lines), sp.le)], '\n')
+        push!(child_rows, CodeRow(
+            file_id.val * ":" * id_suffixes[i],
+            file_id.val,
+            depth + 1,
+            i - 1,
+            sp.kind,
+            sp.name,
+            node_qname.val,
+            "markdown",
+            missing,
+            span_src,
+            missing,
+            file_path.val,
+            sp.ls,
+            sp.le,
+            sp.le - sp.ls + 1,
+            0,
+        ))
+    end
+
+    file_row.n_children = length(child_rows)
+    return vcat([file_row], child_rows)
+end
+
 # ---------------------------------------------------------------------------
 # File-level builder
 # ---------------------------------------------------------------------------
@@ -434,8 +565,14 @@ function build_file_rows(
         0,        # n_children filled in below
     )
 
-    # R8: unknown language or no tree-sitter grammar → single leaf
     entry = ismissing(language) ? nothing : get(config.languages, language, nothing)
+    if !ismissing(language) && language == "markdown" && !isnothing(entry)
+        return _build_markdown_rows(
+            src, entry, detail_threshold, file_id, file_path, parent_id, depth, parent_qname,
+        )
+    end
+
+    # R8: unknown language or no tree-sitter grammar → single leaf
     if isnothing(entry) || isnothing(entry.grammar_symbol)
         file_row.source = src
         return [file_row]

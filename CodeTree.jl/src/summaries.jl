@@ -4,6 +4,24 @@
 # that has a summary_src.  Directory/codebase summaries from README files are
 # handled separately in load.jl.
 
+const _SUMMARY_COMMENT_MARKERS = ("///", "//", "/*", "*/", "#", "*")
+
+function _strip_summary_marker(line::AbstractString)::String
+    stripped = strip(line)
+    changed = true
+    while changed && !isempty(stripped)
+        changed = false
+        for marker in _SUMMARY_COMMENT_MARKERS
+            if startswith(stripped, marker)
+                stripped = strip(stripped[length(marker) + 1:end])
+                changed = true
+                break
+            end
+        end
+    end
+    return stripped
+end
+
 """
     _extract_summary(src) -> Union{String, Missing}
 
@@ -23,22 +41,9 @@ function _extract_summary(src::Union{String,Nothing})::Union{String,Missing}
         lines = filter(l -> !startswith(strip(l), "\"\"\""), lines)
     end
 
-    # Strip C++/Julia line-comment prefixes (// and leading * from /* */).
     cleaned = String[]
     for raw in lines
-        s = strip(raw)
-        if startswith(s, "//")
-            s = strip(s[3:end])
-        elseif startswith(s, "/*") && endswith(s, "*/")
-            s = strip(s[3:end-2])
-        elseif startswith(s, "/*")
-            s = strip(s[3:end])
-        elseif startswith(s, "*/")
-            s = strip(s[3:end])
-        elseif startswith(s, "*")
-            s = strip(s[2:end])
-        end
-        push!(cleaned, s)
+        push!(cleaned, _strip_summary_marker(raw))
     end
 
     # R17–R20a: "summary lines" means lines that contain at least one

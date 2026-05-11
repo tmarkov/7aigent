@@ -79,7 +79,13 @@ Result: a list of `(path, language)` pairs.
 
 ### Step 2: Check the Cache
 
-Open `.7aigent/code_tree/index.db` if it exists. This SQLite file contains the previously built `code` and `symbols` tables, plus a `files` table:
+Open `.7aigent/code_tree/index.db` if it exists. Before trusting any cached
+rows, check the cache's compatibility token against the current CodeTree
+cache format/build logic. If the cache is incompatible, invalidate it and
+treat the run as if no cache existed.
+
+The SQLite cache contains the previously built `code` and `symbols` tables,
+plus a `files` table:
 
 ```sql
 CREATE TABLE files (
@@ -89,14 +95,15 @@ CREATE TABLE files (
 );
 ```
 
-For each discovered file, compute its SHA256 hash and compare against the cache. Partition files into:
+For each discovered file, compute its SHA256 hash and compare against the
+cache. Partition files into:
 
 - **Unchanged**: hash matches cache → skip re-parsing, reuse existing rows
 - **Changed**: hash differs → re-parse, replace rows
 - **New**: not in cache → parse, insert rows
 - **Deleted**: in cache but not on disk → remove rows
 
-If no cache exists, all files are "new."
+If no compatible cache exists, all files are "new."
 
 ### Step 3: Build the Directory Tree
 

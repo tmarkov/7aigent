@@ -2,15 +2,18 @@
 #
 # Cache location: <root>/.7aigent/code_tree/index.db
 # Schema:
-#   files   — (path PK, hash, commit_hash)
-#   code    — all db.code columns plus a `file` key for fast per-file access
-#   symbols — (file, node_id, symbol, kind)
+#   cache_meta — compatibility token for invalidating stale caches
+#   files      — (path PK, hash, commit_hash)
+#   code       — all db.code columns plus a `file` key for fast per-file access
+#   symbols    — (file, node_id, symbol, kind)
 
 using DBInterface
 using Tables
 
 const _CACHE_SUBDIR = joinpath(".7aigent", "code_tree")
 const _CACHE_FILE   = "index.db"
+const _CACHE_COMPAT_KEY = "compat_version"
+const _CACHE_COMPAT_VERSION = "3"
 
 # ---------------------------------------------------------------------------
 # Open / create
@@ -34,11 +37,19 @@ function _open_or_create_cache(root_path::String)::SQLite.DB
     dir = joinpath(root_path, _CACHE_SUBDIR)
     isdir(dir) || mkpath(dir)
     db = SQLite.DB(_cache_path(root_path))
+    _ensure_cache_compatible!(db)
     _init_cache_schema!(db)
+    _set_cache_meta!(db, _CACHE_COMPAT_KEY, _CACHE_COMPAT_VERSION)
     return db
 end
 
 function _init_cache_schema!(db::SQLite.DB)
+    DBInterface.execute(db, """
+        CREATE TABLE IF NOT EXISTS cache_meta (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    """)
     DBInterface.execute(db, """
         CREATE TABLE IF NOT EXISTS files (
             path        TEXT PRIMARY KEY,
@@ -81,6 +92,46 @@ function _init_cache_schema!(db::SQLite.DB)
         "CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file)")
 end
 
+function _ensure_cache_compatible!(db::SQLite.DB)
+    DBInterface.execute(db, """
+        CREATE TABLE IF NOT EXISTS cache_meta (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    """)
+    cached_version = _get_cache_meta(db, _CACHE_COMPAT_KEY)
+    cached_version == _CACHE_COMPAT_VERSION && return
+
+    DBInterface.execute(db, "BEGIN")
+    try
+        DBInterface.execute(db, "DROP TABLE IF EXISTS symbols")
+        DBInterface.execute(db, "DROP TABLE IF EXISTS code")
+        DBInterface.execute(db, "DROP TABLE IF EXISTS files")
+        DBInterface.execute(db, "DROP TABLE IF EXISTS cache_meta")
+        DBInterface.execute(db, "COMMIT")
+    catch
+        DBInterface.execute(db, "ROLLBACK")
+        rethrow()
+    end
+end
+
+function _get_cache_meta(db::SQLite.DB, key::String)::Union{String,Nothing}
+    result = DBInterface.execute(db, "SELECT value FROM cache_meta WHERE key = ?", [key])
+    rows = collect(result)
+    isempty(rows) && return nothing
+    val = Tables.getcolumn(rows[1], :value)
+    (isnothing(val) || ismissing(val)) && return nothing
+    return String(val)
+end
+
+function _set_cache_meta!(db::SQLite.DB, key::String, value::String)
+    DBInterface.execute(
+        db,
+        "INSERT OR REPLACE INTO cache_meta (key, value) VALUES (?, ?)",
+        [key, value],
+    )
+end
+
 # ---------------------------------------------------------------------------
 # Read helpers
 # ---------------------------------------------------------------------------
@@ -92,10 +143,10 @@ Return the stored SHA-256 hash for `path`, or `nothing` if not cached.
 """
 function _get_cached_hash(db::SQLite.DB, path::String)::Union{String,Nothing}
     result = DBInterface.execute(db, "SELECT hash FROM files WHERE path = ?", [path])
-    row = iterate(result)
-    isnothing(row) && return nothing
-    val = Tables.getcolumn(row[1], :hash)
-    isnothing(val) && return nothing
+    rows = collect(result)
+    isempty(rows) && return nothing
+    val = Tables.getcolumn(rows[1], :hash)
+    (isnothing(val) || ismissing(val)) && return nothing
     return String(val)
 end
 

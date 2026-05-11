@@ -198,6 +198,33 @@ end
 
 const TEST_CODEBASE = joinpath(@__DIR__, "test_codebase")
 
+# Helper: copy the test_codebase tree into a fresh temp directory.
+function _tmp_codebase()
+    tmp = mktempdir()
+    for (root, dirs, files) in walkdir(TEST_CODEBASE)
+        rel = relpath(root, TEST_CODEBASE)
+        dst_dir = joinpath(tmp, rel)
+        isdir(dst_dir) || mkpath(dst_dir)
+        for f in files
+            cp(joinpath(root, f), joinpath(dst_dir, f))
+        end
+    end
+    gi_src = joinpath(TEST_CODEBASE, ".gitignore")
+    isfile(gi_src) && cp(gi_src, joinpath(tmp, ".gitignore"), force=true)
+    run(pipeline(Cmd(`git init`; dir=tmp); stdout=devnull, stderr=devnull); wait=true)
+    run(pipeline(Cmd(`git add -A`; dir=tmp); stdout=devnull, stderr=devnull); wait=true)
+    run(pipeline(Cmd(`git -c user.email=x@x -c user.name=x commit -m init`; dir=tmp);
+                 stdout=devnull, stderr=devnull); wait=true)
+    return tmp
+end
+
+function _fresh_tmp_codebase()
+    tmp = _tmp_codebase()
+    cache_dir = joinpath(tmp, ".7aigent")
+    isdir(cache_dir) && rm(cache_dir; recursive=true, force=true)
+    return tmp
+end
+
 # All files expected to be discovered in the test codebase (relative paths)
 const EXPECTED_FILES = Set([
     ".gitignore",
@@ -418,8 +445,13 @@ end
 
 @testset "R17: sort_array (first overload) summary comes from its docstring" begin
     code = _db().code
-    # The first sort_array does not end with $2
-    nodes = filter(r -> isequal(r.name, "sort_array") && !endswith(r.id, "\$2"), code)
+    nodes = filter(
+        r -> r.kind == "function" &&
+             isequal(r.name, "sort_array") &&
+             r.language == "julia" &&
+             occursin("Vector{Int}", something(r.signature, "")),
+        code,
+    )
     @test nrow(nodes) == 1
     node = only(nodes)
     @test !ismissing(node.summary)
@@ -428,21 +460,38 @@ end
 
 @testset "R17: DataStats struct summary comes from its docstring" begin
     code = _db().code
-    nodes = filter(r -> isequal(r.name, "DataStats"), code)
+    nodes = filter(r -> isequal(r.name, "DataStats") && r.language == "julia", code)
     @test nrow(nodes) == 1
     @test occursin("statistics", lowercase(something(only(nodes).summary, "")))
 end
 
 @testset "R18: search_sorted summary comes from preceding comment (no docstring)" begin
     code = _db().code
-    node = only(filter(r -> isequal(r.name, "search_sorted"), code))
+    node = only(filter(r -> isequal(r.name, "search_sorted") && r.language == "julia", code))
     @test occursin("binary search", lowercase(something(node.summary, "")))
 end
 
 @testset "R18: is_sorted summary comes from preceding comment (no docstring)" begin
     code = _db().code
-    node = only(filter(r -> isequal(r.name, "is_sorted"), code))
+    node = only(filter(r -> isequal(r.name, "is_sorted") && r.language == "julia", code))
     @test occursin("sorted", lowercase(something(node.summary, "")))
+end
+
+@testset "R17-R20a: summary extraction strips # and /// comment markers" begin
+    tmp = _fresh_tmp_codebase()
+    try
+        db = load(tmp, TEST_CONFIG)
+
+        search_sorted = only(filter(r -> isequal(r.name, "search_sorted") && r.language == "julia", db.code))
+        @test !startswith(strip(something(search_sorted.summary, "")), "#")
+        @test startswith(something(search_sorted.summary, ""), "Binary search on a sorted vector.")
+
+        sorter = only(filter(r -> isequal(r.name, "Sorter") && r.kind == "class", db.code))
+        @test !startswith(strip(something(sorter.summary, "")), "/")
+        @test startswith(something(sorter.summary, ""), "A stateful wrapper around the sorting routines.")
+    finally
+        rm(tmp; recursive=true)
+    end
 end
 
 @testset "R19: DataProcessor module summary comes from module-level docstring" begin
@@ -518,6 +567,79 @@ end
     @test "quick_sort" in api_syms.symbol
 end
 
+@testset "R13: Markdown files are structurally parsed into configured child nodes" begin
+    tmp = _fresh_tmp_codebase()
+    try
+        db = load(tmp, TEST_CONFIG)
+        api_file = only(filter(r -> isequal(r.file, "docs/api.md") && r.kind == "file", db.code))
+        api_rows = filter(r -> isequal(r.file, "docs/api.md"), db.code)
+
+        @test api_file.n_children > 0
+        @test nrow(filter(r -> r.parent == api_file.id, api_rows)) > 0
+        @test any(r -> r.kind == "function", eachrow(api_rows))
+        @test any(r -> r.kind == "chunk", eachrow(api_rows))
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R21a + R21b: Markdown symbols belong only to the leaf that contains the span" begin
+    tmp = _fresh_tmp_codebase()
+    try
+        db = load(tmp, TEST_CONFIG)
+        api_leaves = filter(r -> isequal(r.file, "docs/api.md") && r.n_children == 0, db.code)
+
+        @test nrow(api_leaves) > 1
+
+        target_leaf = only(filter(
+            r -> occursin("bucket_sort(raw)", something(r.source, "")),
+            api_leaves,
+        ))
+        target_syms = filter(r -> r.node_id == target_leaf.id, db.symbols)
+        @test "bucket_sort" in target_syms.symbol
+
+        other_leaves = filter(
+            r -> r.id != target_leaf.id &&
+                 !occursin("bucket_sort(raw)", something(r.source, "")),
+            api_leaves,
+        )
+        @test nrow(other_leaves) > 0
+        for leaf in eachrow(other_leaves)
+            leaf_syms = filter(r -> r.node_id == leaf.id, db.symbols)
+            @test "bucket_sort" ∉ leaf_syms.symbol
+        end
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R21a: tagged fenced Markdown blocks use language-specific call and var_ref extraction" begin
+    tmp = _fresh_tmp_codebase()
+    try
+        db = load(tmp, TEST_CONFIG)
+        api_leaves = filter(r -> isequal(r.file, "docs/api.md") && r.n_children == 0, db.code)
+        tagged_leaf = only(filter(
+            r -> occursin("stats = compute_stats(data)", something(r.source, "")),
+            api_leaves,
+        ))
+        tagged_syms = filter(r -> r.node_id == tagged_leaf.id, db.symbols)
+
+        calls = Set(filter(r -> r.kind == "call", tagged_syms).symbol)
+        var_refs = Set(filter(r -> r.kind == "var_ref", tagged_syms).symbol)
+
+        @test "compute_stats" ∈ calls
+        @test "clamp_value" ∈ calls
+        for name in ("data", "limit", "low", "high")
+            @test name ∈ var_refs
+            @test name ∉ calls
+        end
+        @test "stats" ∉ tagged_syms.symbol
+        @test "clamped" ∉ tagged_syms.symbol
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
 @testset "R21a: Markdown untagged block — compute_stats and DataStats in api.md; MyUnknownType absent" begin
     code = _db().code
     syms = _db().symbols
@@ -557,34 +679,28 @@ end
     @test all(k -> k ∈ ("call", "var_ref"), syms.kind)
 end
 
+@testset "R14a: shared boundary line belongs to the second conditional in wacky" begin
+    tmp = _fresh_tmp_codebase()
+    try
+        db = load(tmp, TEST_CONFIG; detail_threshold = 0)
+        wacky = only(filter(r -> isequal(r.name, "wacky") && r.kind == "function", db.code))
+        conds = sort(filter(r -> isequal(r.parent, wacky.id) && r.kind == "conditional", db.code), :line_start)
+
+        @test nrow(conds) == 2
+        @test conds[1, :line_end] == 175
+        @test conds[2, :line_start] == 176
+        @test startswith(lstrip(something(conds[2, :source], "")), "} /* not-else */ if (a >= b) {")
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
 # ===========================================================================
 # Phase 7 — Caching (R24, R25, R26, R27, R28)
 #
 # All cache tests operate on a temp copy of the fixture to avoid polluting
 # the canonical test_codebase with .7aigent/ artifacts.
 # ===========================================================================
-
-# Helper: copy the test_codebase tree into a fresh temp directory.
-function _tmp_codebase()
-    tmp = mktempdir()
-    for (root, dirs, files) in walkdir(TEST_CODEBASE)
-        rel = relpath(root, TEST_CODEBASE)
-        dst_dir = joinpath(tmp, rel)
-        isdir(dst_dir) || mkpath(dst_dir)
-        for f in files
-            cp(joinpath(root, f), joinpath(dst_dir, f))
-        end
-    end
-    # Reproduce the .gitignore so discovery works the same way
-    gi_src = joinpath(TEST_CODEBASE, ".gitignore")
-    isfile(gi_src) && cp(gi_src, joinpath(tmp, ".gitignore"), force=true)
-    # git init so git ls-files works
-    run(pipeline(Cmd(`git init`; dir=tmp); stdout=devnull, stderr=devnull); wait=true)
-    run(pipeline(Cmd(`git add -A`; dir=tmp); stdout=devnull, stderr=devnull); wait=true)
-    run(pipeline(Cmd(`git -c user.email=x@x -c user.name=x commit -m init`; dir=tmp);
-                 stdout=devnull, stderr=devnull); wait=true)
-    return tmp
-end
 
 @testset "R24: cache stored at .7aigent/code_tree/ under the codebase root" begin
     tmp = _tmp_codebase()
@@ -647,6 +763,23 @@ end
         @test sort(db1.code.id) == sort(db2.code.id)
         # Same symbol count
         @test nrow(db1.symbols) == nrow(db2.symbols)
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R1 + R25a + R26: stale fixture cache is not reused when qname rows are incompatible" begin
+    tmp = _tmp_codebase()
+    try
+        db_cached = load(tmp, TEST_CONFIG)
+
+        rm(joinpath(tmp, ".7aigent"); recursive=true, force=true)
+        db_fresh = load(tmp, TEST_CONFIG)
+
+        @test count(ismissing, db_cached.code.qname) == 0
+        @test count(ismissing, db_fresh.code.qname) == 0
+        @test sort(skipmissing(db_cached.code.qname) |> collect) ==
+              sort(skipmissing(db_fresh.code.qname) |> collect)
     finally
         rm(tmp; recursive=true)
     end

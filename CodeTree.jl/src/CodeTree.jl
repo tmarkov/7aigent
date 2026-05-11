@@ -2,6 +2,7 @@ module CodeTree
 
 using DataFrames
 using DataFramesMeta
+using Markdown
 using SQLite
 using SHA
 using TreeSitter

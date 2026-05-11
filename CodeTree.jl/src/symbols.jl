@@ -92,9 +92,10 @@ function _extract_file_symbols(
     result = NamedTuple{(:node_id, :symbol, :kind), Tuple{String,String,String}}[]
 
     if lang_val == "markdown"
-        md_syms = _extract_markdown_symbols(src, known_names, config)
         for lrow in eachrow(file_leaves)
             nid = lrow.id
+            leaf_src = something(lrow.source, "")
+            md_syms = _extract_markdown_symbols(leaf_src, known_names, config)
             for (name, kind) in md_syms
                 push!(result, (node_id=nid, symbol=name, kind=kind))
             end
@@ -238,18 +239,19 @@ function _extract_markdown_symbols(
     # Find all fenced code blocks: ```lang\n...\n``` or ```\n...\n```
     fence_re = r"```([\w+#-]*)\n(.*?)```"s
     for m in eachmatch(fence_re, src)
-        lang_tag = strip(m.captures[1])
+        lang_tag = lowercase(strip(m.captures[1]))
         block    = String(m.captures[2])
 
         if !isempty(lang_tag)
             # Tagged block: use language grammar (R21a first rule)
-            block_lang = get(config.extensions, "." * lang_tag, nothing)
+            block_lang = haskey(config.languages, lang_tag) ? lang_tag :
+                         get(config.extensions, "." * lang_tag, nothing)
             if !isnothing(block_lang)
                 block_entry = get(config.languages, block_lang, nothing)
                 if !isnothing(block_entry) && !isnothing(block_entry.grammar_symbol)
-                    syms = _parse_block_symbols(block, block_entry.grammar_symbol)
-                    for s in syms
-                        push!(result, (s, "call"))
+                    syms = _extract_tagged_block_symbols(block, block_lang, block_entry)
+                    for sym in syms
+                        push!(result, sym)
                     end
                     continue
                 end
@@ -283,11 +285,13 @@ function _extract_markdown_symbols(
     end
 
     # Inline backtick spans: `name` — intersect with known_names
-    inline_re = r"`([^`\n]+)`"
-    for m in eachmatch(inline_re, src)
-        content = strip(m.captures[1])
-        _classify_block_tokens!(result, content, known_names)
-    end
+    # NOTE: This is disabled because inline backticks in paragraph text should not
+    # contribute symbols to that paragraph node. Symbols should only come from code blocks.
+    # inline_re = r"`([^`\n]+)`"
+    # for m in eachmatch(inline_re, src)
+    #     content = strip(m.captures[1])
+    #     _classify_block_tokens!(result, content, known_names)
+    # end
 
     return result
 end
@@ -299,7 +303,7 @@ function _classify_block_tokens!(
     text::AbstractString,
     known_names::Set{String},
 )
-    for m in eachmatch(r"\b([A-Za-z_][A-Za-z0-9_]*)\b(\s*\(?)", text)
+    for m in eachmatch(r"\b([A-Za-z_][A-Za-z0-9_!?.]*)\b(\s*\(?)", text)
         name = m.captures[1]
         name ∈ known_names || continue
         # Check if there's a '(' after the identifier (possibly with whitespace)
@@ -309,18 +313,38 @@ function _classify_block_tokens!(
     end
 end
 
-# Parse a code block string with the given grammar and return
-# all identifier names found in the AST (tagged block, R21a).
-function _parse_block_symbols(block::String, grammar::Symbol)::Set{String}
-    result = Set{String}()
-    tree = parse_source(block, grammar)
+# Parse a tagged code block using the language config's call and definition
+# patterns, producing ("name", "call"|"var_ref") pairs (R21a).
+function _extract_tagged_block_symbols(
+    block::String,
+    block_lang::String,
+    block_entry::LanguageEntry,
+)::Set{Tuple{String,String}}
+    result = Set{Tuple{String,String}}()
+    isnothing(block_entry.grammar_symbol) && return result
+
+    tree = parse_source(block, block_entry.grammar_symbol)
     isnothing(tree) && return result
-    caps = GC.@preserve tree begin
+
+    call_caps, def_caps, ref_caps = GC.@preserve tree begin
         root_node = TreeSitter.root(tree)
-        _run_ident_query(block, root_node, grammar)
+        (
+            _run_queries(block_entry.call_patterns, block, root_node, block_entry.grammar_symbol),
+            _run_queries(block_entry.definition_patterns, block, root_node, block_entry.grammar_symbol),
+            _run_ident_query(block, root_node, block_entry.grammar_symbol),
+        )
     end
-    for (_, text, _, _) in caps
-        push!(result, text)
+
+    last_line = max(count(==('\n'), block), 0)
+    calls = Set{String}(_caps_in(call_caps, 0, last_line))
+    defs = Set{String}(_caps_in(def_caps, 0, last_line))
+    refs = Set{String}(_caps_in(ref_caps, 0, last_line))
+
+    for name in calls
+        push!(result, (name, "call"))
+    end
+    for name in setdiff(refs, defs, calls)
+        push!(result, (name, "var_ref"))
     end
     return result
 end

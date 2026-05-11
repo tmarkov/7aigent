@@ -23,8 +23,9 @@ These architectural decisions are requirements, not implementation details.
 - **`CodeSymbols <: AbstractDataFrame`** — the `symbols` table, with the
   same read-only contract.
 
-- **`load(path, config) -> CodeTreeDB`** — the entry point. Parses or loads
-  from cache.
+- **`load(path[, config]) -> CodeTreeDB`** — the entry point. Parses or loads
+  from cache. When `config` is omitted, the package uses its built-in default
+  config for the languages it ships with.
 
 - **`reload(db)`** — re-runs full file discovery and incremental re-indexing
   in-place on an existing `CodeTreeDB`, using the `path` and `config` already
@@ -88,7 +89,7 @@ informative error directing the caller to use `update_source`.
 
 ### Loading
 
-**R5** — `load(path, config)` discovers all source files under `path`,
+**R5** — `load(path[, config])` discovers all source files under `path`,
 skipping ignored paths (`.gitignore` rules, `.7aigent/`, build artifacts,
 binary files). If `path` is a git repository, discovery uses
 `git ls-files --cached --others --exclude-standard`, which includes both
@@ -107,8 +108,9 @@ leaf node (the file node itself, with no children).
 
 ### Language Config
 
-The language config is provided by the caller (the runner). The package
-defines its structure but ships no default config.
+The package defines the config structure and ships a built-in
+`DEFAULT_CONFIG` covering the languages supported in-tree. Callers may pass
+their own config explicitly to override or extend that default.
 
 **R9** — The config maps parser AST node type names to `(class, kind)` per
 language, where `class` is either `landmark` or `detail`. Node type names
@@ -285,6 +287,12 @@ codebase root.
 **R25** — A `files` table is persisted alongside `code` and `symbols`,
 tracking `(path, hash, commit_hash?)` for each indexed file. `hash` is the
 SHA-256 of the file contents.
+
+**R25a** — The cache stores a compatibility token for the current CodeTree
+cache format/build logic. If the on-disk cache is incompatible with the
+running package version, `load` invalidates the stale cached rows before any
+file-level reuse decision is made. Incompatible cache entries must never be
+reused to populate `db.code` or `db.symbols`.
 
 **R26** — On `load`, each discovered file's hash is compared against the
 cache. Unchanged files reuse their cached rows without re-parsing.
