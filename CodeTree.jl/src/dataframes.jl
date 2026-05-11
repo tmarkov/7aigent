@@ -57,7 +57,7 @@ Base.setindex!(::CodeTree, args...)    = throw(MutationError(MUTATION_MSG))
 # that filter, @subset, groupby, sort, and join all work on CodeTree.
 # Results are plain DataFrames — read-only protection applies only to direct
 # mutation of db.code/db.symbols, not to derived query results.
-Base.filter(f, ct::CodeTree)                                   = filter(f, getfield(ct, :_df))
+Base.filter(f, ct::CodeTree)                                   = filter(r -> coalesce(f(r), false), getfield(ct, :_df))
 # Resolve ambiguity with DataFrames.filter(::Pair, ::AbstractDataFrame):
 DataFrames.filter(pair::Pair, ct::CodeTree; kw...)             = filter(pair, getfield(ct, :_df); kw...)
 DataFrames.select(ct::CodeTree, args...; kw...)                = select(getfield(ct, :_df), args...; kw...)
@@ -106,7 +106,7 @@ end
 
 Base.setindex!(::CodeSymbols, args...)  = throw(MutationError(MUTATION_MSG))
 
-Base.filter(f, cs::CodeSymbols)                                = filter(f, getfield(cs, :_df))
+Base.filter(f, cs::CodeSymbols)                                = filter(r -> coalesce(f(r), false), getfield(cs, :_df))
 # Resolve ambiguity with DataFrames.filter(::Pair, ::AbstractDataFrame):
 DataFrames.filter(pair::Pair, cs::CodeSymbols; kw...)          = filter(pair, getfield(cs, :_df); kw...)
 DataFrames.select(cs::CodeSymbols, args...; kw...)             = select(getfield(cs, :_df), args...; kw...)
