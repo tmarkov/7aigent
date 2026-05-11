@@ -39,34 +39,35 @@ function update_source(
     (ismissing(node_ls) || ismissing(node_le)) &&
         throw(ArgumentError("Node '$id_str' has no line range"))
 
-    abs_path = joinpath(db.root, String(file_rel))
+    file_rel_typed = FilePath(file_rel)
+    abs_path = joinpath(db.root, file_rel)
 
     # --- R30a: detect external modification ---
     disk_src  = try read(abs_path, String)
                 catch e; throw(ErrorException("Cannot read '$file_rel': $e")) end
     disk_hash = bytes2hex(SHA.sha256(disk_src))
-    if get(db._hashes, String(file_rel), disk_hash) != disk_hash
-        _replace_file_in_db!(db, String(file_rel), disk_src)
+    if get(db._hashes, file_rel, disk_hash) != disk_hash
+        _replace_file_in_db!(db, file_rel_typed, disk_src)
         throw(ErrorException(
             "File '$(file_rel)' was modified externally; db has been refreshed. Please retry."))
     end
 
     # --- R31: splice new content into the buffer copy ---
-    cur_src      = db._buffer[String(file_rel)]
+    cur_src      = db._buffer[file_rel]
     new_file_src = _splice_lines(cur_src, Int(node_ls), Int(node_le), new_src)
 
     # --- R32: re-index in memory (must succeed before touching DataFrames) ---
-    new_code_rows = _build_file_rows_for_update(db, String(file_rel), new_file_src)
-    new_sym_rows  = _extract_symbols_for_file(db, String(file_rel), new_file_src, new_code_rows)
+    new_code_rows = _build_file_rows_for_update(db, file_rel_typed, new_file_src)
+    new_sym_rows  = _extract_symbols_for_file(db, file_rel_typed, new_file_src, new_code_rows)
 
     # --- R35: save pre-call state for potential rollback ---
     old_code_df  = copy(code_df)
     old_syms_df  = copy(syms_df)
-    old_buf      = db._buffer[String(file_rel)]
-    old_hash     = db._hashes[String(file_rel)]
+    old_buf      = db._buffer[file_rel]
+    old_hash     = db._hashes[file_rel]
 
     # --- R33: update db.code ---
-    file_mask        = [isequal(f, String(file_rel)) for f in code_df.file]
+    file_mask        = [isequal(f, file_rel) for f in code_df.file]
     old_file_node_ids = Set(code_df.id[file_mask])
     deleteat!(code_df, findall(file_mask))
     append!(code_df, _rows_to_dataframe(new_code_rows))
@@ -83,16 +84,16 @@ function update_source(
     # --- R34: write to disk and update cache ---
     new_hash = bytes2hex(SHA.sha256(new_file_src))
     try
-        db._buffer[String(file_rel)] = new_file_src
-        db._hashes[String(file_rel)] = new_hash
+        db._buffer[file_rel] = new_file_src
+        db._hashes[file_rel] = new_hash
         write(abs_path, new_file_src)
-        _update_cache_for_file!(db, String(file_rel), new_file_src, new_hash, new_code_rows, new_sym_rows)
+        _update_cache_for_file!(db, file_rel_typed, new_file_src, new_hash, new_code_rows, new_sym_rows)
     catch e
         # R35: rollback all in-memory state
         empty!(code_df); append!(code_df, old_code_df)
         empty!(syms_df); append!(syms_df, old_syms_df)
-        db._buffer[String(file_rel)] = old_buf
-        db._hashes[String(file_rel)] = old_hash
+        db._buffer[file_rel] = old_buf
+        db._hashes[file_rel] = old_hash
         rethrow(e)
     end
 
@@ -121,29 +122,30 @@ end
 # node's existing parent, depth, and sibling_order from db.code.
 function _build_file_rows_for_update(
     db::CodeTreeDB,
-    file_rel::String,
+    file_rel::FilePath,
     new_src::String,
 )::Vector{Dict{Symbol,Any}}
     code_df = getfield(db.code, :_df)
-    fidx = findfirst(==(file_rel), code_df.id)
-    isnothing(fidx) && throw(ErrorException("File node '$file_rel' not in db.code"))
+    fidx = findfirst(==(file_rel.val), code_df.id)
+    isnothing(fidx) && throw(ErrorException("File node '$(file_rel.val)' not in db.code"))
 
     parent_id     = code_df[fidx, :parent]
     depth         = code_df[fidx, :depth]
     sibling_order = code_df[fidx, :sibling_order]
 
     # Derive parent_qname from the parent node's qname (for qname population).
-    parent_qname = ""
+    parent_qname = QName("")
     if !ismissing(parent_id)
         pidx = findfirst(==(parent_id), code_df.id)
         if !isnothing(pidx) && !ismissing(code_df[pidx, :qname])
-            parent_qname = code_df[pidx, :qname]
+            parent_qname = QName(code_df[pidx, :qname])
         end
     end
 
-    lang = language_for_file(db.config, file_rel)
+    lang = language_for_file(db.config, file_rel.val)
     rows = build_file_rows(new_src, lang, db.config, db.detail_threshold,
-                           file_rel, file_rel, parent_id, depth, parent_qname)
+                           NodeId(file_rel.val), file_rel, NodeId(parent_id),
+                           depth, parent_qname)
     rows[1][:sibling_order] = sibling_order
     return rows
 end
@@ -153,11 +155,11 @@ end
 # For Markdown: uses _extract_markdown_symbols with known_names from db (R21a, R21c).
 function _extract_symbols_for_file(
     db::CodeTreeDB,
-    file_rel::String,
+    file_rel::FilePath,
     new_src::String,
     new_code_rows::Vector{Dict{Symbol,Any}},
 )::Vector{NamedTuple}
-    lang_val = language_for_file(db.config, file_rel)
+    lang_val = language_for_file(db.config, file_rel.val)
     ismissing(lang_val) && return NamedTuple[]
 
     new_code_df = _rows_to_dataframe(new_code_rows)
@@ -230,14 +232,14 @@ function _extract_symbols_for_file(
 end
 
 # Re-index `file_rel` from `new_src` and update db in place (used by R30a).
-function _replace_file_in_db!(db::CodeTreeDB, file_rel::String, new_src::String)
+function _replace_file_in_db!(db::CodeTreeDB, file_rel::FilePath, new_src::String)
     code_df = getfield(db.code,    :_df)
     syms_df = getfield(db.symbols, :_df)
 
     new_code_rows = _build_file_rows_for_update(db, file_rel, new_src)
     new_sym_rows  = _extract_symbols_for_file(db, file_rel, new_src, new_code_rows)
 
-    file_mask         = [isequal(f, file_rel) for f in code_df.file]
+    file_mask         = [isequal(f, file_rel.val) for f in code_df.file]
     old_file_node_ids = Set(code_df.id[file_mask])
 
     deleteat!(code_df, findall(file_mask))
@@ -250,14 +252,14 @@ function _replace_file_in_db!(db::CodeTreeDB, file_rel::String, new_src::String)
     end
 
     new_hash = bytes2hex(SHA.sha256(new_src))
-    db._buffer[file_rel] = new_src
-    db._hashes[file_rel] = new_hash
+    db._buffer[file_rel.val] = new_src
+    db._hashes[file_rel.val] = new_hash
 end
 
 # Write updated cache entries for a single file after a successful update_source.
 function _update_cache_for_file!(
     db::CodeTreeDB,
-    file_rel::String,
+    file_rel::FilePath,
     new_file_src::String,
     new_hash::String,
     new_code_rows::Vector{Dict{Symbol,Any}},
@@ -266,7 +268,7 @@ function _update_cache_for_file!(
     cache_db = _open_or_create_cache(db.root)
     commit_hash = _current_commit_hash(db.root)
     try
-        _save_file_rows!(cache_db, file_rel, new_hash, commit_hash,
+        _save_file_rows!(cache_db, file_rel.val, new_hash, commit_hash,
                          new_code_rows, new_sym_rows)
     finally
         close(cache_db)

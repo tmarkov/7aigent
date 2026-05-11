@@ -48,9 +48,9 @@ function load(
     all_rows = Dict{Symbol,Any}[]
 
     # --- Codebase root node (R6) ---
-    codebase_id = codebase_name
-    codebase_qname = codebase_name
-    push!(all_rows, _struct_row(codebase_id, missing, 0, 0, "codebase", codebase_name, codebase_qname))
+    codebase_id = NodeId(codebase_name)
+    codebase_qname = QName(codebase_name)
+    push!(all_rows, _struct_row(codebase_id, missing, 0, 0, NodeKind("codebase"), codebase_name, codebase_qname))
 
     # Group files by their parent directory.
     dir_to_files = Dict{String,Vector{String}}()
@@ -70,8 +70,9 @@ function load(
 
     for (ci, child) in enumerate(root_children)
         if child in subdirs
-            mod_qname = codebase_qname * "." * basename(child)
-            push!(all_rows, _struct_row(child, codebase_id, 1, ci - 1, "module", basename(child), mod_qname))
+            mod_qname = QName(codebase_qname.val * "." * basename(child))
+            push!(all_rows, _struct_row(NodeId(child), codebase_id, 1, ci - 1,
+                                        NodeKind("module"), basename(child), mod_qname))
         end
     end
 
@@ -80,8 +81,9 @@ function load(
 
     # --- File nodes + their descendants (R6, R8, R10–R16) ---
     for d in sort(collect(keys(dir_to_files)))
-        parent_id = isempty(d) ? codebase_id : d
-        parent_qn = isempty(d) ? codebase_qname : codebase_qname * "." * basename(d)
+        parent_id = isempty(d) ? codebase_id : NodeId(d)
+        parent_qn = isempty(d) ? codebase_qname :
+                    QName(codebase_qname.val * "." * basename(d))
         dir_files = sort(dir_to_files[d])
         depth     = isempty(d) ? 1 : 2
 
@@ -112,7 +114,7 @@ function load(
             lang      = language_for_file(config, rel)
             file_rows = build_file_rows(
                 src, lang, config, detail_threshold,
-                rel, rel, parent_id, depth, parent_qn,
+                NodeId(rel), FilePath(rel), parent_id, depth, parent_qn,
             )
             file_rows[1][:sibling_order] = fi - 1
             append!(all_rows, file_rows)
@@ -237,17 +239,17 @@ function _assign_readme_summaries!(df::DataFrame, root_path::String,
 end
 
 function _struct_row(
-    id::String, parent, depth::Int, sibling_order::Int, kind::String, name::String,
-    qname::Union{String,Missing}=missing,
+    id::NodeId, parent::Union{NodeId,Missing}, depth::Int, sibling_order::Int,
+    kind::NodeKind, name::String, qname::Union{QName,Missing}=missing,
 )::Dict{Symbol,Any}
     return Dict{Symbol,Any}(
-        :id            => id,
-        :parent        => parent,
+        :id            => id.val,
+        :parent        => _raw(parent),
         :depth         => depth,
         :sibling_order => sibling_order,
-        :kind          => kind,
+        :kind          => kind.val,
         :name          => name,
-        :qname         => qname,
+        :qname         => _raw(qname),
         :language      => missing,
         :summary       => missing,
         :source        => missing,

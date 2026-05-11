@@ -122,12 +122,12 @@ function _build_level(
     language::String,
     config::LanguageConfig,
     detail_threshold::Int,
-    parent_id::String,
-    file_path::String,
+    parent_id::NodeId,
+    file_path::FilePath,
     depth::Int,
     parent_ls::Int,
     parent_le::Int,
-    parent_qname::String="",
+    parent_qname::QName=QName(""),
 )::Vector{Dict{Symbol,Any}}
 
     raw = collect(TreeSitter.named_children(parent_ts_node))
@@ -322,11 +322,11 @@ function _build_level(
     # Build rows and recurse
     all_rows = Dict{Symbol,Any}[]
     for (i, sp) in enumerate(result_spans)
-        node_id = parent_id * ":" * id_suffixes[i]
+        node_id = NodeId(parent_id.val * ":" * id_suffixes[i])
         node_qname = if isempty(parent_qname)
-            qname_suffixes[i]
+            QName(qname_suffixes[i])
         else
-            parent_qname * "." * qname_suffixes[i]
+            QName(parent_qname.val * "." * qname_suffixes[i])
         end
         span_src = join(src_lines[max(1, sp.ls):min(length(src_lines), sp.le)], '\n')
 
@@ -341,18 +341,18 @@ function _build_level(
         end
 
         row = Dict{Symbol,Any}(
-            :id            => node_id,
-            :parent        => parent_id,
+            :id            => node_id.val,
+            :parent        => parent_id.val,
             :depth         => depth,
             :sibling_order => i - 1,
             :kind          => sp.kind,
             :name          => sp.name,
-            :qname         => node_qname,
+            :qname         => node_qname.val,
             :language      => language,
             :summary       => _extract_summary(sp.summary_src),
             :source        => span_src,
             :signature     => sig,
-            :file          => file_path,
+            :file          => file_path.val,
             :line_start    => sp.ls,
             :line_end      => sp.le,
             :n_lines       => sp.le - sp.ls + 1,
@@ -365,7 +365,7 @@ function _build_level(
                 body, src, src_lines, entry, language, config, detail_threshold,
                 node_id, file_path, depth + 1, sp.ls, sp.le, node_qname,
             )
-            n_direct = count(r -> r[:parent] == node_id, child_rows)
+            n_direct = count(r -> r[:parent] == node_id.val, child_rows)
             row[:n_children] = n_direct
             if n_direct > 0
                 row[:source] = missing  # R1: source only on leaves
@@ -396,11 +396,11 @@ function build_file_rows(
     language::Union{String,Missing},
     config::LanguageConfig,
     detail_threshold::Int,
-    file_id::String,
-    file_path::String,
-    parent_id::String,
+    file_id::NodeId,
+    file_path::FilePath,
+    parent_id::NodeId,
     depth::Int,
-    parent_qname::String="",
+    parent_qname::QName=QName(""),
 )::Vector{Dict{Symbol,Any}}
 
     src_lines = split(src, '\n')
@@ -411,22 +411,23 @@ function build_file_rows(
     n_lines = length(src_lines)
     n_lines == 0 && (n_lines = 1)
 
-    file_name = basename(file_path)
-    file_qname = isempty(parent_qname) ? file_name : parent_qname * "." * file_name
+    file_name = basename(file_path.val)
+    file_qname = isempty(parent_qname) ? QName(file_name) :
+                 QName(parent_qname.val * "." * file_name)
 
     file_row = Dict{Symbol,Any}(
-        :id            => file_id,
-        :parent        => parent_id,
+        :id            => file_id.val,
+        :parent        => parent_id.val,
         :depth         => depth,
         :sibling_order => 0,
         :kind          => "file",
         :name          => file_name,
-        :qname         => file_qname,
+        :qname         => file_qname.val,
         :language      => language,
         :summary       => missing,
         :source        => missing,
         :signature     => missing,
-        :file          => file_path,
+        :file          => file_path.val,
         :line_start    => 1,
         :line_end      => n_lines,
         :n_lines       => n_lines,
@@ -457,6 +458,6 @@ function build_file_rows(
         )
     end
 
-    file_row[:n_children] = count(r -> r[:parent] == file_id, child_rows)
+    file_row[:n_children] = count(r -> r[:parent] == file_id.val, child_rows)
     return vcat([file_row], child_rows)
 end
