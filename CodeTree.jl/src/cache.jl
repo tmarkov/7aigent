@@ -154,6 +154,10 @@ function _load_file_rows_from_cache(
     end
     isempty(code_rows) && return nothing
 
+    # Symbols are currently re-extracted globally by extract_symbols! after
+    # loading, so sym_rows from cache are not used by the caller.  They are
+    # kept here so the cache round-trips correctly and so a future optimization
+    # (skipping global re-extraction for cached files) is straightforward.
     sym_result = DBInterface.execute(db,
         "SELECT node_id, symbol, kind FROM symbols WHERE file = ?", [file_rel])
     sym_rows = NamedTuple{(:node_id, :symbol, :kind), Tuple{String,String,String}}[]
@@ -202,42 +206,49 @@ function _save_file_rows!(
     code_rows::Vector{Dict{Symbol,Any}},
     sym_rows,
 )
-    DBInterface.execute(db, "DELETE FROM code    WHERE file = ?", [file_rel])
-    DBInterface.execute(db, "DELETE FROM symbols WHERE file = ?", [file_rel])
-    _upsert_file!(db, file_rel, hash, commit_hash)
+    DBInterface.execute(db, "BEGIN")
+    try
+        DBInterface.execute(db, "DELETE FROM code    WHERE file = ?", [file_rel])
+        DBInterface.execute(db, "DELETE FROM symbols WHERE file = ?", [file_rel])
+        _upsert_file!(db, file_rel, hash, commit_hash)
 
-    _m(x) = ismissing(x) ? nothing : x
-    for r in code_rows
-        DBInterface.execute(db, """
-            INSERT INTO code
-              (file, id, parent, depth, sibling_order, kind, name,
-               qname, language, summary, source, signature,
-               line_start, line_end, n_lines, n_children)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        """, [
-            file_rel,
-            r[:id],
-            _m(r[:parent]),
-            r[:depth],
-            r[:sibling_order],
-            r[:kind],
-            r[:name],
-            _m(r[:qname]),
-            _m(r[:language]),
-            _m(r[:summary]),
-            _m(r[:source]),
-            _m(r[:signature]),
-            _m(r[:line_start]),
-            _m(r[:line_end]),
-            _m(r[:n_lines]),
-            r[:n_children],
-        ])
-    end
+        _m(x) = ismissing(x) ? nothing : x
+        for r in code_rows
+            DBInterface.execute(db, """
+                INSERT INTO code
+                  (file, id, parent, depth, sibling_order, kind, name,
+                   qname, language, summary, source, signature,
+                   line_start, line_end, n_lines, n_children)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """, [
+                file_rel,
+                r[:id],
+                _m(r[:parent]),
+                r[:depth],
+                r[:sibling_order],
+                r[:kind],
+                r[:name],
+                _m(r[:qname]),
+                _m(r[:language]),
+                _m(r[:summary]),
+                _m(r[:source]),
+                _m(r[:signature]),
+                _m(r[:line_start]),
+                _m(r[:line_end]),
+                _m(r[:n_lines]),
+                r[:n_children],
+            ])
+        end
 
-    for s in sym_rows
-        DBInterface.execute(db,
-            "INSERT INTO symbols (file, node_id, symbol, kind) VALUES (?,?,?,?)",
-            [file_rel, s.node_id, s.symbol, s.kind])
+        for s in sym_rows
+            DBInterface.execute(db,
+                "INSERT INTO symbols (file, node_id, symbol, kind) VALUES (?,?,?,?)",
+                [file_rel, s.node_id, s.symbol, s.kind])
+        end
+        DBInterface.execute(db, "COMMIT")
+    catch
+        DBInterface.execute(db, "ROLLBACK")
+        rethrow()
     end
 end
 

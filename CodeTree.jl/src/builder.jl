@@ -127,6 +127,7 @@ function _build_level(
     depth::Int,
     parent_ls::Int,
     parent_le::Int,
+    parent_qname::String="",
 )::Vector{Dict{Symbol,Any}}
 
     raw = collect(TreeSitter.named_children(parent_ts_node))
@@ -313,16 +314,31 @@ function _build_level(
     isempty(result_spans) && return Dict{Symbol,Any}[]
 
     # Assign ordinal-suffix ids (R1) and sibling_order (R16)
-    id_suffixes = assign_ordinal_ids(
-        [sp.name for sp in result_spans],
-        [sp.ls   for sp in result_spans],
-    )
+    span_names = [sp.name for sp in result_spans]
+    span_starts = [sp.ls for sp in result_spans]
+    id_suffixes = assign_ordinal_ids(span_names, span_starts)
+    qname_suffixes = assign_ordinal_ids(span_names, span_starts)
 
     # Build rows and recurse
     all_rows = Dict{Symbol,Any}[]
     for (i, sp) in enumerate(result_spans)
         node_id = parent_id * ":" * id_suffixes[i]
+        node_qname = if isempty(parent_qname)
+            qname_suffixes[i]
+        else
+            parent_qname * "." * qname_suffixes[i]
+        end
         span_src = join(src_lines[max(1, sp.ls):min(length(src_lines), sp.le)], '\n')
+
+        # Extract signature for declarative nodes (R1: declaration line only).
+        sig = missing
+        if sp.kind != "chunk" && !isnothing(sp.ts_node)
+            ts_start_row = Int(TreeSitter.API.ts_node_start_point(sp.ts_node.ptr).row)
+            decl_line_idx = ts_start_row + 1  # 1-indexed
+            if 1 <= decl_line_idx <= length(src_lines)
+                sig = strip(String(src_lines[decl_line_idx]))
+            end
+        end
 
         row = Dict{Symbol,Any}(
             :id            => node_id,
@@ -331,11 +347,11 @@ function _build_level(
             :sibling_order => i - 1,
             :kind          => sp.kind,
             :name          => sp.name,
-            :qname         => missing,
+            :qname         => node_qname,
             :language      => language,
             :summary       => _extract_summary(sp.summary_src),
             :source        => span_src,
-            :signature     => missing,
+            :signature     => sig,
             :file          => file_path,
             :line_start    => sp.ls,
             :line_end      => sp.le,
@@ -347,9 +363,13 @@ function _build_level(
             body = _find_body(entry, sp.ts_node)
             child_rows = _build_level(
                 body, src, src_lines, entry, language, config, detail_threshold,
-                node_id, file_path, depth + 1, sp.ls, sp.le,
+                node_id, file_path, depth + 1, sp.ls, sp.le, node_qname,
             )
-            row[:n_children] = count(r -> r[:parent] == node_id, child_rows)
+            n_direct = count(r -> r[:parent] == node_id, child_rows)
+            row[:n_children] = n_direct
+            if n_direct > 0
+                row[:source] = missing  # R1: source only on leaves
+            end
             push!(all_rows, row)
             append!(all_rows, child_rows)
         else
@@ -380,6 +400,7 @@ function build_file_rows(
     file_path::String,
     parent_id::String,
     depth::Int,
+    parent_qname::String="",
 )::Vector{Dict{Symbol,Any}}
 
     src_lines = split(src, '\n')
@@ -390,14 +411,17 @@ function build_file_rows(
     n_lines = length(src_lines)
     n_lines == 0 && (n_lines = 1)
 
+    file_name = basename(file_path)
+    file_qname = isempty(parent_qname) ? file_name : parent_qname * "." * file_name
+
     file_row = Dict{Symbol,Any}(
         :id            => file_id,
         :parent        => parent_id,
         :depth         => depth,
         :sibling_order => 0,
         :kind          => "file",
-        :name          => basename(file_path),
-        :qname         => missing,
+        :name          => file_name,
+        :qname         => file_qname,
         :language      => language,
         :summary       => missing,
         :source        => missing,
@@ -429,7 +453,7 @@ function build_file_rows(
         root_node = TreeSitter.root(tree)
         _build_level(
             root_node, src, src_lines, entry, language, config, detail_threshold,
-            file_id, file_path, depth + 1, 1, n_lines,
+            file_id, file_path, depth + 1, 1, n_lines, file_qname,
         )
     end
 

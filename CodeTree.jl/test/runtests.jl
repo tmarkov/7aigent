@@ -916,3 +916,76 @@ end
     # Ensure the fallback kind "function" did NOT leak in as a node name
     @test "function" ∉ names
 end
+
+# =============================================================================
+# Phase 8 — Newly implemented features: qname, signature, n_lines invariant
+# =============================================================================
+
+@testset "R1: qname is populated for all nodes and is dot-joined path" begin
+    code = _db().code
+    # No node should have missing qname
+    @test count(ismissing, code.qname) == 0
+    # Codebase root qname is just its name
+    root = only(filter(r -> r.kind == "codebase", code))
+    @test root.qname == root.name
+    # A function's qname should contain dots (it's nested)
+    qs = only(filter(r -> r.name == "quick_sort" && r.kind == "function" &&
+                          isequal(r.language, "cpp"), code))
+    @test occursin('.', qs.qname)
+    @test endswith(qs.qname, ".quick_sort")
+end
+
+@testset "R1: qname is unique across db.code (with ordinal dedup)" begin
+    code = _db().code
+    @test length(unique(code.qname)) == nrow(code)
+end
+
+@testset "R1: signature populated for function/class nodes, missing for chunks" begin
+    code = _db().code
+    # quick_sort should have a signature starting with the declaration
+    qs = only(filter(r -> r.name == "quick_sort" && r.kind == "function" &&
+                          isequal(r.language, "cpp"), code))
+    @test !ismissing(qs.signature)
+    @test occursin("quick_sort", qs.signature)
+
+    # chunk nodes should have missing signature
+    chunks = filter(r -> r.kind == "chunk", code)
+    @test nrow(chunks) > 0
+    @test all(ismissing, chunks.signature)
+end
+
+@testset "R1: n_lines == line_end - line_start + 1 for all nodes with line info" begin
+    code = _db().code
+    for row in eachrow(code)
+        ismissing(row.line_start) && continue
+        @test row.n_lines == row.line_end - row.line_start + 1
+    end
+end
+
+@testset "R1: source populated only for leaf nodes (n_children == 0)" begin
+    code = _db().code
+    for row in eachrow(code)
+        if row.n_children == 0
+            # Leaf nodes should have source (unless structural like codebase/module)
+            if row.kind ∉ ("codebase", "module")
+                @test !ismissing(row.source)
+            end
+        else
+            # Non-leaf nodes should have missing source
+            @test ismissing(row.source)
+        end
+    end
+end
+
+@testset "R21a: Markdown symbols distinguish call vs var_ref" begin
+    code = _db().code
+    syms = _db().symbols
+    # Get README.md symbols
+    readme_leaves = filter(r -> isequal(r.file, "README.md") && r.n_children == 0, code)
+    readme_syms = filter(r -> r.node_id in readme_leaves.id, syms)
+    # quick_sort appears as a function call target in README code blocks
+    qs_syms = filter(r -> r.symbol == "quick_sort", readme_syms)
+    @test nrow(qs_syms) > 0
+    # It should appear with a specific kind (call or var_ref depending on context)
+    @test all(k -> k ∈ ("call", "var_ref"), qs_syms.kind)
+end

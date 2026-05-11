@@ -132,15 +132,25 @@ function _build_file_rows_for_update(
     depth         = code_df[fidx, :depth]
     sibling_order = code_df[fidx, :sibling_order]
 
+    # Derive parent_qname from the parent node's qname (for qname population).
+    parent_qname = ""
+    if !ismissing(parent_id)
+        pidx = findfirst(==(parent_id), code_df.id)
+        if !isnothing(pidx) && !ismissing(code_df[pidx, :qname])
+            parent_qname = code_df[pidx, :qname]
+        end
+    end
+
     lang = language_for_file(db.config, file_rel)
-    rows = build_file_rows(new_src, lang, db.config, 30,
-                           file_rel, file_rel, parent_id, depth)
+    rows = build_file_rows(new_src, lang, db.config, db.detail_threshold,
+                           file_rel, file_rel, parent_id, depth, parent_qname)
     rows[1][:sibling_order] = sibling_order
     return rows
 end
 
-# Extract symbol rows for a single non-Markdown file given fresh code rows.
-# Mirrors the per-file logic inside extract_symbols! (Pass 1).
+# Extract symbol rows for a single file given fresh code rows.
+# For non-Markdown: mirrors the per-file logic inside extract_symbols! (Pass 1).
+# For Markdown: uses _extract_markdown_symbols with known_names from db (R21a, R21c).
 function _extract_symbols_for_file(
     db::CodeTreeDB,
     file_rel::String,
@@ -148,26 +158,52 @@ function _extract_symbols_for_file(
     new_code_rows::Vector{Dict{Symbol,Any}},
 )::Vector{NamedTuple}
     lang_val = language_for_file(db.config, file_rel)
-    (ismissing(lang_val) || lang_val == "markdown") && return NamedTuple[]
-    lang = lang_val
+    ismissing(lang_val) && return NamedTuple[]
 
+    new_code_df = _rows_to_dataframe(new_code_rows)
+    file_leaves = filter(r -> r.n_children == 0, new_code_df)
+    isempty(file_leaves) && return NamedTuple[]
+
+    result = NamedTuple{(:node_id, :symbol, :kind), Tuple{String,String,String}}[]
+    seen   = Set{Tuple{String,String,String}}()
+
+    if lang_val == "markdown"
+        # R21c: known_names from non-Markdown code node names.
+        code_df = getfield(db.code, :_df)
+        non_md = filter(r -> !ismissing(r.language) && r.language != "markdown", code_df)
+        known_names = Set{String}(skipmissing(non_md.name))
+        md_syms = _extract_markdown_symbols(new_src, known_names, db.config)
+        for lrow in eachrow(file_leaves)
+            nid = lrow.id
+            for (name, kind) in md_syms
+                key = (nid, name, kind)
+                key ∈ seen && continue
+                push!(seen, key)
+                push!(result, (node_id=nid, symbol=name, kind=kind))
+            end
+        end
+        return result
+    end
+
+    lang = lang_val
     lang_entry = get(db.config.languages, lang, nothing)
     isnothing(lang_entry) && return NamedTuple[]
     isnothing(lang_entry.grammar_symbol) && return NamedTuple[]
 
     tree = parse_source(new_src, lang_entry.grammar_symbol)
     isnothing(tree) && return NamedTuple[]
-    root_node = TreeSitter.root(tree)
 
-    call_caps = _run_queries(lang_entry.call_patterns,       new_src, root_node, lang_entry.grammar_symbol)
-    def_caps  = _run_queries(lang_entry.definition_patterns, new_src, root_node, lang_entry.grammar_symbol)
-    ref_caps  = _run_ident_query(new_src, root_node, lang_entry.grammar_symbol)
-
-    new_code_df = _rows_to_dataframe(new_code_rows)
-    file_leaves = filter(r -> r.n_children == 0, new_code_df)
-
-    result = NamedTuple{(:node_id, :symbol, :kind), Tuple{String,String,String}}[]
-    seen   = Set{Tuple{String,String,String}}()
+    # GC.@preserve keeps tree alive — TreeSitter 0.1.0 Node doesn't hold a
+    # reference to its Tree, so without this the GC could free the tree while
+    # root_node (a raw pointer into tree memory) is still in use.
+    call_caps, def_caps, ref_caps = GC.@preserve tree begin
+        root_node = TreeSitter.root(tree)
+        (
+            _run_queries(lang_entry.call_patterns,       new_src, root_node, lang_entry.grammar_symbol),
+            _run_queries(lang_entry.definition_patterns, new_src, root_node, lang_entry.grammar_symbol),
+            _run_ident_query(new_src, root_node, lang_entry.grammar_symbol),
+        )
+    end
 
     for lrow in eachrow(file_leaves)
         ismissing(lrow.line_start) && continue

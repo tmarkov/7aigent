@@ -41,18 +41,19 @@ function _extract_summary(src::Union{String,Nothing})::Union{String,Missing}
         push!(cleaned, s)
     end
 
-    # Remove leading/trailing blank lines, collapse internal blanks,
-    # and take at most three non-blank lines.
-    non_blank = filter(!isempty, cleaned)
+    # R17–R20a: "summary lines" means lines that contain at least one
+    # alphanumeric character, after stripping comment markers.
+    non_blank = filter(l -> occursin(r"[A-Za-z0-9]", l), cleaned)
     isempty(non_blank) && return missing
 
     # Skip lines that are purely a function/method signature header
     # (e.g. `    sort_array(v) -> Vector{Int}` right after `"""`).
     summary_lines = String[]
     for ln in non_blank
-        # Skip the leading "    FunctionName(args)" signature line in Julia docstrings.
-        isempty(summary_lines) && startswith(ln, r"[A-Za-z_]") &&
-            occursin(r"\(", ln) && length(summary_lines) == 0 && continue
+        # Skip the leading "FunctionName(args)" signature line in Julia docstrings.
+        if isempty(summary_lines) && occursin(r"^[A-Za-z_]", ln) && occursin(r"\(", ln)
+            continue
+        end
         push!(summary_lines, ln)
         length(summary_lines) == 3 && break
     end
@@ -70,6 +71,15 @@ Used for codebase-root and directory-module summaries (R19).
 function _readme_summary(readme_path::String)::Union{String,Missing}
     isfile(readme_path) || return missing
     content = read(readme_path, String)
+    return _readme_summary_from_string(content)
+end
+
+"""
+    _readme_summary_from_string(content) -> Union{String, Missing}
+
+Extract the first non-blank, non-heading paragraph from README content (R19).
+"""
+function _readme_summary_from_string(content::String)::Union{String,Missing}
     lines = split(content, '\n')
 
     paragraph = String[]

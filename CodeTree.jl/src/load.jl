@@ -49,7 +49,8 @@ function load(
 
     # --- Codebase root node (R6) ---
     codebase_id = codebase_name
-    push!(all_rows, _struct_row(codebase_id, missing, 0, 0, "codebase", codebase_name))
+    codebase_qname = codebase_name
+    push!(all_rows, _struct_row(codebase_id, missing, 0, 0, "codebase", codebase_name, codebase_qname))
 
     # Group files by their parent directory.
     dir_to_files = Dict{String,Vector{String}}()
@@ -69,7 +70,8 @@ function load(
 
     for (ci, child) in enumerate(root_children)
         if child in subdirs
-            push!(all_rows, _struct_row(child, codebase_id, 1, ci - 1, "module", basename(child)))
+            mod_qname = codebase_qname * "." * basename(child)
+            push!(all_rows, _struct_row(child, codebase_id, 1, ci - 1, "module", basename(child), mod_qname))
         end
     end
 
@@ -79,6 +81,7 @@ function load(
     # --- File nodes + their descendants (R6, R8, R10–R16) ---
     for d in sort(collect(keys(dir_to_files)))
         parent_id = isempty(d) ? codebase_id : d
+        parent_qn = isempty(d) ? codebase_qname : codebase_qname * "." * basename(d)
         dir_files = sort(dir_to_files[d])
         depth     = isempty(d) ? 1 : 2
 
@@ -109,7 +112,7 @@ function load(
             lang      = language_for_file(config, rel)
             file_rows = build_file_rows(
                 src, lang, config, detail_threshold,
-                rel, rel, parent_id, depth,
+                rel, rel, parent_id, depth, parent_qn,
             )
             file_rows[1][:sibling_order] = fi - 1
             append!(all_rows, file_rows)
@@ -132,7 +135,7 @@ function load(
 
     # --- Assemble DataFrames ---
     code_df = _rows_to_dataframe(all_rows)
-    _assign_readme_summaries!(code_df, root_path)
+    _assign_readme_summaries!(code_df, root_path, buffer)
 
     syms_df = DataFrame(node_id=String[], symbol=String[], kind=String[])
 
@@ -141,6 +144,7 @@ function load(
         CodeSymbols(syms_df),
         root_path,
         config,
+        detail_threshold,
         buffer,
         hashes,
     )
@@ -195,7 +199,7 @@ Returns `db` for convenience.
 Not yet implemented beyond a naive full reload.
 """
 function reload(db::CodeTreeDB)::CodeTreeDB
-    new_db = load(db.root, db.config)
+    new_db = load(db.root, db.config; detail_threshold=db.detail_threshold)
     db.code    = new_db.code
     db.symbols = new_db.symbols
     db._buffer = new_db._buffer
@@ -208,27 +212,33 @@ end
 # ---------------------------------------------------------------------------
 
 # Assign README-based summaries to codebase and module nodes (R19).
-function _assign_readme_summaries!(df::DataFrame, root_path::String)
+# Reads from the in-memory buffer (R29) instead of disk.
+function _assign_readme_summaries!(df::DataFrame, root_path::String,
+                                    buffer::Dict{String,String})
     for i in 1:nrow(df)
         kind = df[i, :kind]
         kind ∈ ("codebase", "module") || continue
         ismissing(df[i, :summary]) || continue  # already has a summary
 
-        if kind == "codebase"
-            readme = joinpath(root_path, "README.md")
+        readme_rel = if kind == "codebase"
+            "README.md"
         else
-            mod_dir = String(df[i, :id])  # e.g. "src", "julia"
-            readme = joinpath(root_path, mod_dir, "README.md")
+            mod_dir = String(df[i, :id])
+            joinpath(mod_dir, "README.md")
         end
-        s = _readme_summary(readme)
-        if !ismissing(s)
-            df[i, :summary] = s
+        readme_src = get(buffer, readme_rel, nothing)
+        if !isnothing(readme_src)
+            s = _readme_summary_from_string(readme_src)
+            if !ismissing(s)
+                df[i, :summary] = s
+            end
         end
     end
 end
 
 function _struct_row(
     id::String, parent, depth::Int, sibling_order::Int, kind::String, name::String,
+    qname::Union{String,Missing}=missing,
 )::Dict{Symbol,Any}
     return Dict{Symbol,Any}(
         :id            => id,
@@ -237,7 +247,7 @@ function _struct_row(
         :sibling_order => sibling_order,
         :kind          => kind,
         :name          => name,
-        :qname         => missing,
+        :qname         => qname,
         :language      => missing,
         :summary       => missing,
         :source        => missing,

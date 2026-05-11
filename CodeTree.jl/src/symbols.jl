@@ -20,7 +20,9 @@ function extract_symbols!(db::CodeTreeDB)
     buffer   = db._buffer
     config   = db.config
 
-    known_names = Set{String}()
+    # R21c: known_names = name values from non-Markdown code nodes.
+    non_md_names = filter(r -> !ismissing(r.language) && r.language != "markdown", code_df)
+    known_names = Set{String}(skipmissing(non_md_names.name))
     new_rows = NamedTuple{(:node_id, :symbol, :kind), Tuple{String,String,String}}[]
 
     # -------------------------------------------------------------------------
@@ -75,11 +77,9 @@ function extract_symbols!(db::CodeTreeDB)
 
             nid = lrow.id
             for name in calls
-                push!(known_names, name)
                 push!(new_rows, (node_id=nid, symbol=name, kind="call"))
             end
             for name in var_refs
-                push!(known_names, name)
                 push!(new_rows, (node_id=nid, symbol=name, kind="var_ref"))
             end
         end
@@ -104,8 +104,8 @@ function extract_symbols!(db::CodeTreeDB)
         for lrow in eachrow(md_leaves)
             md_syms = _extract_markdown_symbols(src, known_names, config)
             nid = lrow.id
-            for name in md_syms
-                push!(new_rows, (node_id=nid, symbol=name, kind="call"))
+            for (name, kind) in md_syms
+                push!(new_rows, (node_id=nid, symbol=name, kind=kind))
             end
         end
     end
@@ -207,11 +207,11 @@ function _extract_markdown_symbols(
     src::String,
     known_names::Set{String},
     config::LanguageConfig,
-)::Set{String}
-    result = Set{String}()
+)::Set{Tuple{String,String}}
+    # Returns (name, kind) pairs where kind is "call" or "var_ref" (R21a).
+    result = Set{Tuple{String,String}}()
 
     # Find all fenced code blocks: ```lang\n...\n``` or ```\n...\n```
-    # Capture (optional_lang, block_content)
     fence_re = r"```([\w+#-]*)\n(.*?)```"s
     for m in eachmatch(fence_re, src)
         lang_tag = strip(m.captures[1])
@@ -224,30 +224,65 @@ function _extract_markdown_symbols(
                 block_entry = get(config.languages, block_lang, nothing)
                 if !isnothing(block_entry) && !isnothing(block_entry.grammar_symbol)
                     syms = _parse_block_symbols(block, block_entry.grammar_symbol)
-                    union!(result, syms)
+                    for s in syms
+                        push!(result, (s, "call"))
+                    end
                     continue
                 end
             end
             # Unknown tag → fall through to intersection
         end
 
-        # Untagged (or unknown-tagged) block: intersect with known_names (R21a)
-        tokens = Set(m2.captures[1] for m2 in eachmatch(_IDENT_RE, block))
-        union!(result, intersect(tokens, known_names))
+        # Untagged (or unknown-tagged) block: intersect with known_names (R21a).
+        # R21a: if followed by `(` → "call", otherwise "var_ref".
+        _classify_block_tokens!(result, block, known_names)
+    end
+
+    # Indented code blocks (R21a: four-space or tab-indented per CommonMark).
+    # Collect consecutive lines starting with 4 spaces or a tab as a single block.
+    lines = split(src, '\n')
+    indent_block = String[]
+    for line in lines
+        if startswith(line, "    ") || startswith(line, "\t")
+            push!(indent_block, line)
+        else
+            if !isempty(indent_block)
+                block_text = join(indent_block, '\n')
+                _classify_block_tokens!(result, block_text, known_names)
+                empty!(indent_block)
+            end
+        end
+    end
+    if !isempty(indent_block)
+        block_text = join(indent_block, '\n')
+        _classify_block_tokens!(result, block_text, known_names)
     end
 
     # Inline backtick spans: `name` — intersect with known_names
     inline_re = r"`([^`\n]+)`"
     for m in eachmatch(inline_re, src)
         content = strip(m.captures[1])
-        # Split by non-identifier chars in case of compound spans
-        for tok in eachmatch(_IDENT_RE, content)
-            name = tok.captures[1]
-            name ∈ known_names && push!(result, name)
-        end
+        _classify_block_tokens!(result, content, known_names)
     end
 
     return result
+end
+
+# Classify identifier tokens from a code block/span as "call" or "var_ref" (R21a).
+# A token followed by `(` is a call; otherwise var_ref.
+function _classify_block_tokens!(
+    result::Set{Tuple{String,String}},
+    text::AbstractString,
+    known_names::Set{String},
+)
+    for m in eachmatch(r"\b([A-Za-z_][A-Za-z0-9_]*)\b(\s*\(?)", text)
+        name = m.captures[1]
+        name ∈ known_names || continue
+        # Check if there's a '(' after the identifier (possibly with whitespace)
+        trail = m.captures[2]
+        kind = endswith(strip(trail), "(") ? "call" : "var_ref"
+        push!(result, (name, kind))
+    end
 end
 
 # Parse a code block string with the given grammar and return

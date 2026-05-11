@@ -135,7 +135,8 @@ Fields:
 - `code::CodeTree`       — the code tree (`db.code`)
 - `symbols::CodeSymbols` — the symbols table (`db.symbols`)
 - `root::String`         — absolute path to the codebase root
-- `config::Any`          — `LanguageConfig` (typed fully in Phase 2)
+- `config::LanguageConfig` — language configuration used for indexing
+- `detail_threshold::Int` — detail-node line threshold used at load time
 - `_buffer::Dict{String,String}` — relative file path → current source content
 - `_hashes::Dict{String,String}` — relative file path → SHA-256 hex at last load/write
 """
@@ -143,7 +144,8 @@ mutable struct CodeTreeDB
     code::CodeTree
     symbols::CodeSymbols
     root::String
-    config::Any
+    config::LanguageConfig
+    detail_threshold::Int
     _buffer::Dict{String,String}
     _hashes::Dict{String,String}
 end
