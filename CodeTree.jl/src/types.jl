@@ -12,6 +12,8 @@ struct SymbolName; val::String; end
 struct NodeKind;   val::String; end
 struct LineNumber; val::Int;    end
 
+const SymbolRow = NamedTuple{(:node_id, :symbol, :kind), Tuple{String,String,String}}
+
 # --- String conversions ---
 Base.string(x::NodeId)     = x.val
 Base.string(x::QName)      = x.val
@@ -59,6 +61,17 @@ _raw(x::NodeKind)   = x.val
 _raw(x::LineNumber) = x.val
 _raw(::Missing)     = missing
 _raw(x)             = x  # passthrough for values already raw
+
+"""Build a child node id by appending `:suffix` to `parent`."""
+function child_node_id(parent::NodeId, suffix::AbstractString)::NodeId
+    return NodeId(parent.val * ":" * String(suffix))
+end
+
+"""Build a child qname by appending `.suffix` to `parent` when non-empty."""
+function child_qname(parent::QName, suffix::AbstractString)::QName
+    suffix_str = String(suffix)
+    return isempty(parent) ? QName(suffix_str) : QName(parent.val * "." * suffix_str)
+end
 
 """
     CodeRow

@@ -70,7 +70,7 @@ function load(
 
     for (ci, child) in enumerate(root_children)
         if child in subdirs
-            mod_qname = QName(codebase_qname.val * "." * basename(child))
+            mod_qname = child_qname(codebase_qname, basename(child))
             push!(all_rows, _struct_row(NodeId(child), codebase_id, 1, ci - 1,
                                         NodeKind("module"), basename(child), mod_qname))
         end
@@ -82,8 +82,7 @@ function load(
     # --- File nodes + their descendants (R6, R8, R10–R16) ---
     for d in sort(collect(keys(dir_to_files)))
         parent_id = isempty(d) ? codebase_id : NodeId(d)
-        parent_qn = isempty(d) ? codebase_qname :
-                    QName(codebase_qname.val * "." * basename(d))
+        parent_qn = isempty(d) ? codebase_qname : child_qname(codebase_qname, basename(d))
         dir_files = sort(dir_to_files[d])
         depth     = isempty(d) ? 1 : 2
 
@@ -162,17 +161,17 @@ function load(
     )
 
     # Group symbol rows by file.
-    sym_rows_by_file = Dict{String, Vector{NamedTuple}}()
+    sym_rows_by_file = Dict{String, Vector{SymbolRow}}()
     for sym_row in eachrow(getfield(db.symbols, :_df))
         f = get(id_to_file, sym_row.node_id, nothing)
         isnothing(f) && continue
-        push!(get!(sym_rows_by_file, f, NamedTuple[]),
+        push!(get!(sym_rows_by_file, f, SymbolRow[]),
               (node_id=sym_row.node_id, symbol=sym_row.symbol, kind=sym_row.kind))
     end
 
     # Save freshly parsed files to cache; update commit_hash for cached files.
     for rel in rel_files
-        sym_rows = get(sym_rows_by_file, rel, NamedTuple[])
+        sym_rows = get(sym_rows_by_file, rel, SymbolRow[])
         if haskey(fresh_file_rows, rel)
             _save_file_rows!(cache_db, rel, hashes[rel], commit_hash,
                              fresh_file_rows[rel], sym_rows)
@@ -216,7 +215,7 @@ end
 # Assign README-based summaries to codebase and module nodes (R19).
 # Reads from the in-memory buffer (R29) instead of disk.
 function _assign_readme_summaries!(df::DataFrame, root_path::String,
-                                    buffer::Dict{String,String})
+                                    buffer::Dict{String,String})::Nothing
     for i in 1:nrow(df)
         kind = df[i, :kind]
         kind ∈ ("codebase", "module") || continue
@@ -236,6 +235,7 @@ function _assign_readme_summaries!(df::DataFrame, root_path::String,
             end
         end
     end
+    return nothing
 end
 
 function _struct_row(

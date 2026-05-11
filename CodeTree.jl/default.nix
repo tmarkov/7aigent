@@ -37,7 +37,7 @@ stdenv.mkDerivation {
     echo 'CodeTree = "342842c8-1a2a-4ebb-ae0f-32d4c88624eb"' \
       >> $out/project/Project.toml
 
-    printf '\n[[deps.CodeTree]]\ndeps = ["DBInterface", "DataFrames", "DataFramesMeta", "SHA", "SQLite", "Tables", "TreeSitter"]\nuuid = "342842c8-1a2a-4ebb-ae0f-32d4c88624eb"\npath = "%s"\n' \
+    printf '\n[[deps.CodeTree]]\ndeps = ["DBInterface", "DataFrames", "DataFramesMeta", "Markdown", "SHA", "SQLite", "Tables", "TreeSitter"]\nuuid = "342842c8-1a2a-4ebb-ae0f-32d4c88624eb"\npath = "%s"\n' \
       "$out/CodeTree" >> $out/project/Manifest.toml
 
     # Initialise a minimal git repo inside the test_codebase fixture so that

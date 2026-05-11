@@ -17,7 +17,7 @@ end
 
 # Helper: build a minimal CodeTree and CodeSymbols from DataFrames for use
 # in tests that don't require a full load() call.
-function minimal_code_df()
+function minimal_code_df()::DataFrame
     DataFrame(
         id            = ["root", "root/file.jl", "root/file.jl:foo",
                          "root/file.jl:foo\$2", "root/file.jl:foo\$3"],
@@ -43,7 +43,7 @@ function minimal_code_df()
     )
 end
 
-function minimal_symbols_df()
+function minimal_symbols_df()::DataFrame
     DataFrame(
         node_id = ["root/file.jl:foo", "root/file.jl:foo", "root/file.jl:foo\$2"],
         symbol  = ["bar", "baz", "bar"],
@@ -198,27 +198,37 @@ end
 
 const TEST_CODEBASE = joinpath(@__DIR__, "test_codebase")
 
-# Helper: copy the test_codebase tree into a fresh temp directory.
-function _tmp_codebase()
-    tmp = mktempdir()
-    for (root, dirs, files) in walkdir(TEST_CODEBASE)
-        rel = relpath(root, TEST_CODEBASE)
-        dst_dir = joinpath(tmp, rel)
+function _copy_fixture_tree!(src_root::String, dst_root::String)::Nothing
+    for (root, _, files) in walkdir(src_root)
+        rel = relpath(root, src_root)
+        dst_dir = joinpath(dst_root, rel)
         isdir(dst_dir) || mkpath(dst_dir)
         for f in files
             cp(joinpath(root, f), joinpath(dst_dir, f))
         end
     end
-    gi_src = joinpath(TEST_CODEBASE, ".gitignore")
-    isfile(gi_src) && cp(gi_src, joinpath(tmp, ".gitignore"), force=true)
-    run(pipeline(Cmd(`git init`; dir=tmp); stdout=devnull, stderr=devnull); wait=true)
-    run(pipeline(Cmd(`git add -A`; dir=tmp); stdout=devnull, stderr=devnull); wait=true)
-    run(pipeline(Cmd(`git -c user.email=x@x -c user.name=x commit -m init`; dir=tmp);
+    gi_src = joinpath(src_root, ".gitignore")
+    isfile(gi_src) && cp(gi_src, joinpath(dst_root, ".gitignore"), force=true)
+    return nothing
+end
+
+function _init_test_repo!(repo_root::String)::Nothing
+    run(pipeline(Cmd(`git init`; dir=repo_root); stdout=devnull, stderr=devnull); wait=true)
+    run(pipeline(Cmd(`git add -A`; dir=repo_root); stdout=devnull, stderr=devnull); wait=true)
+    run(pipeline(Cmd(`git -c user.email=x@x -c user.name=x commit -m init`; dir=repo_root);
                  stdout=devnull, stderr=devnull); wait=true)
+    return nothing
+end
+
+# Helper: copy the test_codebase tree into a fresh temp directory.
+function _tmp_codebase()::String
+    tmp = mktempdir()
+    _copy_fixture_tree!(TEST_CODEBASE, tmp)
+    _init_test_repo!(tmp)
     return tmp
 end
 
-function _fresh_tmp_codebase()
+function _fresh_tmp_codebase()::String
     tmp = _tmp_codebase()
     cache_dir = joinpath(tmp, ".7aigent")
     isdir(cache_dir) && rm(cache_dir; recursive=true, force=true)

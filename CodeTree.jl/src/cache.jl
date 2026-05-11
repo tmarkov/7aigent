@@ -43,7 +43,7 @@ function _open_or_create_cache(root_path::String)::SQLite.DB
     return db
 end
 
-function _init_cache_schema!(db::SQLite.DB)
+function _init_cache_schema!(db::SQLite.DB)::Nothing
     DBInterface.execute(db, """
         CREATE TABLE IF NOT EXISTS cache_meta (
             key   TEXT PRIMARY KEY,
@@ -90,9 +90,10 @@ function _init_cache_schema!(db::SQLite.DB)
         "CREATE INDEX IF NOT EXISTS idx_code_file    ON code(file)")
     DBInterface.execute(db,
         "CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file)")
+    return nothing
 end
 
-function _ensure_cache_compatible!(db::SQLite.DB)
+function _ensure_cache_compatible!(db::SQLite.DB)::Nothing
     DBInterface.execute(db, """
         CREATE TABLE IF NOT EXISTS cache_meta (
             key   TEXT PRIMARY KEY,
@@ -113,23 +114,48 @@ function _ensure_cache_compatible!(db::SQLite.DB)
         DBInterface.execute(db, "ROLLBACK")
         rethrow()
     end
+    return nothing
 end
 
-function _get_cache_meta(db::SQLite.DB, key::String)::Union{String,Nothing}
-    result = DBInterface.execute(db, "SELECT value FROM cache_meta WHERE key = ?", [key])
+function _first_result_row(result)::Union{Nothing,Any}
     rows = collect(result)
     isempty(rows) && return nothing
-    val = Tables.getcolumn(rows[1], :value)
-    (isnothing(val) || ismissing(val)) && return nothing
-    return String(val)
+    return rows[1]
 end
 
-function _set_cache_meta!(db::SQLite.DB, key::String, value::String)
+function _sql_text_or_nothing(value)::Union{String,Nothing}
+    (isnothing(value) || ismissing(value)) && return nothing
+    return String(value)
+end
+
+function _sql_text_or_missing(value)::Union{String,Missing}
+    text = _sql_text_or_nothing(value)
+    isnothing(text) && return missing
+    return text
+end
+
+function _sql_int_or_missing(value)::Union{Int,Missing}
+    (isnothing(value) || ismissing(value)) && return missing
+    return Int(value)
+end
+
+_sql_nullable(value) = ismissing(value) ? nothing : value
+
+function _get_cache_meta(db::SQLite.DB, key::String)::Union{String,Nothing}
+    row = _first_result_row(DBInterface.execute(
+        db, "SELECT value FROM cache_meta WHERE key = ?", [key],
+    ))
+    isnothing(row) && return nothing
+    return _sql_text_or_nothing(Tables.getcolumn(row, :value))
+end
+
+function _set_cache_meta!(db::SQLite.DB, key::String, value::String)::Nothing
     DBInterface.execute(
         db,
         "INSERT OR REPLACE INTO cache_meta (key, value) VALUES (?, ?)",
         [key, value],
     )
+    return nothing
 end
 
 # ---------------------------------------------------------------------------
@@ -142,12 +168,11 @@ end
 Return the stored SHA-256 hash for `path`, or `nothing` if not cached.
 """
 function _get_cached_hash(db::SQLite.DB, path::String)::Union{String,Nothing}
-    result = DBInterface.execute(db, "SELECT hash FROM files WHERE path = ?", [path])
-    rows = collect(result)
-    isempty(rows) && return nothing
-    val = Tables.getcolumn(rows[1], :hash)
-    (isnothing(val) || ismissing(val)) && return nothing
-    return String(val)
+    row = _first_result_row(DBInterface.execute(
+        db, "SELECT hash FROM files WHERE path = ?", [path],
+    ))
+    isnothing(row) && return nothing
+    return _sql_text_or_nothing(Tables.getcolumn(row, :hash))
 end
 
 """
@@ -170,7 +195,7 @@ file is not in the cache.
 function _load_file_rows_from_cache(
     db::SQLite.DB,
     file_rel::String,
-)::Union{Tuple{Vector{CodeRow}, Vector{NamedTuple}}, Nothing}
+)::Union{Tuple{Vector{CodeRow}, Vector{SymbolRow}}, Nothing}
 
     code_result = DBInterface.execute(db, """
         SELECT id, parent, depth, sibling_order, kind, name, qname, language,
@@ -181,26 +206,23 @@ function _load_file_rows_from_cache(
 
     code_rows = CodeRow[]
     for r in code_result
-        g(col) = Tables.getcolumn(r, col)
-        _s(x)  = (isnothing(x) || ismissing(x)) ? missing : String(x)
-        _i(x)  = (isnothing(x) || ismissing(x)) ? missing : Int(x)
         push!(code_rows, CodeRow(
-            String(g(:id)),
-            _s(g(:parent)),
-            Int(g(:depth)),
-            Int(g(:sibling_order)),
-            String(g(:kind)),
-            String(g(:name)),
-            _s(g(:qname)),
-            _s(g(:language)),
-            _s(g(:summary)),
-            _s(g(:source)),
-            _s(g(:signature)),
+            String(Tables.getcolumn(r, :id)),
+            _sql_text_or_missing(Tables.getcolumn(r, :parent)),
+            Int(Tables.getcolumn(r, :depth)),
+            Int(Tables.getcolumn(r, :sibling_order)),
+            String(Tables.getcolumn(r, :kind)),
+            String(Tables.getcolumn(r, :name)),
+            _sql_text_or_missing(Tables.getcolumn(r, :qname)),
+            _sql_text_or_missing(Tables.getcolumn(r, :language)),
+            _sql_text_or_missing(Tables.getcolumn(r, :summary)),
+            _sql_text_or_missing(Tables.getcolumn(r, :source)),
+            _sql_text_or_missing(Tables.getcolumn(r, :signature)),
             file_rel,
-            _i(g(:line_start)),
-            _i(g(:line_end)),
-            _i(g(:n_lines)),
-            Int(g(:n_children)),
+            _sql_int_or_missing(Tables.getcolumn(r, :line_start)),
+            _sql_int_or_missing(Tables.getcolumn(r, :line_end)),
+            _sql_int_or_missing(Tables.getcolumn(r, :n_lines)),
+            Int(Tables.getcolumn(r, :n_children)),
         ))
     end
     isempty(code_rows) && return nothing
@@ -211,7 +233,7 @@ function _load_file_rows_from_cache(
     # (skipping global re-extraction for cached files) is straightforward.
     sym_result = DBInterface.execute(db,
         "SELECT node_id, symbol, kind FROM symbols WHERE file = ?", [file_rel])
-    sym_rows = NamedTuple{(:node_id, :symbol, :kind), Tuple{String,String,String}}[]
+    sym_rows = SymbolRow[]
     for r in sym_result
         push!(sym_rows, (
             node_id = String(Tables.getcolumn(r, :node_id)),
@@ -237,11 +259,12 @@ function _upsert_file!(
     path::String,
     hash::String,
     commit_hash::Union{String,Missing},
-)
-    ch = ismissing(commit_hash) ? nothing : commit_hash
+)::Nothing
+    ch = _sql_nullable(commit_hash)
     DBInterface.execute(db,
         "INSERT OR REPLACE INTO files (path, hash, commit_hash) VALUES (?, ?, ?)",
         [path, hash, ch])
+    return nothing
 end
 
 """
@@ -255,15 +278,13 @@ function _save_file_rows!(
     hash::String,
     commit_hash::Union{String,Missing},
     code_rows::Vector{CodeRow},
-    sym_rows,
-)
+    sym_rows::Vector{SymbolRow},
+)::Nothing
     DBInterface.execute(db, "BEGIN")
     try
-        DBInterface.execute(db, "DELETE FROM code    WHERE file = ?", [file_rel])
-        DBInterface.execute(db, "DELETE FROM symbols WHERE file = ?", [file_rel])
+        _delete_cached_file_rows!(db, file_rel)
         _upsert_file!(db, file_rel, hash, commit_hash)
 
-        _m(x) = ismissing(x) ? nothing : x
         for r in code_rows
             DBInterface.execute(db, """
                 INSERT INTO code
@@ -274,19 +295,19 @@ function _save_file_rows!(
             """, [
                 file_rel,
                 r.id,
-                _m(r.parent),
+                _sql_nullable(r.parent),
                 r.depth,
                 r.sibling_order,
                 r.kind,
                 r.name,
-                _m(r.qname),
-                _m(r.language),
-                _m(r.summary),
-                _m(r.source),
-                _m(r.signature),
-                _m(r.line_start),
-                _m(r.line_end),
-                _m(r.n_lines),
+                _sql_nullable(r.qname),
+                _sql_nullable(r.language),
+                _sql_nullable(r.summary),
+                _sql_nullable(r.source),
+                _sql_nullable(r.signature),
+                _sql_nullable(r.line_start),
+                _sql_nullable(r.line_end),
+                _sql_nullable(r.n_lines),
                 r.n_children,
             ])
         end
@@ -301,6 +322,13 @@ function _save_file_rows!(
         DBInterface.execute(db, "ROLLBACK")
         rethrow()
     end
+    return nothing
+end
+
+function _delete_cached_file_rows!(db::SQLite.DB, file_rel::String)::Nothing
+    DBInterface.execute(db, "DELETE FROM code    WHERE file = ?", [file_rel])
+    DBInterface.execute(db, "DELETE FROM symbols WHERE file = ?", [file_rel])
+    return nothing
 end
 
 """
@@ -308,10 +336,10 @@ end
 
 Remove all cache entries for `file_rel`.
 """
-function _delete_file_from_cache!(db::SQLite.DB, file_rel::String)
-    DBInterface.execute(db, "DELETE FROM code    WHERE file = ?", [file_rel])
-    DBInterface.execute(db, "DELETE FROM symbols WHERE file = ?", [file_rel])
+function _delete_file_from_cache!(db::SQLite.DB, file_rel::String)::Nothing
+    _delete_cached_file_rows!(db, file_rel)
     DBInterface.execute(db, "DELETE FROM files   WHERE path  = ?", [file_rel])
+    return nothing
 end
 
 # ---------------------------------------------------------------------------

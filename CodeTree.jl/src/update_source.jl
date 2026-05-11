@@ -66,20 +66,8 @@ function update_source(
     old_buf      = db._buffer[file_rel]
     old_hash     = db._hashes[file_rel]
 
-    # --- R33: update db.code ---
-    file_mask        = [isequal(f, file_rel) for f in code_df.file]
-    old_file_node_ids = Set(code_df.id[file_mask])
-    deleteat!(code_df, findall(file_mask))
-    append!(code_df, _rows_to_dataframe(new_code_rows))
-
-    # --- R33a: replace symbol rows for this file ---
-    sym_mask = [s in old_file_node_ids for s in syms_df.node_id]
-    deleteat!(syms_df, findall(sym_mask))
-    new_syms = DataFrame(node_id=String[], symbol=String[], kind=String[])
-    for s in new_sym_rows
-        push!(new_syms, (node_id=s.node_id, symbol=s.symbol, kind=s.kind))
-    end
-    append!(syms_df, new_syms)
+    # --- R33 + R33a: replace this file's code and symbol rows in memory ---
+    _replace_file_rows!(code_df, syms_df, file_rel_typed, new_code_rows, new_sym_rows)
 
     # --- R34: write to disk and update cache ---
     new_hash = bytes2hex(SHA.sha256(new_file_src))
@@ -158,16 +146,16 @@ function _extract_symbols_for_file(
     file_rel::FilePath,
     new_src::String,
     new_code_rows::Vector{CodeRow},
-)::Vector{NamedTuple}
+)::Vector{SymbolRow}
     lang_val = language_for_file(db.config, file_rel.val)
-    ismissing(lang_val) && return NamedTuple[]
+    ismissing(lang_val) && return SymbolRow[]
 
     lang_entry = get(db.config.languages, lang_val, nothing)
-    isnothing(lang_entry) && return NamedTuple[]
+    isnothing(lang_entry) && return SymbolRow[]
 
     new_code_df = _rows_to_dataframe(new_code_rows)
     file_leaves = filter(r -> r.n_children == 0, new_code_df)
-    isempty(file_leaves) && return NamedTuple[]
+    isempty(file_leaves) && return SymbolRow[]
 
     # R21c: known_names from non-Markdown code node names in the current db.
     code_df = getfield(db.code, :_df)
@@ -175,11 +163,11 @@ function _extract_symbols_for_file(
     known_names = Set{String}(skipmissing(non_md.name))
 
     raw = _extract_file_symbols(new_src, lang_val, lang_entry, file_leaves,
-                                 new_code_df, known_names, db.config)
+                                  new_code_df, known_names, db.config)
 
     # Deduplicate before returning.
     seen   = Set{Tuple{String,String,String}}()
-    result = NamedTuple{(:node_id, :symbol, :kind), Tuple{String,String,String}}[]
+    result = SymbolRow[]
     for r in raw
         key = (r.node_id, r.symbol, r.kind)
         key ∈ seen && continue
@@ -189,14 +177,14 @@ function _extract_symbols_for_file(
     return result
 end
 
-function _replace_file_in_db!(db::CodeTreeDB, file_rel::FilePath, new_src::String)
-    code_df = getfield(db.code,    :_df)
-    syms_df = getfield(db.symbols, :_df)
-
-    new_code_rows = _build_file_rows_for_update(db, file_rel, new_src)
-    new_sym_rows  = _extract_symbols_for_file(db, file_rel, new_src, new_code_rows)
-
-    file_mask         = [isequal(f, file_rel.val) for f in code_df.file]
+function _replace_file_rows!(
+    code_df::DataFrame,
+    syms_df::DataFrame,
+    file_rel::FilePath,
+    new_code_rows::Vector{CodeRow},
+    new_sym_rows::Vector{SymbolRow},
+)::Nothing
+    file_mask = [isequal(f, file_rel.val) for f in code_df.file]
     old_file_node_ids = Set(code_df.id[file_mask])
 
     deleteat!(code_df, findall(file_mask))
@@ -207,10 +195,22 @@ function _replace_file_in_db!(db::CodeTreeDB, file_rel::FilePath, new_src::Strin
     for s in new_sym_rows
         push!(syms_df, (node_id=s.node_id, symbol=s.symbol, kind=s.kind))
     end
+    return nothing
+end
+
+function _replace_file_in_db!(db::CodeTreeDB, file_rel::FilePath, new_src::String)::Nothing
+    code_df = getfield(db.code,    :_df)
+    syms_df = getfield(db.symbols, :_df)
+
+    new_code_rows = _build_file_rows_for_update(db, file_rel, new_src)
+    new_sym_rows  = _extract_symbols_for_file(db, file_rel, new_src, new_code_rows)
+
+    _replace_file_rows!(code_df, syms_df, file_rel, new_code_rows, new_sym_rows)
 
     new_hash = bytes2hex(SHA.sha256(new_src))
     db._buffer[file_rel.val] = new_src
     db._hashes[file_rel.val] = new_hash
+    return nothing
 end
 
 # Write updated cache entries for a single file after a successful update_source.
@@ -220,8 +220,8 @@ function _update_cache_for_file!(
     new_file_src::String,
     new_hash::String,
     new_code_rows::Vector{CodeRow},
-    new_sym_rows,
-)
+    new_sym_rows::Vector{SymbolRow},
+)::Nothing
     cache_db = _open_or_create_cache(db.root)
     commit_hash = _current_commit_hash(db.root)
     try
@@ -230,4 +230,5 @@ function _update_cache_for_file!(
     finally
         close(cache_db)
     end
+    return nothing
 end

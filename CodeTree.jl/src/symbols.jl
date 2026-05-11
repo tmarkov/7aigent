@@ -14,7 +14,7 @@ const _IDENT_RE = r"\b([A-Za-z_][A-Za-z0-9_]*)\b"
 Populate `db.symbols` with call and var_ref rows for every leaf node.
 Modifies the underlying DataFrame in-place; safe to call once after `load`.
 """
-function extract_symbols!(db::CodeTreeDB)
+function extract_symbols!(db::CodeTreeDB)::Nothing
     code_df  = getfield(db.code,    :_df)
     syms_df  = getfield(db.symbols, :_df)
     buffer   = db._buffer
@@ -23,7 +23,7 @@ function extract_symbols!(db::CodeTreeDB)
     # R21c: known_names = name values from non-Markdown code nodes.
     non_md_names = filter(r -> !ismissing(r.language) && r.language != "markdown", code_df)
     known_names = Set{String}(skipmissing(non_md_names.name))
-    new_rows = NamedTuple{(:node_id, :symbol, :kind), Tuple{String,String,String}}[]
+    new_rows = SymbolRow[]
 
     # R21b: process non-Markdown files first, then Markdown, so known_names
     # (built from code_df above) is available for Markdown extraction.
@@ -58,6 +58,7 @@ function extract_symbols!(db::CodeTreeDB)
         push!(seen, key)
         push!(syms_df, r)
     end
+    return nothing
 end
 
 # ---------------------------------------------------------------------------
@@ -88,8 +89,8 @@ function _extract_file_symbols(
     code_df::AbstractDataFrame,
     known_names::Set{String},
     config::LanguageConfig,
-)::Vector{NamedTuple{(:node_id, :symbol, :kind), Tuple{String,String,String}}}
-    result = NamedTuple{(:node_id, :symbol, :kind), Tuple{String,String,String}}[]
+)::Vector{SymbolRow}
+    result = SymbolRow[]
 
     if lang_val == "markdown"
         for lrow in eachrow(file_leaves)
@@ -249,7 +250,7 @@ function _extract_markdown_symbols(
             if !isnothing(block_lang)
                 block_entry = get(config.languages, block_lang, nothing)
                 if !isnothing(block_entry) && !isnothing(block_entry.grammar_symbol)
-                    syms = _extract_tagged_block_symbols(block, block_lang, block_entry)
+                    syms = _extract_tagged_block_symbols(block, block_entry)
                     for sym in syms
                         push!(result, sym)
                     end
@@ -302,7 +303,7 @@ function _classify_block_tokens!(
     result::Set{Tuple{String,String}},
     text::AbstractString,
     known_names::Set{String},
-)
+)::Nothing
     for m in eachmatch(r"\b([A-Za-z_][A-Za-z0-9_!?.]*)\b(\s*\(?)", text)
         name = m.captures[1]
         name ∈ known_names || continue
@@ -311,13 +312,13 @@ function _classify_block_tokens!(
         kind = endswith(strip(trail), "(") ? "call" : "var_ref"
         push!(result, (name, kind))
     end
+    return nothing
 end
 
 # Parse a tagged code block using the language config's call and definition
 # patterns, producing ("name", "call"|"var_ref") pairs (R21a).
 function _extract_tagged_block_symbols(
     block::String,
-    block_lang::String,
     block_entry::LanguageEntry,
 )::Set{Tuple{String,String}}
     result = Set{Tuple{String,String}}()

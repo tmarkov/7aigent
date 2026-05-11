@@ -322,12 +322,8 @@ function _build_level(
     # Build rows and recurse
     all_rows = CodeRow[]
     for (i, sp) in enumerate(result_spans)
-        node_id = NodeId(parent_id.val * ":" * id_suffixes[i])
-        node_qname = if isempty(parent_qname)
-            QName(qname_suffixes[i])
-        else
-            QName(parent_qname.val * "." * qname_suffixes[i])
-        end
+        node_id = child_node_id(parent_id, id_suffixes[i])
+        node_qname = child_qname(parent_qname, qname_suffixes[i])
         span_src = join(src_lines[max(1, sp.ls):min(length(src_lines), sp.le)], '\n')
 
         # Extract signature for declarative nodes (R1: declaration line only).
@@ -405,8 +401,7 @@ function _build_markdown_rows(
     n_lines = max(length(src_lines), 1)
 
     file_name = basename(file_path.val)
-    file_qname = isempty(parent_qname) ? QName(file_name) :
-                 QName(parent_qname.val * "." * file_name)
+    file_qname = child_qname(parent_qname, file_name)
 
     file_row = CodeRow(
         file_id.val,
@@ -484,11 +479,10 @@ function _build_markdown_rows(
 
     child_rows = CodeRow[]
     for (i, sp) in enumerate(spans)
-        node_qname = isempty(file_qname) ? QName(qname_suffixes[i]) :
-                     QName(file_qname.val * "." * qname_suffixes[i])
+        node_qname = child_qname(file_qname, qname_suffixes[i])
         span_src = join(src_lines[max(1, sp.ls):min(length(src_lines), sp.le)], '\n')
         push!(child_rows, CodeRow(
-            file_id.val * ":" * id_suffixes[i],
+            child_node_id(file_id, id_suffixes[i]).val,
             file_id.val,
             depth + 1,
             i - 1,
@@ -543,8 +537,7 @@ function build_file_rows(
     n_lines == 0 && (n_lines = 1)
 
     file_name = basename(file_path.val)
-    file_qname = isempty(parent_qname) ? QName(file_name) :
-                 QName(parent_qname.val * "." * file_name)
+    file_qname = child_qname(parent_qname, file_name)
 
     file_row = CodeRow(
         file_id.val,
