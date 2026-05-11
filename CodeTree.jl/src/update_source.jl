@@ -151,8 +151,8 @@ function _build_file_rows_for_update(
 end
 
 # Extract symbol rows for a single file given fresh code rows.
-# For non-Markdown: mirrors the per-file logic inside extract_symbols! (Pass 1).
-# For Markdown: uses _extract_markdown_symbols with known_names from db (R21a, R21c).
+# Delegates to _extract_file_symbols (symbols.jl) for the per-file logic.
+# known_names is built from the existing db.code (R21c).
 function _extract_symbols_for_file(
     db::CodeTreeDB,
     file_rel::FilePath,
@@ -162,71 +162,29 @@ function _extract_symbols_for_file(
     lang_val = language_for_file(db.config, file_rel.val)
     ismissing(lang_val) && return NamedTuple[]
 
+    lang_entry = get(db.config.languages, lang_val, nothing)
+    isnothing(lang_entry) && return NamedTuple[]
+
     new_code_df = _rows_to_dataframe(new_code_rows)
     file_leaves = filter(r -> r.n_children == 0, new_code_df)
     isempty(file_leaves) && return NamedTuple[]
 
-    result = NamedTuple{(:node_id, :symbol, :kind), Tuple{String,String,String}}[]
+    # R21c: known_names from non-Markdown code node names in the current db.
+    code_df = getfield(db.code, :_df)
+    non_md = filter(r -> !ismissing(r.language) && r.language != "markdown", code_df)
+    known_names = Set{String}(skipmissing(non_md.name))
+
+    raw = _extract_file_symbols(new_src, lang_val, lang_entry, file_leaves,
+                                 new_code_df, known_names, db.config)
+
+    # Deduplicate before returning.
     seen   = Set{Tuple{String,String,String}}()
-
-    if lang_val == "markdown"
-        # R21c: known_names from non-Markdown code node names.
-        code_df = getfield(db.code, :_df)
-        non_md = filter(r -> !ismissing(r.language) && r.language != "markdown", code_df)
-        known_names = Set{String}(skipmissing(non_md.name))
-        md_syms = _extract_markdown_symbols(new_src, known_names, db.config)
-        for lrow in eachrow(file_leaves)
-            nid = lrow.id
-            for (name, kind) in md_syms
-                key = (nid, name, kind)
-                key ∈ seen && continue
-                push!(seen, key)
-                push!(result, (node_id=nid, symbol=name, kind=kind))
-            end
-        end
-        return result
-    end
-
-    lang = lang_val
-    lang_entry = get(db.config.languages, lang, nothing)
-    isnothing(lang_entry) && return NamedTuple[]
-    isnothing(lang_entry.grammar_symbol) && return NamedTuple[]
-
-    tree = parse_source(new_src, lang_entry.grammar_symbol)
-    isnothing(tree) && return NamedTuple[]
-
-    # GC.@preserve keeps tree alive — TreeSitter 0.1.0 Node doesn't hold a
-    # reference to its Tree, so without this the GC could free the tree while
-    # root_node (a raw pointer into tree memory) is still in use.
-    call_caps, def_caps, ref_caps = GC.@preserve tree begin
-        root_node = TreeSitter.root(tree)
-        (
-            _run_queries(lang_entry.call_patterns,       new_src, root_node, lang_entry.grammar_symbol),
-            _run_queries(lang_entry.definition_patterns, new_src, root_node, lang_entry.grammar_symbol),
-            _run_ident_query(new_src, root_node, lang_entry.grammar_symbol),
-        )
-    end
-
-    for lrow in eachrow(file_leaves)
-        ismissing(lrow.line_start) && continue
-        ls0 = lrow.line_start - 1
-        le0 = lrow.line_end   - 1
-        scope_ls0, scope_le0 = _enclosing_scope_range(lrow, new_code_df)
-
-        calls    = Set{String}(_caps_in(call_caps, ls0, le0))
-        loc_defs = Set{String}(_caps_in(def_caps,  scope_ls0, scope_le0))
-        all_refs = Set{String}(_caps_in(ref_caps,  ls0, le0))
-        var_refs = setdiff(all_refs, loc_defs, calls)
-
-        nid = lrow.id
-        for (names, kind) in ((calls, "call"), (var_refs, "var_ref"))
-            for name in names
-                key = (nid, name, kind)
-                key ∈ seen && continue
-                push!(seen, key)
-                push!(result, (node_id=nid, symbol=name, kind=kind))
-            end
-        end
+    result = NamedTuple{(:node_id, :symbol, :kind), Tuple{String,String,String}}[]
+    for r in raw
+        key = (r.node_id, r.symbol, r.kind)
+        key ∈ seen && continue
+        push!(seen, key)
+        push!(result, r)
     end
     return result
 end

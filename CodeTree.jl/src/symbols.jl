@@ -25,88 +25,28 @@ function extract_symbols!(db::CodeTreeDB)
     known_names = Set{String}(skipmissing(non_md_names.name))
     new_rows = NamedTuple{(:node_id, :symbol, :kind), Tuple{String,String,String}}[]
 
-    # -------------------------------------------------------------------------
-    # Pass 1 — non-Markdown code files (R21b: index before Markdown)
-    # -------------------------------------------------------------------------
-    for file_rel in sort(unique(skipmissing(code_df.file)))
-        # Determine language
-        lang_val = language_for_file(config, file_rel)
-        ismissing(lang_val) && continue
-        lang = lang_val
-        lang == "markdown" && continue
+    # R21b: process non-Markdown files first, then Markdown, so known_names
+    # (built from code_df above) is available for Markdown extraction.
+    for lang_first in (false, true)   # false = non-md, true = md
+        for file_rel in sort(unique(skipmissing(code_df.file)))
+            lang_val = language_for_file(config, file_rel)
+            ismissing(lang_val) && continue
+            is_md = (lang_val == "markdown")
+            is_md == lang_first || continue
 
-        lang_entry = get(config.languages, lang, nothing)
-        isnothing(lang_entry) && continue
-        isnothing(lang_entry.grammar_symbol) && continue
+            lang_entry = get(config.languages, lang_val, nothing)
+            isnothing(lang_entry) && continue
 
-        src  = get(buffer, file_rel, "")
-        tree = parse_source(src, lang_entry.grammar_symbol)
-        isnothing(tree) && continue
-
-        # leaf nodes for this file
-        file_leaves = filter(
-            r -> isequal(r.file, file_rel) && r.n_children == 0,
-            code_df,
-        )
-        isempty(file_leaves) && continue
-
-        root_node = TreeSitter.root(tree)
-
-        # Pre-run all queries once per file; bucket captures by row range.
-        # GC.@preserve keeps tree alive — 0.1.0 Node doesn't hold a tree ref.
-        call_caps, def_caps, ref_caps = GC.@preserve tree begin
-            (
-                _run_queries(lang_entry.call_patterns,       src, root_node, lang_entry.grammar_symbol),
-                _run_queries(lang_entry.definition_patterns, src, root_node, lang_entry.grammar_symbol),
-                _run_ident_query(src, root_node, lang_entry.grammar_symbol),
+            src = get(buffer, file_rel, "")
+            file_leaves = filter(
+                r -> isequal(r.file, file_rel) && r.n_children == 0,
+                code_df,
             )
-        end
+            isempty(file_leaves) && continue
 
-        for lrow in eachrow(file_leaves)
-            ls0 = lrow.line_start - 1  # 0-indexed
-            le0 = lrow.line_end   - 1
-
-            # Use enclosing function scope for loc_defs so that names defined
-            # in sibling chunks of the same function are still excluded (R21).
-            scope_ls0, scope_le0 = _enclosing_scope_range(lrow, code_df)
-
-            calls    = Set{String}(_caps_in(call_caps, ls0, le0))
-            loc_defs = Set{String}(_caps_in(def_caps,  scope_ls0, scope_le0))
-            all_refs = Set{String}(_caps_in(ref_caps,  ls0, le0))
-            var_refs = setdiff(all_refs, loc_defs, calls)
-
-            nid = lrow.id
-            for name in calls
-                push!(new_rows, (node_id=nid, symbol=name, kind="call"))
-            end
-            for name in var_refs
-                push!(new_rows, (node_id=nid, symbol=name, kind="var_ref"))
-            end
-        end
-    end
-
-    # -------------------------------------------------------------------------
-    # Pass 2 — Markdown files (R21a, R21c)
-    # -------------------------------------------------------------------------
-    for file_rel in sort(unique(skipmissing(code_df.file)))
-        lang_val = language_for_file(config, file_rel)
-        ismissing(lang_val) && continue
-        lang_val == "markdown" || continue
-
-        src = get(buffer, file_rel, "")
-        md_leaves = filter(
-            r -> isequal(r.file, file_rel) && r.n_children == 0,
-            code_df,
-        )
-        isempty(md_leaves) && continue
-
-        # For Markdown there is typically one leaf (the whole file).
-        for lrow in eachrow(md_leaves)
-            md_syms = _extract_markdown_symbols(src, known_names, config)
-            nid = lrow.id
-            for (name, kind) in md_syms
-                push!(new_rows, (node_id=nid, symbol=name, kind=kind))
-            end
+            append!(new_rows,
+                _extract_file_symbols(src, lang_val, lang_entry, file_leaves,
+                                      code_df, known_names, config))
         end
     end
 
@@ -118,6 +58,90 @@ function extract_symbols!(db::CodeTreeDB)
         push!(seen, key)
         push!(syms_df, r)
     end
+end
+
+# ---------------------------------------------------------------------------
+# Shared per-file extraction core
+# ---------------------------------------------------------------------------
+
+"""
+    _extract_file_symbols(src, lang_val, lang_entry, file_leaves, code_df,
+                          known_names, config)
+    -> Vector{NamedTuple{(:node_id, :symbol, :kind)}}
+
+Core per-file symbol extraction used by both `extract_symbols!` (global pass)
+and `_extract_symbols_for_file` (single-file update after `update_source`).
+
+- For non-Markdown: parses `src` with the language grammar, runs call/def/ref
+  queries, and classifies captures in each leaf's line range as `call` or
+  `var_ref`.
+- For Markdown: extracts symbols from fenced/indented blocks and inline spans,
+  intersecting untagged content with `known_names` (R21a, R21c).
+
+Returns raw (possibly duplicate) entries; callers deduplicate if needed.
+"""
+function _extract_file_symbols(
+    src::String,
+    lang_val::String,
+    lang_entry::LanguageEntry,
+    file_leaves::AbstractDataFrame,
+    code_df::AbstractDataFrame,
+    known_names::Set{String},
+    config::LanguageConfig,
+)::Vector{NamedTuple{(:node_id, :symbol, :kind), Tuple{String,String,String}}}
+    result = NamedTuple{(:node_id, :symbol, :kind), Tuple{String,String,String}}[]
+
+    if lang_val == "markdown"
+        md_syms = _extract_markdown_symbols(src, known_names, config)
+        for lrow in eachrow(file_leaves)
+            nid = lrow.id
+            for (name, kind) in md_syms
+                push!(result, (node_id=nid, symbol=name, kind=kind))
+            end
+        end
+        return result
+    end
+
+    # Non-Markdown: tree-sitter query extraction
+    isnothing(lang_entry.grammar_symbol) && return result
+    tree = parse_source(src, lang_entry.grammar_symbol)
+    isnothing(tree) && return result
+
+    # GC.@preserve keeps tree alive — TreeSitter 0.1.0 Node doesn't hold a
+    # reference to its Tree, so without this the GC could free the tree while
+    # root_node (a raw pointer into tree memory) is still in use.
+    call_caps, def_caps, ref_caps = GC.@preserve tree begin
+        root_node = TreeSitter.root(tree)
+        (
+            _run_queries(lang_entry.call_patterns,       src, root_node, lang_entry.grammar_symbol),
+            _run_queries(lang_entry.definition_patterns, src, root_node, lang_entry.grammar_symbol),
+            _run_ident_query(src, root_node, lang_entry.grammar_symbol),
+        )
+    end
+
+    for lrow in eachrow(file_leaves)
+        ismissing(lrow.line_start) && continue
+        ls0 = lrow.line_start - 1  # 0-indexed
+        le0 = lrow.line_end   - 1
+
+        # Use enclosing function scope for loc_defs so that names defined
+        # in sibling chunks of the same function are still excluded (R21).
+        scope_ls0, scope_le0 = _enclosing_scope_range(lrow, code_df)
+
+        calls    = Set{String}(_caps_in(call_caps, ls0, le0))
+        loc_defs = Set{String}(_caps_in(def_caps,  scope_ls0, scope_le0))
+        all_refs = Set{String}(_caps_in(ref_caps,  ls0, le0))
+        var_refs = setdiff(all_refs, loc_defs, calls)
+
+        nid = lrow.id
+        for (names, kind) in ((calls, "call"), (var_refs, "var_ref"))
+            for name in names
+                push!(result, (node_id=nid, symbol=name, kind=kind))
+            end
+        end
+    end
+
+    return result
 end
 
 # ---------------------------------------------------------------------------
