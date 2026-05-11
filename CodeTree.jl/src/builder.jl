@@ -106,9 +106,9 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    _build_level(...) -> Vector{Dict{Symbol,Any}}
+    _build_level(...) -> Vector{CodeRow}
 
-Build db.code row dicts for all visible descendants of `parent_ts_node`,
+Build db.code rows for all visible descendants of `parent_ts_node`,
 applying R10–R16 (landmark/detail filtering, spanning, comment absorption,
 chunk gap-filling, sibling ordering).
 
@@ -128,10 +128,10 @@ function _build_level(
     parent_ls::Int,
     parent_le::Int,
     parent_qname::QName=QName(""),
-)::Vector{Dict{Symbol,Any}}
+)::Vector{CodeRow}
 
     raw = collect(TreeSitter.named_children(parent_ts_node))
-    isempty(raw) && return Dict{Symbol,Any}[]
+    isempty(raw) && return CodeRow[]
 
     parent_n_lines = parent_le - parent_ls + 1
 
@@ -158,7 +158,7 @@ function _build_level(
     end
 
     # Leaf: no visible children → caller keeps this node as a leaf
-    isempty(visible_indices) && return Dict{Symbol,Any}[]
+    isempty(visible_indices) && return CodeRow[]
 
     # Apply R14b: absorb immediately preceding adjacent comment blocks.
     # A comment is "adjacent" when its end_row + 1 == next_start_row (0-indexed).
@@ -311,7 +311,7 @@ function _build_level(
         _fill_gap(prev_le + 1, parent_le)
     end
 
-    isempty(result_spans) && return Dict{Symbol,Any}[]
+    isempty(result_spans) && return CodeRow[]
 
     # Assign ordinal-suffix ids (R1) and sibling_order (R16)
     span_names = [sp.name for sp in result_spans]
@@ -320,7 +320,7 @@ function _build_level(
     qname_suffixes = assign_ordinal_ids(span_names, span_starts)
 
     # Build rows and recurse
-    all_rows = Dict{Symbol,Any}[]
+    all_rows = CodeRow[]
     for (i, sp) in enumerate(result_spans)
         node_id = NodeId(parent_id.val * ":" * id_suffixes[i])
         node_qname = if isempty(parent_qname)
@@ -331,7 +331,7 @@ function _build_level(
         span_src = join(src_lines[max(1, sp.ls):min(length(src_lines), sp.le)], '\n')
 
         # Extract signature for declarative nodes (R1: declaration line only).
-        sig = missing
+        sig::Union{String,Missing} = missing
         if sp.kind != "chunk" && !isnothing(sp.ts_node)
             ts_start_row = Int(TreeSitter.API.ts_node_start_point(sp.ts_node.ptr).row)
             decl_line_idx = ts_start_row + 1  # 1-indexed
@@ -340,23 +340,23 @@ function _build_level(
             end
         end
 
-        row = Dict{Symbol,Any}(
-            :id            => node_id.val,
-            :parent        => parent_id.val,
-            :depth         => depth,
-            :sibling_order => i - 1,
-            :kind          => sp.kind,
-            :name          => sp.name,
-            :qname         => node_qname.val,
-            :language      => language,
-            :summary       => _extract_summary(sp.summary_src),
-            :source        => span_src,
-            :signature     => sig,
-            :file          => file_path.val,
-            :line_start    => sp.ls,
-            :line_end      => sp.le,
-            :n_lines       => sp.le - sp.ls + 1,
-            :n_children    => 0,
+        row = CodeRow(
+            node_id.val,
+            parent_id.val,
+            depth,
+            i - 1,
+            sp.kind,
+            sp.name,
+            node_qname.val,
+            language,
+            _extract_summary(sp.summary_src),
+            span_src,
+            sig,
+            file_path.val,
+            sp.ls,
+            sp.le,
+            sp.le - sp.ls + 1,
+            0,  # n_children filled in below
         )
 
         if sp.kind != "chunk" && !isnothing(sp.ts_node)
@@ -365,10 +365,10 @@ function _build_level(
                 body, src, src_lines, entry, language, config, detail_threshold,
                 node_id, file_path, depth + 1, sp.ls, sp.le, node_qname,
             )
-            n_direct = count(r -> r[:parent] == node_id.val, child_rows)
-            row[:n_children] = n_direct
+            n_direct = count(r -> r.parent == node_id.val, child_rows)
+            row.n_children = n_direct
             if n_direct > 0
-                row[:source] = missing  # R1: source only on leaves
+                row.source = missing  # R1: source only on leaves
             end
             push!(all_rows, row)
             append!(all_rows, child_rows)
@@ -386,9 +386,9 @@ end
 
 """
     build_file_rows(src, language, config, detail_threshold,
-                    file_id, file_path, parent_id, depth) -> Vector{Dict{Symbol,Any}}
+                    file_id, file_path, parent_id, depth) -> Vector{CodeRow}
 
-Build all db.code row dicts for a single file, including the file node itself
+Build all db.code rows for a single file, including the file node itself
 and all its descendant code nodes.
 """
 function build_file_rows(
@@ -401,7 +401,7 @@ function build_file_rows(
     parent_id::NodeId,
     depth::Int,
     parent_qname::QName=QName(""),
-)::Vector{Dict{Symbol,Any}}
+)::Vector{CodeRow}
 
     src_lines = split(src, '\n')
     # Strip the trailing empty element that split produces when source ends with \n.
@@ -415,35 +415,35 @@ function build_file_rows(
     file_qname = isempty(parent_qname) ? QName(file_name) :
                  QName(parent_qname.val * "." * file_name)
 
-    file_row = Dict{Symbol,Any}(
-        :id            => file_id.val,
-        :parent        => parent_id.val,
-        :depth         => depth,
-        :sibling_order => 0,
-        :kind          => "file",
-        :name          => file_name,
-        :qname         => file_qname.val,
-        :language      => language,
-        :summary       => missing,
-        :source        => missing,
-        :signature     => missing,
-        :file          => file_path.val,
-        :line_start    => 1,
-        :line_end      => n_lines,
-        :n_lines       => n_lines,
-        :n_children    => 0,
+    file_row = CodeRow(
+        file_id.val,
+        parent_id.val,
+        depth,
+        0,        # sibling_order (set by caller)
+        "file",
+        file_name,
+        file_qname.val,
+        language,
+        missing,  # summary
+        missing,  # source
+        missing,  # signature
+        file_path.val,
+        1,
+        n_lines,
+        n_lines,
+        0,        # n_children filled in below
     )
 
     # R8: unknown language or no tree-sitter grammar → single leaf
     entry = ismissing(language) ? nothing : get(config.languages, language, nothing)
     if isnothing(entry) || isnothing(entry.grammar_symbol)
-        file_row[:source] = src
+        file_row.source = src
         return [file_row]
     end
 
     tree = parse_source(src, entry.grammar_symbol)
     if isnothing(tree)
-        file_row[:source] = src
+        file_row.source = src
         return [file_row]
     end
 
@@ -458,6 +458,6 @@ function build_file_rows(
         )
     end
 
-    file_row[:n_children] = count(r -> r[:parent] == file_id.val, child_rows)
+    file_row.n_children = count(r -> r.parent == file_id.val, child_rows)
     return vcat([file_row], child_rows)
 end

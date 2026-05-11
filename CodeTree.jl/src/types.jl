@@ -61,6 +61,40 @@ _raw(::Missing)     = missing
 _raw(x)             = x  # passthrough for values already raw
 
 """
+    CodeRow
+
+Mutable struct representing a single row in the `db.code` DataFrame.
+Used throughout the builder/cache/load pipeline; converted to a DataFrame
+by `_rows_to_dataframe`.
+
+Fields follow the schema defined in R1:
+- `id`, `parent`: node and parent identifiers
+- `depth`, `sibling_order`: tree position
+- `kind`, `name`, `qname`: node classification
+- `language`, `summary`, `source`, `signature`: content
+- `file`, `line_start`, `line_end`, `n_lines`: provenance
+- `n_children`: filled in after children are counted
+"""
+mutable struct CodeRow
+    id::String
+    parent::Union{String,Missing}
+    depth::Int
+    sibling_order::Int
+    kind::String
+    name::String
+    qname::Union{String,Missing}
+    language::Union{String,Missing}
+    summary::Union{String,Missing}
+    source::Union{String,Missing}
+    signature::Union{String,Missing}
+    file::Union{String,Missing}
+    line_start::Union{Int,Missing}
+    line_end::Union{Int,Missing}
+    n_lines::Union{Int,Missing}
+    n_children::Int
+end
+
+"""
     assign_ordinal_ids(names, line_starts) -> Vector{String}
 
 Given sibling node names and their line_start positions, return id/qname

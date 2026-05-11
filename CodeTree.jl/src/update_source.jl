@@ -124,7 +124,7 @@ function _build_file_rows_for_update(
     db::CodeTreeDB,
     file_rel::FilePath,
     new_src::String,
-)::Vector{Dict{Symbol,Any}}
+)::Vector{CodeRow}
     code_df = getfield(db.code, :_df)
     fidx = findfirst(==(file_rel.val), code_df.id)
     isnothing(fidx) && throw(ErrorException("File node '$(file_rel.val)' not in db.code"))
@@ -146,7 +146,7 @@ function _build_file_rows_for_update(
     rows = build_file_rows(new_src, lang, db.config, db.detail_threshold,
                            NodeId(file_rel.val), file_rel, NodeId(parent_id),
                            depth, parent_qname)
-    rows[1][:sibling_order] = sibling_order
+    rows[1].sibling_order = sibling_order
     return rows
 end
 
@@ -157,7 +157,7 @@ function _extract_symbols_for_file(
     db::CodeTreeDB,
     file_rel::FilePath,
     new_src::String,
-    new_code_rows::Vector{Dict{Symbol,Any}},
+    new_code_rows::Vector{CodeRow},
 )::Vector{NamedTuple}
     lang_val = language_for_file(db.config, file_rel.val)
     ismissing(lang_val) && return NamedTuple[]
@@ -231,7 +231,6 @@ function _extract_symbols_for_file(
     return result
 end
 
-# Re-index `file_rel` from `new_src` and update db in place (used by R30a).
 function _replace_file_in_db!(db::CodeTreeDB, file_rel::FilePath, new_src::String)
     code_df = getfield(db.code,    :_df)
     syms_df = getfield(db.symbols, :_df)
@@ -262,7 +261,7 @@ function _update_cache_for_file!(
     file_rel::FilePath,
     new_file_src::String,
     new_hash::String,
-    new_code_rows::Vector{Dict{Symbol,Any}},
+    new_code_rows::Vector{CodeRow},
     new_sym_rows,
 )
     cache_db = _open_or_create_cache(db.root)

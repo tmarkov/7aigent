@@ -119,7 +119,7 @@ file is not in the cache.
 function _load_file_rows_from_cache(
     db::SQLite.DB,
     file_rel::String,
-)::Union{Tuple{Vector{Dict{Symbol,Any}}, Vector{NamedTuple}}, Nothing}
+)::Union{Tuple{Vector{CodeRow}, Vector{NamedTuple}}, Nothing}
 
     code_result = DBInterface.execute(db, """
         SELECT id, parent, depth, sibling_order, kind, name, qname, language,
@@ -128,28 +128,28 @@ function _load_file_rows_from_cache(
         ORDER BY depth ASC, sibling_order ASC
     """, [file_rel])
 
-    code_rows = Dict{Symbol,Any}[]
+    code_rows = CodeRow[]
     for r in code_result
         g(col) = Tables.getcolumn(r, col)
         _s(x)  = (isnothing(x) || ismissing(x)) ? missing : String(x)
         _i(x)  = (isnothing(x) || ismissing(x)) ? missing : Int(x)
-        push!(code_rows, Dict{Symbol,Any}(
-            :id            => String(g(:id)),
-            :parent        => _s(g(:parent)),
-            :depth         => Int(g(:depth)),
-            :sibling_order => Int(g(:sibling_order)),
-            :kind          => String(g(:kind)),
-            :name          => String(g(:name)),
-            :qname         => _s(g(:qname)),
-            :language      => _s(g(:language)),
-            :summary       => _s(g(:summary)),
-            :source        => _s(g(:source)),
-            :signature     => _s(g(:signature)),
-            :file          => file_rel,
-            :line_start    => _i(g(:line_start)),
-            :line_end      => _i(g(:line_end)),
-            :n_lines       => _i(g(:n_lines)),
-            :n_children    => Int(g(:n_children)),
+        push!(code_rows, CodeRow(
+            String(g(:id)),
+            _s(g(:parent)),
+            Int(g(:depth)),
+            Int(g(:sibling_order)),
+            String(g(:kind)),
+            String(g(:name)),
+            _s(g(:qname)),
+            _s(g(:language)),
+            _s(g(:summary)),
+            _s(g(:source)),
+            _s(g(:signature)),
+            file_rel,
+            _i(g(:line_start)),
+            _i(g(:line_end)),
+            _i(g(:n_lines)),
+            Int(g(:n_children)),
         ))
     end
     isempty(code_rows) && return nothing
@@ -203,7 +203,7 @@ function _save_file_rows!(
     file_rel::String,
     hash::String,
     commit_hash::Union{String,Missing},
-    code_rows::Vector{Dict{Symbol,Any}},
+    code_rows::Vector{CodeRow},
     sym_rows,
 )
     DBInterface.execute(db, "BEGIN")
@@ -222,21 +222,21 @@ function _save_file_rows!(
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, [
                 file_rel,
-                r[:id],
-                _m(r[:parent]),
-                r[:depth],
-                r[:sibling_order],
-                r[:kind],
-                r[:name],
-                _m(r[:qname]),
-                _m(r[:language]),
-                _m(r[:summary]),
-                _m(r[:source]),
-                _m(r[:signature]),
-                _m(r[:line_start]),
-                _m(r[:line_end]),
-                _m(r[:n_lines]),
-                r[:n_children],
+                r.id,
+                _m(r.parent),
+                r.depth,
+                r.sibling_order,
+                r.kind,
+                r.name,
+                _m(r.qname),
+                _m(r.language),
+                _m(r.summary),
+                _m(r.source),
+                _m(r.signature),
+                _m(r.line_start),
+                _m(r.line_end),
+                _m(r.n_lines),
+                r.n_children,
             ])
         end
 

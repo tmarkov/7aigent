@@ -45,7 +45,7 @@ function load(
     end
 
     # Build all rows
-    all_rows = Dict{Symbol,Any}[]
+    all_rows = CodeRow[]
 
     # --- Codebase root node (R6) ---
     codebase_id = NodeId(codebase_name)
@@ -77,7 +77,7 @@ function load(
     end
 
     # Track which file rows came from fresh parsing (need cache save).
-    fresh_file_rows = Dict{String, Vector{Dict{Symbol,Any}}}()
+    fresh_file_rows = Dict{String, Vector{CodeRow}}()
 
     # --- File nodes + their descendants (R6, R8, R10–R16) ---
     for d in sort(collect(keys(dir_to_files)))
@@ -103,7 +103,7 @@ function load(
                 cached = _load_file_rows_from_cache(cache_db, rel)
                 if !isnothing(cached)
                     code_rows, _ = cached
-                    code_rows[1][:sibling_order] = fi - 1  # update ordering
+                    code_rows[1].sibling_order = fi - 1  # update ordering
                     append!(all_rows, code_rows)
                     continue
                 end
@@ -116,7 +116,7 @@ function load(
                 src, lang, config, detail_threshold,
                 NodeId(rel), FilePath(rel), parent_id, depth, parent_qn,
             )
-            file_rows[1][:sibling_order] = fi - 1
+            file_rows[1].sibling_order = fi - 1
             append!(all_rows, file_rows)
             fresh_file_rows[rel] = file_rows
         end
@@ -125,13 +125,13 @@ function load(
     # Post-process: fill n_children for codebase and module rows
     id_to_children = Dict{String,Int}()
     for row in all_rows
-        p = row[:parent]
+        p = row.parent
         ismissing(p) && continue
         id_to_children[p] = get(id_to_children, p, 0) + 1
     end
     for row in all_rows
-        if row[:kind] ∈ ("codebase", "module")
-            row[:n_children] = get(id_to_children, row[:id], 0)
+        if row.kind ∈ ("codebase", "module")
+            row.n_children = get(id_to_children, row.id, 0)
         end
     end
 
@@ -241,28 +241,28 @@ end
 function _struct_row(
     id::NodeId, parent::Union{NodeId,Missing}, depth::Int, sibling_order::Int,
     kind::NodeKind, name::String, qname::Union{QName,Missing}=missing,
-)::Dict{Symbol,Any}
-    return Dict{Symbol,Any}(
-        :id            => id.val,
-        :parent        => _raw(parent),
-        :depth         => depth,
-        :sibling_order => sibling_order,
-        :kind          => kind.val,
-        :name          => name,
-        :qname         => _raw(qname),
-        :language      => missing,
-        :summary       => missing,
-        :source        => missing,
-        :signature     => missing,
-        :file          => missing,
-        :line_start    => missing,
-        :line_end      => missing,
-        :n_lines       => missing,
-        :n_children    => 0,
+)::CodeRow
+    return CodeRow(
+        id.val,
+        _raw(parent),
+        depth,
+        sibling_order,
+        kind.val,
+        name,
+        _raw(qname),
+        missing,  # language
+        missing,  # summary
+        missing,  # source
+        missing,  # signature
+        missing,  # file
+        missing,  # line_start
+        missing,  # line_end
+        missing,  # n_lines
+        0,        # n_children
     )
 end
 
-function _rows_to_dataframe(rows::Vector{Dict{Symbol,Any}})::DataFrame
+function _rows_to_dataframe(rows::Vector{CodeRow})::DataFrame
     isempty(rows) && return DataFrame(
         id=String[], parent=Union{String,Missing}[], depth=Int[],
         sibling_order=Int[], kind=String[], name=String[],
@@ -294,22 +294,22 @@ function _rows_to_dataframe(rows::Vector{Dict{Symbol,Any}})::DataFrame
     )
 
     for (i, row) in enumerate(rows)
-        cols.id[i]            = row[:id]
-        cols.parent[i]        = row[:parent]
-        cols.depth[i]         = row[:depth]
-        cols.sibling_order[i] = row[:sibling_order]
-        cols.kind[i]          = row[:kind]
-        cols.name[i]          = row[:name]
-        cols.qname[i]         = row[:qname]
-        cols.language[i]      = row[:language]
-        cols.summary[i]       = row[:summary]
-        cols.source[i]        = row[:source]
-        cols.signature[i]     = row[:signature]
-        cols.file[i]          = row[:file]
-        cols.line_start[i]    = row[:line_start]
-        cols.line_end[i]      = row[:line_end]
-        cols.n_lines[i]       = row[:n_lines]
-        cols.n_children[i]    = row[:n_children]
+        cols.id[i]            = row.id
+        cols.parent[i]        = row.parent
+        cols.depth[i]         = row.depth
+        cols.sibling_order[i] = row.sibling_order
+        cols.kind[i]          = row.kind
+        cols.name[i]          = row.name
+        cols.qname[i]         = row.qname
+        cols.language[i]      = row.language
+        cols.summary[i]       = row.summary
+        cols.source[i]        = row.source
+        cols.signature[i]     = row.signature
+        cols.file[i]          = row.file
+        cols.line_start[i]    = row.line_start
+        cols.line_end[i]      = row.line_end
+        cols.n_lines[i]       = row.n_lines
+        cols.n_children[i]    = row.n_children
     end
 
     return DataFrame(
