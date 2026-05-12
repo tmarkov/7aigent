@@ -4,55 +4,456 @@
 # Usage: 7aigent-sandbox <workspace-path>
 #
 # Prints the absolute path of kernel.json to stdout, then blocks until the
-# container exits.  Set SANDBOX_DRY_RUN=1 to generate files and exit without
-# starting the container (used by tests).
+# sandbox exits. Set SANDBOX_DRY_RUN=1 to generate files and exit without
+# starting the sandbox (used by tests).
 #
 # Build-time placeholders filled in by the Nix installPhase:
-#   @rootfs_dir@      — path to the static rootfs skeleton
-#   @config_template@ — path to the OCI config.json template
-#   @runsc@           — path to the runsc (gvisor) binary
+#   @rootfs_dir@   — path to the static rootfs skeleton
+#   @runsc@        — path to the runsc (gvisor) binary
+#   @bwrap@        — path to the bubblewrap binary
+#   @julia@        — path to the raw Julia package root
+#   @sandbox_out@  — sandbox package output path
+#   @codeTree@     — CodeTree package output path
+#   @sandbox_path@ — PATH inside the sandbox
 
-set -e
+set -eu
 
-WORKSPACE="$1"
+SANDBOX_GIT_ROOT=/git-metadata
+RUNTIME_STORE_PATHS=@sandbox_out@/share/sandbox/runtime-store-paths
 
-# S21: require exactly one argument
-if [ -z "$WORKSPACE" ]; then
+usage() {
     echo "Usage: 7aigent-sandbox <workspace-path>" >&2
     exit 1
-fi
+}
 
-# S22: workspace must exist and be a directory
-if [ ! -d "$WORKSPACE" ]; then
-    echo "Error: workspace '$WORKSPACE' does not exist or is not a directory" >&2
+error() {
+    echo "Error: $*" >&2
     exit 1
-fi
+}
 
-WORKSPACE=$(realpath "$WORKSPACE")
+resolve_dir() {
+    (
+        cd -- "$1" || exit 1
+        pwd -P
+    )
+}
 
-# Create runtime directory
-RUNTIME_DIR=$(mktemp -d /tmp/7aigent-XXXXXX)
+resolve_target_dir() {
+    base_dir=$1
+    target_path=$2
 
-# S17: remove runtime directory on exit (clean or signal)
+    case "$target_path" in
+        /*) target=$target_path ;;
+        *) target=$base_dir/$target_path ;;
+    esac
+
+    (
+        cd -- "$target" || exit 1
+        pwd -P
+    )
+}
+
+json_string() {
+    printf '%s' "$1" | awk '
+        BEGIN {
+            printf "\""
+        }
+        NR > 1 {
+            printf "\\n"
+        }
+        {
+            for (i = 1; i <= length($0); i++) {
+                c = substr($0, i, 1)
+                if (c == "\\") {
+                    printf "\\\\"
+                } else if (c == "\"") {
+                    printf "\\\""
+                } else if (c == "\t") {
+                    printf "\\t"
+                } else if (c == "\r") {
+                    printf "\\r"
+                } else {
+                    printf "%s", c
+                }
+            }
+        }
+        END {
+            printf "\""
+        }
+    '
+}
+
+ensure_state_dir() {
+    state_parent=$WORKSPACE/.7aigent
+    STATE_DIR=$state_parent/state
+
+    [ -d "$state_parent" ] || error "workspace must contain .7aigent/state"
+    [ -d "$STATE_DIR" ] || error "workspace must contain .7aigent/state"
+    [ ! -L "$state_parent" ] || error "workspace .7aigent/state must not use symlinks"
+    [ ! -L "$STATE_DIR" ] || error "workspace .7aigent/state must not use symlinks"
+
+    STATE_DIR=$(resolve_dir "$STATE_DIR") ||
+        error "failed to resolve workspace .7aigent/state"
+
+    case "$STATE_DIR" in
+        "$WORKSPACE"/.7aigent/state) ;;
+        *) error "workspace .7aigent/state resolves outside the workspace" ;;
+    esac
+
+    NOGIT_FILE=$STATE_DIR/nogit
+}
+
+write_nix_store_mounts_json() {
+    while IFS= read -r store_path; do
+        [ -n "$store_path" ] || continue
+        mkdir -p "$ROOTFS_DIR$store_path"
+        printf '    { "destination": %s, "type": "bind", "source": %s, "options": ["rbind", "ro"] },\n' \
+            "$(json_string "$store_path")" \
+            "$(json_string "$store_path")"
+    done < "$RUNTIME_STORE_PATHS"
+}
+
+write_config_json() {
+    config_path=$1
+
+    {
+        cat <<EOF
+{
+  "ociVersion": "1.0.0",
+  "process": {
+    "terminal": false,
+    "user": { "uid": 0, "gid": 0 },
+    "args": [
+      "@julia@/bin/julia",
+      "-t", "2",
+      "--startup-file=no",
+      "@sandbox_out@/share/sandbox/startup.jl",
+      "/sockets/kernel-internal.json"
+    ],
+    "env": [
+      "JULIA_DEPOT_PATH=/tmp/julia-depot:@sandbox_out@/julia-depot",
+      "JULIA_PROJECT=@codeTree@/project",
+      "JULIA_LOAD_PATH=@:@v#.#:@stdlib",
+      "HOME=/home/julia",
+      "JULIA_PKG_SERVER=",
+      "PATH=@sandbox_path@"
+    ],
+    "cwd": "/workspace"
+  },
+  "root": { "path": "rootfs", "readonly": true },
+  "mounts": [
+    { "destination": "/proc",       "type": "proc",  "source": "proc" },
+    { "destination": "/dev",        "type": "tmpfs", "source": "tmpfs",
+      "options": ["nosuid", "noexec", "mode=755", "size=65536k"] },
+    { "destination": "/tmp",        "type": "tmpfs", "source": "tmpfs" },
+    { "destination": "/home/julia", "type": "tmpfs", "source": "tmpfs" },
+EOF
+
+        write_nix_store_mounts_json
+
+        cat <<EOF
+    { "destination": "/workspace",  "type": "bind",  "source": $(json_string "$WORKSPACE"),
+      "options": ["rbind", "rw"] },
+    { "destination": "/workspace/.7aigent/state", "type": "bind", "source": $(json_string "$STATE_DIR"),
+      "options": ["rbind", "ro"] },
+EOF
+
+        case "$GIT_MODE" in
+            dir)
+                printf '    { "destination": "/workspace/.git", "type": "bind", "source": %s, "options": ["rbind", "ro"] },\n' \
+                    "$(json_string "$ACTUAL_GITDIR")"
+                ;;
+            gitfile)
+                printf '    { "destination": "/workspace/.git", "type": "bind", "source": %s, "options": ["ro"] },\n' \
+                    "$(json_string "$GIT_FILE_OVERLAY")"
+                printf '    { "destination": %s, "type": "bind", "source": %s, "options": ["rbind", "ro"] },\n' \
+                    "$(json_string "$SANDBOX_GIT_ROOT")" \
+                    "$(json_string "$ACTUAL_COMMON_GITDIR")"
+                ;;
+        esac
+
+        cat <<EOF
+    { "destination": "/sockets",    "type": "bind",  "source": $(json_string "$SOCKETS_DIR"),
+      "options": ["rbind", "rw"] }
+  ],
+  "linux": {
+    "namespaces": [
+      { "type": "pid"     },
+      { "type": "mount"   },
+      { "type": "ipc"     },
+      { "type": "uts"     },
+      { "type": "network" }
+    ]
+  }
+}
+EOF
+    } > "$config_path"
+}
+
+record_nogit_state() {
+    printf '%s\n' "$CONTAINER_ID" > "$NOGIT_FILE" ||
+        error "failed to write workspace .7aigent/state/nogit"
+    NOGIT_OWNED=1
+}
+
+prepare_git_mounts() {
+    GIT_MODE=none
+    GIT_FILE_OVERLAY=
+    ACTUAL_GITDIR=
+    ACTUAL_COMMON_GITDIR=
+    SANDBOX_GITDIR=$SANDBOX_GIT_ROOT
+    NOGIT_OWNED=0
+
+    if [ -e "$NOGIT_FILE" ] && [ -e "$WORKSPACE/.git" ]; then
+        error "workspace .7aigent/state/nogit exists but .git is present; re-trust the workspace before launching"
+    fi
+
+    if [ -d "$WORKSPACE/.git" ]; then
+        ACTUAL_GITDIR=$(resolve_dir "$WORKSPACE/.git") ||
+            error "failed to resolve workspace .git directory"
+        GIT_MODE=dir
+        return
+    fi
+
+    if [ -f "$WORKSPACE/.git" ]; then
+        IFS= read -r gitfile_line < "$WORKSPACE/.git" || true
+        case "$gitfile_line" in
+            "gitdir: "*) gitdir_path=${gitfile_line#gitdir: } ;;
+            *)
+                error "workspace .git file is not in 'gitdir: ...' format"
+                ;;
+        esac
+
+        [ -n "$gitdir_path" ] || error "workspace .git file points to an empty gitdir"
+
+        ACTUAL_GITDIR=$(resolve_target_dir "$WORKSPACE" "$gitdir_path") ||
+            error "workspace .git file points to a missing gitdir"
+        [ -d "$ACTUAL_GITDIR" ] || error "workspace .git file does not resolve to a directory"
+
+        if [ -f "$ACTUAL_GITDIR/commondir" ]; then
+            IFS= read -r commondir_path < "$ACTUAL_GITDIR/commondir" || true
+            [ -n "$commondir_path" ] || error "workspace .git gitdir has an empty commondir"
+            ACTUAL_COMMON_GITDIR=$(resolve_target_dir "$ACTUAL_GITDIR" "$commondir_path") ||
+                error "workspace .git gitdir points to a missing common git directory"
+            [ -d "$ACTUAL_COMMON_GITDIR" ] ||
+                error "workspace .git common git directory does not resolve to a directory"
+        else
+            ACTUAL_COMMON_GITDIR=$ACTUAL_GITDIR
+        fi
+
+        case "$ACTUAL_GITDIR" in
+            "$ACTUAL_COMMON_GITDIR")
+                relative_gitdir=.
+                ;;
+            "$ACTUAL_COMMON_GITDIR"/*)
+                relative_gitdir=${ACTUAL_GITDIR#"$ACTUAL_COMMON_GITDIR"/}
+                ;;
+            *)
+                error "workspace .git gitdir is not contained within its common git directory"
+                ;;
+        esac
+
+        SANDBOX_GITDIR=$SANDBOX_GIT_ROOT
+        if [ "$relative_gitdir" != "." ]; then
+            SANDBOX_GITDIR=$SANDBOX_GIT_ROOT/$relative_gitdir
+        fi
+
+        GIT_FILE_OVERLAY="$RUNTIME_DIR/git/.git"
+        printf 'gitdir: %s\n' "$SANDBOX_GITDIR" > "$GIT_FILE_OVERLAY"
+        mkdir -p "$ROOTFS_DIR$SANDBOX_GIT_ROOT"
+        GIT_MODE=gitfile
+        return
+    fi
+
+    if [ -e "$WORKSPACE/.git" ]; then
+        error "workspace .git exists but is neither a directory nor a gitfile"
+    fi
+
+    record_nogit_state
+}
+
+probe_bwrap_network_namespace() {
+    if @bwrap@ --unshare-net --ro-bind / / -- /bin/sh -c 'exit 0' >/dev/null 2>&1; then
+        BWRAP_NET_ARG=--unshare-net
+    else
+        BWRAP_NET_ARG=
+        echo "Warning: bubblewrap network namespace unavailable; inheriting caller network namespace" >&2
+    fi
+}
+
+run_bwrap() {
+    probe_bwrap_network_namespace
+
+    set -- \
+        @bwrap@ \
+        --clearenv \
+        --dir /nix \
+        --dir /nix/store \
+        --bind "$WORKSPACE" /workspace \
+        --ro-bind "$STATE_DIR" /workspace/.7aigent/state \
+        --bind "$SOCKETS_DIR" /sockets \
+        --tmpfs /tmp \
+        --tmpfs /home/julia \
+        --dev /dev \
+        --proc /proc \
+        --unshare-pid \
+        --unshare-ipc \
+        --unshare-uts \
+        --die-with-parent \
+        --chdir /workspace \
+        --setenv HOME /home/julia \
+        --setenv JULIA_DEPOT_PATH "/tmp/julia-depot:@sandbox_out@/julia-depot" \
+        --setenv JULIA_PROJECT "@codeTree@/project" \
+        --setenv JULIA_LOAD_PATH "@:@v#.#:@stdlib" \
+        --setenv JULIA_PKG_SERVER "" \
+        --setenv PATH "@sandbox_path@"
+
+    while IFS= read -r store_path; do
+        [ -n "$store_path" ] || continue
+        set -- "$@" --dir "$store_path" --ro-bind "$store_path" "$store_path"
+    done < "$RUNTIME_STORE_PATHS"
+
+    if [ -n "$BWRAP_NET_ARG" ]; then
+        set -- "$@" "$BWRAP_NET_ARG"
+    fi
+
+    case "$GIT_MODE" in
+        dir)
+            set -- "$@" --ro-bind "$ACTUAL_GITDIR" /workspace/.git
+            ;;
+        gitfile)
+            set -- "$@" \
+                --dir "$SANDBOX_GIT_ROOT" \
+                --ro-bind "$GIT_FILE_OVERLAY" /workspace/.git \
+                --ro-bind "$ACTUAL_COMMON_GITDIR" "$SANDBOX_GIT_ROOT"
+            ;;
+    esac
+
+    set -- "$@" -- \
+        @julia@/bin/julia \
+        -t 2 \
+        --startup-file=no \
+        @sandbox_out@/share/sandbox/startup.jl \
+        /sockets/kernel-internal.json
+
+    "$@"
+}
+
+run_runsc() {
+    @runsc@ \
+        --rootless \
+        "--platform=${SANDBOX_PLATFORM:-kvm}" \
+        --network=none \
+        --host-uds=create \
+        run \
+        --bundle "$BUNDLE_DIR" \
+        "$CONTAINER_ID"
+}
+
+await_runner() {
+    while kill -0 "$RUNNER_PID" >/dev/null 2>&1; do
+        sleep 1
+    done
+
+    if wait "$RUNNER_PID"; then
+        return 0
+    fi
+    return $?
+}
+
+terminate_runner() {
+    if [ -z "${RUNNER_PID:-}" ]; then
+        return
+    fi
+
+    case "$RUNNER" in
+        bwrap)
+            kill -TERM "$RUNNER_PID" >/dev/null 2>&1 || true
+            ;;
+        runsc)
+            @runsc@ kill --signal TERM "$CONTAINER_ID" >/dev/null 2>&1 || true
+            kill -TERM "$RUNNER_PID" >/dev/null 2>&1 || true
+            ;;
+    esac
+
+    wait "$RUNNER_PID" >/dev/null 2>&1 || true
+    RUNNER_PID=
+}
+
+cleanup_state() {
+    if [ "${NOGIT_OWNED:-0}" -ne 1 ]; then
+        return
+    fi
+    if [ ! -f "$NOGIT_FILE" ]; then
+        return
+    fi
+
+    IFS= read -r nogit_value < "$NOGIT_FILE" || true
+    if [ "$nogit_value" != "$CONTAINER_ID" ]; then
+        return
+    fi
+
+    if [ ! -e "$WORKSPACE/.git" ]; then
+        rm -f "$NOGIT_FILE" || true
+    fi
+}
+
 cleanup() {
+    cleanup_state
     rm -rf "$RUNTIME_DIR"
 }
-trap cleanup EXIT INT TERM
 
+handle_signal() {
+    terminate_runner
+    exit 143
+}
+
+if [ "$#" -ne 1 ]; then
+    usage
+fi
+
+WORKSPACE_INPUT=$1
+
+if [ ! -d "$WORKSPACE_INPUT" ]; then
+    error "workspace '$WORKSPACE_INPUT' does not exist or is not a directory"
+fi
+
+WORKSPACE=$(resolve_dir "$WORKSPACE_INPUT") ||
+    error "failed to resolve workspace '$WORKSPACE_INPUT'"
+
+RUNNER=${SANDBOX_RUNNER:-runsc}
+case "$RUNNER" in
+    runsc|bwrap) ;;
+    *) error "unsupported sandbox runner '$RUNNER'" ;;
+esac
+
+RUNTIME_DIR=$(mktemp -d /tmp/7aigent-XXXXXX)
 SOCKETS_DIR="$RUNTIME_DIR/sockets"
 BUNDLE_DIR="$RUNTIME_DIR/bundle"
-mkdir -p "$SOCKETS_DIR" "$BUNDLE_DIR"
+ROOTFS_DIR="$BUNDLE_DIR/rootfs"
+CONTAINER_ID="7aigent-${RUNTIME_DIR##*/}"
+RUNNER_PID=
+
+trap cleanup EXIT
+trap handle_signal INT TERM
+
+mkdir -p "$SOCKETS_DIR" "$BUNDLE_DIR" "$RUNTIME_DIR/git"
+
+ensure_state_dir
 
 # Copy rootfs skeleton (empty mount-point directories only)
-cp -r @rootfs_dir@ "$BUNDLE_DIR/rootfs"
+cp -r @rootfs_dir@ "$ROOTFS_DIR"
+chmod -R u+w "$ROOTFS_DIR"
+
+prepare_git_mounts
 
 # S9: generate a fresh UUID4 as the HMAC key
 KEY=$(cat /proc/sys/kernel/random/uuid)
 
 # S8, S9: write two Jupyter connection files:
-#   kernel.json         — for external clients (host paths for IPC sockets)
-#   kernel-internal.json — for Julia inside the container (container paths)
-cat > "$SOCKETS_DIR/kernel.json" << EOF
+#   kernel.json          — for external clients (host paths for IPC sockets)
+#   kernel-internal.json — for Julia inside the sandbox (container paths)
+cat > "$SOCKETS_DIR/kernel.json" <<EOF
 {
   "transport": "ipc",
   "ip": "$SOCKETS_DIR/kernel",
@@ -66,7 +467,7 @@ cat > "$SOCKETS_DIR/kernel.json" << EOF
 }
 EOF
 
-cat > "$SOCKETS_DIR/kernel-internal.json" << EOF
+cat > "$SOCKETS_DIR/kernel-internal.json" <<EOF
 {
   "transport": "ipc",
   "ip": "/sockets/kernel",
@@ -80,80 +481,33 @@ cat > "$SOCKETS_DIR/kernel-internal.json" << EOF
 }
 EOF
 
-# Instantiate the OCI config from the template (fill runtime placeholders).
-# If the workspace has no .git directory, strip the read-only .git bind-mount
-# so that runsc doesn't fail trying to bind a non-existent source.
-if [ -d "$WORKSPACE/.git" ]; then
-    GIT_MOUNT_FILTER="cat"
-else
-    GIT_MOUNT_FILTER='grep -v "workspace/\.git"'
-fi
-sed \
-    -e "s|@WORKSPACE@|$WORKSPACE|g" \
-    -e "s|@SOCKETS_DIR@|$SOCKETS_DIR|g" \
-    @config_template@ | eval "$GIT_MOUNT_FILTER" > "$BUNDLE_DIR/config.json"
+write_config_json "$BUNDLE_DIR/config.json"
 
-# S15: print kernel.json path before the container starts accepting connections
+# S15: print kernel.json path before the sandbox starts accepting connections
 echo "$SOCKETS_DIR/kernel.json"
 
-# Dry-run mode: generate files but do not start the container (for tests)
+# Dry-run mode: generate files but do not start the sandbox (for tests)
 if [ "${SANDBOX_DRY_RUN:-0}" = "1" ]; then
     # Prevent cleanup trap from removing the files the test needs to inspect.
-    # Re-register a no-op trap; the test runner's process exit will reclaim /tmp.
     trap '' EXIT INT TERM
     exit 0
 fi
 
-# S1, S2: run the container under gvisor with no network.
-# --rootless: run without root privileges (skips cgroup setup).
-# --host-uds=create: allow the kernel to create ZMQ IPC sockets on the
-#   bind-mounted /sockets directory (host Unix-domain socket creation).
-# SANDBOX_PLATFORM selects the gvisor platform (default: kvm).
-#   Use systrap in environments without KVM (e.g. QEMU VMs in CI).
-#
-# SANDBOX_RUNNER=bwrap selects bubblewrap as an alternative runner for
-# environments where runsc/gvisor is unavailable.
-# bwrap provides namespace isolation but NOT gvisor's syscall filtering.
-# Only use for development/testing — not for production security.
-if [ "${SANDBOX_RUNNER:-}" = "bwrap" ]; then
-    # Extract env and args from the OCI config using the Julia binary directly.
-    # bwrap does not read OCI bundles; we reconstruct the invocation manually.
-    JULIA=@julia@
-    SANDBOX_OUT=@sandbox_out@
-    CODETR=@codeTree@
+case "$RUNNER" in
+    bwrap)
+        run_bwrap &
+        ;;
+    runsc)
+        run_runsc &
+        ;;
+esac
+RUNNER_PID=$!
 
-    exec @bwrap@ \
-        --ro-bind /nix/store /nix/store \
-        --bind "$WORKSPACE" /workspace \
-        $( [ -d "$WORKSPACE/.git" ] && echo "--ro-bind $WORKSPACE/.git /workspace/.git" ) \
-        --bind "$SOCKETS_DIR" /sockets \
-        --tmpfs /tmp \
-        --tmpfs /home/julia \
-        --dev /dev \
-        --proc /proc \
-        --unshare-pid \
-        --unshare-ipc \
-        --unshare-uts \
-        --die-with-parent \
-        --chdir /workspace \
-        --setenv HOME /home/julia \
-        --setenv JULIA_DEPOT_PATH "/tmp/julia-depot:$SANDBOX_OUT/julia-depot" \
-        --setenv JULIA_PROJECT "$CODETR/project" \
-        --setenv JULIA_LOAD_PATH "@:@v#.#:@stdlib" \
-        --setenv JULIA_PKG_SERVER "" \
-        --setenv PATH "$JULIA/bin" \
-        -- "$JULIA/bin/julia" \
-        -t 2 \
-        --startup-file=no \
-        "$SANDBOX_OUT/share/sandbox/startup.jl" \
-        "/sockets/kernel-internal.json"
+if await_runner; then
+    status=0
+else
+    status=$?
 fi
 
-exec @runsc@ \
-    --rootless \
-    "--platform=${SANDBOX_PLATFORM:-kvm}" \
-    --network=none \
-    --host-uds=create \
-    run \
-    --bundle "$BUNDLE_DIR" \
-    "7aigent-$(basename "$RUNTIME_DIR")"
+RUNNER_PID=
+exit "$status"

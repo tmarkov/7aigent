@@ -62,7 +62,16 @@
         };
 
         devShells.default = pkgs.mkShell {
-          buildInputs = with pkgs; [ julia sqlite gvisor python3Packages.pytest purs spago-unstable nodejs ];
+          buildInputs = with pkgs; [
+            julia
+            sqlite
+            gvisor
+            python3Packages.pytest
+            python3Packages.jupyter-client
+            purs
+            spago-unstable
+            nodejs
+          ];
           shellHook = ''
             echo "7aigent dev shell"
             echo "  julia --project=CodeTree.jl       — work on the Julia package"

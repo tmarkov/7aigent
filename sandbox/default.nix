@@ -1,4 +1,4 @@
-{ stdenv, julia, lib, gvisor, codeTree, juliaEnv, cacert, bubblewrap, coreutils, bash, iputils }:
+{ stdenv, julia, lib, gvisor, codeTree, juliaEnv, cacert, bubblewrap, coreutils, bash, iputils, closureInfo }:
 
 let
   # juliaEnv is the single shared environment defined in flake.nix,
@@ -10,6 +10,17 @@ let
 
   # Pre-built depot (packages + project) placed in the Nix store.
   juliaDepot = juliaEnv.passthru.projectAndDepot;
+
+  runtimeClosure = closureInfo {
+    rootPaths = [
+      juliaRaw
+      codeTree
+      juliaDepot
+      coreutils
+      bash
+      iputils
+    ];
+  };
 in
 stdenv.mkDerivation {
   pname   = "7aigent-sandbox";
@@ -60,73 +71,22 @@ stdenv.mkDerivation {
 
     # ── startup script ────────────────────────────────────────────────────
     cp startup.jl $out/share/sandbox/startup.jl
+    cat ${runtimeClosure}/store-paths > $out/share/sandbox/runtime-store-paths
+    echo $out >> $out/share/sandbox/runtime-store-paths
 
     # ── static rootfs skeleton (empty mount-point directories) ───────────
     cp -r rootfs $out/share/sandbox/rootfs
-
-    # ── OCI config.json template ─────────────────────────────────────────
-    # Build-time Nix store paths are baked in here.
-    # Runtime placeholders that the launcher fills in: @WORKSPACE@ @SOCKETS_DIR@
-    cat > $out/share/sandbox/config.json.template << EOCONFIG
-{
-  "ociVersion": "1.0.0",
-  "process": {
-    "terminal": false,
-    "user": { "uid": 0, "gid": 0 },
-    "args": [
-      "${juliaRaw}/bin/julia",
-      "-t", "2",
-      "--startup-file=no",
-      "$out/share/sandbox/startup.jl",
-      "/sockets/kernel-internal.json"
-    ],
-    "env": [
-      "JULIA_DEPOT_PATH=/tmp/julia-depot:$out/julia-depot",
-      "JULIA_PROJECT=${codeTree}/project",
-      "JULIA_LOAD_PATH=@:@v#.#:@stdlib",
-      "HOME=/home/julia",
-      "JULIA_PKG_SERVER=",
-      "PATH=${juliaRaw}/bin:${coreutils}/bin:${bash}/bin:${iputils}/bin"
-    ],
-    "cwd": "/workspace"
-  },
-  "root": { "path": "rootfs", "readonly": true },
-  "mounts": [
-    { "destination": "/proc",       "type": "proc",  "source": "proc" },
-    { "destination": "/dev",        "type": "tmpfs", "source": "tmpfs",
-      "options": ["nosuid", "noexec", "mode=755", "size=65536k"] },
-    { "destination": "/tmp",        "type": "tmpfs", "source": "tmpfs" },
-    { "destination": "/home/julia", "type": "tmpfs", "source": "tmpfs" },
-    { "destination": "/nix/store",  "type": "bind",  "source": "/nix/store",
-      "options": ["rbind", "ro"] },
-    { "destination": "/workspace",  "type": "bind",  "source": "@WORKSPACE@",
-      "options": ["rbind", "rw"] },
-    { "destination": "/workspace/.git", "type": "bind", "source": "@WORKSPACE@/.git", "options": ["rbind", "ro"] },
-    { "destination": "/sockets",    "type": "bind",  "source": "@SOCKETS_DIR@",
-      "options": ["rbind", "rw"] }
-  ],
-  "linux": {
-    "namespaces": [
-      { "type": "pid"     },
-      { "type": "mount"   },
-      { "type": "ipc"     },
-      { "type": "uts"     },
-      { "type": "network" }
-    ]
-  }
-}
-EOCONFIG
 
     # ── launcher script ───────────────────────────────────────────────────
     # Substitute build-time placeholders into the source template.
     sed \
       -e "s|@rootfs_dir@|$out/share/sandbox/rootfs|g" \
-      -e "s|@config_template@|$out/share/sandbox/config.json.template|g" \
       -e "s|@runsc@|${gvisor}/bin/runsc|g" \
       -e "s|@bwrap@|${bubblewrap}/bin/bwrap|g" \
       -e "s|@julia@|${juliaRaw}|g" \
       -e "s|@sandbox_out@|$out|g" \
       -e "s|@codeTree@|${codeTree}|g" \
+      -e "s|@sandbox_path@|${juliaRaw}/bin:${coreutils}/bin:${bash}/bin:${iputils}/bin|g" \
       7aigent-sandbox > $out/bin/7aigent-sandbox
 
     chmod +x $out/bin/7aigent-sandbox
@@ -138,4 +98,3 @@ EOCONFIG
     mainProgram = "7aigent-sandbox";
   };
 }
-

@@ -50,11 +50,25 @@ Build the sandbox derivation:
 nix build .#sandbox
 ```
 
+Ensure the workspace contains a host-managed state directory before launch:
+
+```sh
+mkdir -p /path/to/workspace/.7aigent/state
+```
+
 Start the sandbox against a workspace:
 
 ```sh
 ./result/bin/7aigent-sandbox /path/to/workspace
 # prints: /tmp/7aigent-XXXXX/sockets/kernel.json
+```
+
+Use the default launcher mode for the hardened gVisor sandbox. For nested or
+otherwise constrained environments where gVisor cannot run, a weaker
+compatibility mode is available:
+
+```sh
+SANDBOX_RUNNER=bwrap ./result/bin/7aigent-sandbox /path/to/workspace
 ```
 
 Connect from Python using `jupyter_client`:
