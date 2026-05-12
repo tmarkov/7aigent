@@ -86,6 +86,7 @@ We have initialized the Julia REPL by running the following code:
 
 ```julia
 using CodeTree
+using DataFrames, DataFramesMeta
 db = CodeTree.load("/workspace")
 ```
 

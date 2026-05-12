@@ -9,4 +9,6 @@ catch e
     @warn "ioproperties patch failed" e
 end
 
+using DataFrames, DataFramesMeta
+
 db = CodeTree.load("/workspace");
