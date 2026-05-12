@@ -317,11 +317,13 @@ startSession ws@(WorkspacePath wp) resumedFrom existingHistory resumeState promp
                 existingHistory
 
     -- Enter the main user ↔ LLM loop
-    runUserLoop ws sessionId config apiKey kernel initHistory Set.empty zeroLlmUsage prompt
+    exitCode <- runUserLoop
+        ws sessionId config apiKey kernel initHistory Set.empty zeroLlmUsage prompt
 
     -- Cleanup
     liftEffect $ closeKernel kernel
     liftEffect $ sandbox.kill
+    liftEffect $ Process.exit' exitCode
 
 -- ---------------------------------------------------------------------------
 -- A19: Julia startup sequence
@@ -426,7 +428,7 @@ runUserLoop
     -> Set HunkId
     -> LlmUsage
     -> Maybe String
-    -> Aff Unit
+    -> Aff Int
 runUserLoop ws sessionId config apiKey kernel history knownHunks usageTotals maybePrompt = do
     line <- case maybePrompt of
         Just p -> do
@@ -439,30 +441,32 @@ runUserLoop ws sessionId config apiKey kernel history knownHunks usageTotals may
     -- EOF → clean exit
     when (String.null line) do
         finishSession ws sessionId kernel history SessionEndedEof
-        liftEffect $ Process.exit' 0
+    if String.null line then
+        pure 0
+    else do
 
-    ts <- getTs
-    writeLogEvent ws sessionId (EvtUserMessage { timestamp: ts, content: line })
+        ts <- getTs
+        writeLogEvent ws sessionId (EvtUserMessage { timestamp: ts, content: line })
 
-    let history' = addMsg history (UserMessage { content: line })
-    loopResult <-
-        runReactLoop ws sessionId config apiKey kernel history'
-            (TokenCount 0) knownHunks usageTotals
-    liftEffect $ printLn (renderSessionTokenUsage loopResult.usageTotals)
+        let history' = addMsg history (UserMessage { content: line })
+        loopResult <-
+            runReactLoop ws sessionId config apiKey kernel history'
+                (TokenCount 0) knownHunks usageTotals
+        liftEffect $ printLn (renderSessionTokenUsage loopResult.usageTotals)
 
-    case loopResult.error, maybePrompt of
-        Just _, Just _ -> do
-            finishSession ws sessionId kernel loopResult.history SessionEndedError
-            liftEffect $ Process.exit' 1
-        Just _, Nothing ->
-            runUserLoop ws sessionId config apiKey kernel loopResult.history
-                loopResult.knownHunks loopResult.usageTotals Nothing
-        Nothing, Just _ -> do
-            finishSession ws sessionId kernel loopResult.history SessionEndedPrompt
-            liftEffect $ Process.exit' 0
-        Nothing, Nothing ->
-            runUserLoop ws sessionId config apiKey kernel loopResult.history
-                loopResult.knownHunks loopResult.usageTotals Nothing
+        case loopResult.error, maybePrompt of
+            Just _, Just _ -> do
+                finishSession ws sessionId kernel loopResult.history SessionEndedError
+                pure 1
+            Just _, Nothing ->
+                runUserLoop ws sessionId config apiKey kernel loopResult.history
+                    loopResult.knownHunks loopResult.usageTotals Nothing
+            Nothing, Just _ -> do
+                finishSession ws sessionId kernel loopResult.history SessionEndedPrompt
+                pure 0
+            Nothing, Nothing ->
+                runUserLoop ws sessionId config apiKey kernel loopResult.history
+                    loopResult.knownHunks loopResult.usageTotals Nothing
 
 -- ---------------------------------------------------------------------------
 -- A1: inner loop — LLM calls + tool execution

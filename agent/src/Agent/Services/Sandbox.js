@@ -18,15 +18,15 @@ export const spawnSandboxImpl = (workspacePath) => (onError) => (onSuccess) => (
     outputBuf += data.toString();
     const lines = outputBuf.split("\n");
     for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed) {
-        resolved = true;
-        const kill = () => () => {
-          try { proc.kill("SIGTERM"); } catch (_) {}
-        };
-        onSuccess({ kernelJsonPath: trimmed, kill })();
-        return;
-      }
+        const trimmed = line.trim();
+        if (trimmed) {
+          resolved = true;
+          const kill = () => {
+            try { proc.kill("SIGTERM"); } catch (_) {}
+          };
+          onSuccess({ kernelJsonPath: trimmed, kill })();
+          return;
+        }
     }
   });
 
