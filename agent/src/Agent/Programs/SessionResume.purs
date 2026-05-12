@@ -31,6 +31,7 @@ data ResumeResult
     = ResumeReady
         { history :: ConversationHistory
         , juliaDefs :: Array String
+        , hasStateFile :: Boolean
         , warnings :: Array String
         , resumedFrom :: Maybe SessionId
         }
@@ -70,30 +71,20 @@ loadSessionForResume ws@(WorkspacePath wp) sid@(SessionId sidNum) = do
                                             (String.trim content))
                                 in { defs, warnings: [] }
 
-                    -- Check julia_state.jls
-                    stateResult <- attempt
-                        (FS.readTextFile UTF8 (sessionDir <> "/julia_state.jls"))
-                    let stateWarnings = case stateResult of
-                            Left _ -> []  -- Absent state file is not a warning
-                            Right content
-                                | isCorrupt content ->
-                                    ["Warning: julia_state.jls may be corrupt; "
-                                        <> "some globals may not be restored"]
-                                | otherwise -> []
+                    stateResult <- FS.access (sessionDir <> "/julia_state.jls")
+                    let hasStateFile = case stateResult of
+                            Nothing -> true
+                            Just _ -> false
+                    let stateWarnings = if hasStateFile
+                            then []
+                            else ["Julia state file missing for session "
+                                <> show sidNum
+                                <> "; globals will not be restored"]
 
                     pure $ ResumeReady
                         { history
                         , juliaDefs: defsAndWarnings.defs
+                        , hasStateFile
                         , warnings: defsAndWarnings.warnings <> stateWarnings
                         , resumedFrom: Just sid
                         }
-
--- A simple heuristic: if the state file exists but doesn't start with valid
--- serialization markers, consider it potentially corrupt. In practice, the
--- Julia Serialization format has specific header bytes.
-isCorrupt :: String -> Boolean
-isCorrupt content =
-    -- Any non-empty content that doesn't look like valid Julia serialization
-    -- For the test, a file containing "CORRUPT_DATA_HERE" should trigger this
-    String.length content > 0
-        && not (String.contains (String.Pattern "\x00") content)

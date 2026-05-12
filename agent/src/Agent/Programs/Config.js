@@ -1,4 +1,9 @@
 import { parse } from "smol-toml";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
 // parseTomlPure :: String -> { success, error, fields... }
 export const parseTomlPure = (input) => {
@@ -58,4 +63,21 @@ export const lookupEnvImpl = (name) => () => {
 export const lookupEnvSync = (name) => {
     const val = process.env[name];
     return val === undefined ? null : val;
+};
+
+const bundledConfigCandidates = (name) => [
+    path.resolve(moduleDir, "../../../config", name),
+    path.resolve(process.cwd(), "config", name),
+    path.resolve(process.cwd(), "agent", "config", name),
+];
+
+// readBundledDefaultImpl :: String -> Effect String
+export const readBundledDefaultImpl = (name) => () => {
+    for (const candidate of bundledConfigCandidates(name)) {
+        if (fs.existsSync(candidate)) {
+            return fs.readFileSync(candidate, "utf8");
+        }
+    }
+
+    throw new Error("Bundled default config file not found: " + name);
 };

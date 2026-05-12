@@ -63,7 +63,10 @@ import Agent.Programs.GitDiff (runGitDiff, parseHunkIds)
 import Agent.Programs.GitCommit
     ( CommitWhat(..), validateCommitWhat, runGitCommit )
 import Agent.Programs.JuliaDefs (extractDefs)
-import Agent.Programs.ReplSerialize (buildSerializationSnippet)
+import Agent.Programs.ReplSerialize
+    ( buildRestoreSnippet
+    , buildSerializationSnippet
+    )
 import Agent.Programs.SandboxPreflight
     ( SandboxPreflightResult(..)
     , runSandboxPreflight
@@ -73,7 +76,7 @@ import Agent.Services.Stdin (readLine, writePrompt)
 import Agent.Services.Sandbox (SandboxHandle, spawnSandbox)
 import Agent.Services.Jupyter
     ( KernelHandle, connectKernel, executeCode, interruptKernel, closeKernel )
-import Agent.Services.Llm (callLlm)
+import Agent.Services.Llm (LlmUsage, callLlm)
 
 -- ---------------------------------------------------------------------------
 -- FFI
@@ -153,6 +156,29 @@ totalTokens :: ConversationHistory -> TokenCount
 totalTokens (ConversationHistory h) =
     foldl addTc (TokenCount 0) (map _.tokens h.messages)
 
+zeroLlmUsage :: LlmUsage
+zeroLlmUsage =
+    { inputTokens: TokenCount 0
+    , cachedInputTokens: TokenCount 0
+    , outputTokens: TokenCount 0
+    }
+
+addLlmUsage :: LlmUsage -> LlmUsage -> LlmUsage
+addLlmUsage totals usage =
+    { inputTokens: addTc totals.inputTokens usage.inputTokens
+    , cachedInputTokens: addTc totals.cachedInputTokens usage.cachedInputTokens
+    , outputTokens: addTc totals.outputTokens usage.outputTokens
+    }
+
+renderSessionTokenUsage :: LlmUsage -> String
+renderSessionTokenUsage usage =
+    "[session tokens] input="
+        <> show (unwrapTc usage.inputTokens)
+        <> " cached="
+        <> show (unwrapTc usage.cachedInputTokens)
+        <> " output="
+        <> show (unwrapTc usage.outputTokens)
+
 exit1 :: forall a. Aff a
 exit1 = liftEffect (Process.exit' 1)
 
@@ -210,7 +236,8 @@ computeDuration _ _ = Nothing
 -- ---------------------------------------------------------------------------
 
 runNewSession :: WorkspacePath -> Maybe String -> Aff Unit
-runNewSession ws prompt = startSession ws Nothing (ConversationHistory { messages: [] }) prompt
+runNewSession ws prompt =
+    startSession ws Nothing (ConversationHistory { messages: [] }) Nothing prompt
 
 -- ---------------------------------------------------------------------------
 -- A42: resume a session
@@ -225,14 +252,22 @@ runResumeSession ws sid prompt = do
             exit1
         ResumeReady r -> do
             liftEffect $ for_ r.warnings printErr
-            startSession ws (Just sid) r.history prompt
+            startSession ws (Just sid) r.history
+                (Just { juliaDefs: r.juliaDefs, hasStateFile: r.hasStateFile })
+                prompt
 
 -- ---------------------------------------------------------------------------
 -- Core session startup
 -- ---------------------------------------------------------------------------
 
-startSession :: WorkspacePath -> Maybe SessionId -> ConversationHistory -> Maybe String -> Aff Unit
-startSession ws@(WorkspacePath wp) resumedFrom existingHistory prompt = do
+startSession
+    :: WorkspacePath
+    -> Maybe SessionId
+    -> ConversationHistory
+    -> Maybe { juliaDefs :: Array String, hasStateFile :: Boolean }
+    -> Maybe String
+    -> Aff Unit
+startSession ws@(WorkspacePath wp) resumedFrom existingHistory resumeState prompt = do
 
     -- A2a: place default config files
     placed <- placeDefaultConfigs ws
@@ -294,6 +329,12 @@ startSession ws@(WorkspacePath wp) resumedFrom existingHistory prompt = do
     -- A19: run Julia startup sequence
     startupOutput <- runStartupSequence ws kernel
 
+    case resumedFrom, resumeState of
+        Just priorSid, Just resumeData ->
+            restoreResumedSession ws priorSid kernel resumeData
+        _, _ ->
+            pure unit
+
     -- A21-A22: build system prompt
     systemPrompt <- buildSystemPrompt ws config startupOutput
 
@@ -317,7 +358,7 @@ startSession ws@(WorkspacePath wp) resumedFrom existingHistory prompt = do
                 existingHistory
 
     -- Enter the main user ↔ LLM loop
-    runUserLoop ws sessionId config apiKey kernel initHistory Set.empty prompt
+    runUserLoop ws sessionId config apiKey kernel initHistory Set.empty zeroLlmUsage prompt
 
     -- Cleanup
     liftEffect $ closeKernel kernel
@@ -351,6 +392,36 @@ promptSandboxPreflight message = do
     liftEffect $ printLn message
     liftEffect $ writePrompt "> "
     readLine
+
+restoreResumedSession
+    :: WorkspacePath
+    -> SessionId
+    -> KernelHandle
+    -> { juliaDefs :: Array String, hasStateFile :: Boolean }
+    -> Aff Unit
+restoreResumedSession (WorkspacePath wp) priorSid kernel resumeData = do
+    for_ resumeData.juliaDefs \expr -> do
+        out <- executeCode kernel (RawJulia (wrapDefinitionReplay expr)) (const (pure unit))
+        let cleaned = String.trim out
+        when (not (String.null cleaned)) do
+            liftEffect $ printErr cleaned
+
+    when resumeData.hasStateFile do
+        out <- executeCode kernel
+            (RawJulia (buildRestoreSnippet priorSid wp))
+            (const (pure unit))
+        let warnings = Array.filter (not <<< String.null)
+                (map String.trim (String.split (String.Pattern "\n") out))
+        liftEffect $ for_ warnings printErr
+
+wrapDefinitionReplay :: String -> String
+wrapDefinitionReplay expr = String.joinWith "\n"
+    [ "try"
+    , expr
+    , "catch e"
+    , "    println(\"Warning: failed to replay definition: \" * sprint(showerror, e))"
+    , "end"
+    ]
 
 -- ---------------------------------------------------------------------------
 -- A21-A22: system prompt template
@@ -394,9 +465,10 @@ runUserLoop
     -> KernelHandle
     -> ConversationHistory
     -> Set HunkId
+    -> LlmUsage
     -> Maybe String
     -> Aff Unit
-runUserLoop ws sessionId config apiKey kernel history knownHunks maybePrompt = do
+runUserLoop ws sessionId config apiKey kernel history knownHunks usageTotals maybePrompt = do
     line <- case maybePrompt of
         Just p -> do
             liftEffect $ printLn ("\n> " <> p)
@@ -414,8 +486,10 @@ runUserLoop ws sessionId config apiKey kernel history knownHunks maybePrompt = d
     writeLogEvent ws sessionId (EvtUserMessage { timestamp: ts, content: line })
 
     let history' = addMsg history (UserMessage { content: line })
-    knownHunks' <-
-        runReactLoop ws sessionId config apiKey kernel history' (TokenCount 0) knownHunks
+    loopResult <-
+        runReactLoop ws sessionId config apiKey kernel history'
+            (TokenCount 0) knownHunks usageTotals
+    liftEffect $ printLn (renderSessionTokenUsage loopResult.usageTotals)
 
     case maybePrompt of
         -- Single-turn mode: exit after the turn completes
@@ -424,7 +498,8 @@ runUserLoop ws sessionId config apiKey kernel history knownHunks maybePrompt = d
             liftEffect $ Process.exit' 0
         -- Interactive mode: loop back to wait for the next user message
         Nothing ->
-            runUserLoop ws sessionId config apiKey kernel history' knownHunks' Nothing
+            runUserLoop ws sessionId config apiKey kernel history'
+                loopResult.knownHunks loopResult.usageTotals Nothing
 
 -- ---------------------------------------------------------------------------
 -- A1: inner loop — LLM calls + tool execution
@@ -439,8 +514,9 @@ runReactLoop
     -> ConversationHistory
     -> TokenCount
     -> Set HunkId
-    -> Aff (Set HunkId)
-runReactLoop ws sessionId config apiKey kernel history accumulated knownHunks = do
+    -> LlmUsage
+    -> Aff { knownHunks :: Set HunkId, usageTotals :: LlmUsage }
+runReactLoop ws sessionId config apiKey kernel history accumulated knownHunks usageTotals = do
     liftEffect $ printLn ""
     llmR <- callLlm config apiKey history (liftEffect <<< printStr)
     liftEffect $ printLn ""
@@ -448,42 +524,56 @@ runReactLoop ws sessionId config apiKey kernel history accumulated knownHunks = 
     case llmR of
         Left err -> do
             liftEffect $ printErr ("LLM error: " <> show err)
-            pure knownHunks
+            pure { knownHunks, usageTotals }
 
-        Right response@(LlmResponse r) -> do
-            ts <- getTs
-            writeLogEvent ws sessionId
-                (EvtLlmResponse { timestamp: ts, content: r.content })
+        Right result -> case result.response of
+            response@(LlmResponse r) -> do
+                ts <- getTs
+                writeLogEvent ws sessionId
+                    (EvtLlmResponse { timestamp: ts, content: r.content })
 
-            let newAcc = addTc accumulated r.inputTokens
-            let history' = addMsg history
-                    (AssistantMessage { content: r.content, toolCalls: r.toolCalls })
+                let usageTotals' = addLlmUsage usageTotals result.usage
+                writeLogEvent ws sessionId (TokenUsage
+                    { timestamp: ts
+                    , inputTokens: result.usage.inputTokens
+                    , cachedInputTokens: result.usage.cachedInputTokens
+                    , outputTokens: result.usage.outputTokens
+                    , totalSessionInputTokens: usageTotals'.inputTokens
+                    , totalSessionCachedInputTokens: usageTotals'.cachedInputTokens
+                    , totalSessionOutputTokens: usageTotals'.outputTokens
+                    })
 
-            case reactStep config newAcc history' response of
+                let newAcc = addTc accumulated r.inputTokens
+                let history' = addMsg history
+                        (AssistantMessage { content: r.content, toolCalls: r.toolCalls })
 
-                PromptUser ->
-                    pure knownHunks
+                case reactStep config newAcc history' response of
 
-                CompactThenPromptUser -> do
-                    _ <- doCompact ws sessionId config apiKey history'
-                    pure knownHunks
+                    PromptUser ->
+                        pure { knownHunks, usageTotals: usageTotals' }
 
-                ExecuteTool tc -> do
-                    Tuple history'' hunks' <-
-                        doTool ws sessionId config kernel history' tc knownHunks
-                    runReactLoop ws sessionId config apiKey kernel history'' newAcc hunks'
+                    CompactThenPromptUser -> do
+                        compactR <- doCompact ws sessionId config apiKey history' usageTotals'
+                        pure { knownHunks, usageTotals: compactR.usageTotals }
 
-                ExecuteToolThenCompact tc -> do
-                    Tuple history'' hunks' <-
-                        doTool ws sessionId config kernel history' tc knownHunks
-                    history''' <- doCompact ws sessionId config apiKey history''
-                    runReactLoop ws sessionId config apiKey kernel history''' (TokenCount 0) hunks'
+                    ExecuteTool tc -> do
+                        Tuple history'' hunks' <-
+                            doTool ws sessionId config kernel history' tc knownHunks
+                        runReactLoop ws sessionId config apiKey kernel history''
+                            newAcc hunks' usageTotals'
 
-                ExecuteToolThenEndTurn tc -> do
-                    Tuple _ hunks' <-
-                        doTool ws sessionId config kernel history' tc knownHunks
-                    liftEffect $ printLn "\n[Token limit reached — please continue]"
-                    pure hunks'
+                    ExecuteToolThenCompact tc -> do
+                        Tuple history'' hunks' <-
+                            doTool ws sessionId config kernel history' tc knownHunks
+                        compactR <- doCompact ws sessionId config apiKey history'' usageTotals'
+                        runReactLoop ws sessionId config apiKey kernel compactR.history
+                            (TokenCount 0) hunks' compactR.usageTotals
+
+                    ExecuteToolThenEndTurn tc -> do
+                        Tuple _ hunks' <-
+                            doTool ws sessionId config kernel history' tc knownHunks
+                        liftEffect $ printLn "\n[Token limit reached — please continue]"
+                        pure { knownHunks: hunks', usageTotals: usageTotals' }
 
 -- ---------------------------------------------------------------------------
 -- Tool dispatch (A3-A6)
@@ -545,7 +635,7 @@ dispatchTool ws _config kernel tc knownHunks =
                     val  <- FO.lookup "code" obj
                     J.toString val
             out <- executeCode kernel (RawJulia code) (const (pure unit))
-            pure (Tuple out knownHunks)
+            pure (Tuple out Set.empty)
 
         "git_diff" -> do
             diff <- runGitDiff ws
@@ -608,8 +698,9 @@ doCompact
     -> Config
     -> String
     -> ConversationHistory
-    -> Aff ConversationHistory
-doCompact ws@(WorkspacePath wp) sessionId config apiKey history = do
+    -> LlmUsage
+    -> Aff { history :: ConversationHistory, usageTotals :: LlmUsage }
+doCompact ws@(WorkspacePath wp) sessionId config apiKey history usageTotals = do
     compactTmplR <- attempt (FS.readTextFile UTF8 (wp <> "/.7aigent/compaction_prompt.md"))
     summaryTmplR <- attempt (FS.readTextFile UTF8 (wp <> "/.7aigent/summary_message.md"))
     let compactTmpl = case compactTmplR of
@@ -638,31 +729,46 @@ doCompact ws@(WorkspacePath wp) sessionId config apiKey history = do
     liftEffect $ printLn ""
 
     case summaryR of
-        Left _ -> pure history
-        Right (LlmResponse r) -> do
-            let summary = r.content
-            let summaryMsg = case substituteTemplate
-                    (Map.fromFoldable [Tuple "summary" summary]) summaryTmpl of
-                    Left _ -> summary
-                    Right t -> t
+        Left _ -> pure { history, usageTotals }
+        Right result -> case result.response of
+            LlmResponse r -> do
+                ts <- getTs
+                let usageTotals' = addLlmUsage usageTotals result.usage
+                writeLogEvent ws sessionId (TokenUsage
+                    { timestamp: ts
+                    , inputTokens: result.usage.inputTokens
+                    , cachedInputTokens: result.usage.cachedInputTokens
+                    , outputTokens: result.usage.outputTokens
+                    , totalSessionInputTokens: usageTotals'.inputTokens
+                    , totalSessionCachedInputTokens: usageTotals'.cachedInputTokens
+                    , totalSessionOutputTokens: usageTotals'.outputTokens
+                    })
 
-            ts <- getTs
-            writeLogEvent ws sessionId (Compaction
-                { timestamp: ts
-                , summary
-                , initialMessageCount:  Array.length plan.initialBlock
-                , compactedMessageCount: Array.length plan.compactedBlock
-                , finalMessageCount:    Array.length plan.finalBlock
-                , totalTokensBefore:    unwrapTc (totalTokens history)
-                })
+                let summary = r.content
+                let summaryMsg = case substituteTemplate
+                        (Map.fromFoldable [Tuple "summary" summary]) summaryTmpl of
+                        Left _ -> summary
+                        Right t -> t
 
-            let newMsgs =
-                    map toE plan.initialBlock <>
-                    [{ message: UserMessage { content: summaryMsg }
-                     , tokens: estimateTokens summaryMsg
-                     }] <>
-                    map toE plan.finalBlock
-            pure (ConversationHistory { messages: newMsgs })
+                writeLogEvent ws sessionId (Compaction
+                    { timestamp: ts
+                    , summary
+                    , initialMessageCount:  Array.length plan.initialBlock
+                    , compactedMessageCount: Array.length plan.compactedBlock
+                    , finalMessageCount:    Array.length plan.finalBlock
+                    , totalTokensBefore:    unwrapTc (totalTokens history)
+                    })
+
+                let newMsgs =
+                        map toE plan.initialBlock <>
+                        [{ message: UserMessage { content: summaryMsg }
+                         , tokens: estimateTokens summaryMsg
+                         }] <>
+                        map toE plan.finalBlock
+                pure
+                    { history: ConversationHistory { messages: newMsgs }
+                    , usageTotals: usageTotals'
+                    }
   where
     toE m = { message: m, tokens: estimateTokens (msgContent m) }
 

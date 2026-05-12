@@ -78,6 +78,12 @@ sessionLogSpec = do
         exists <- workspaceFileExists ws ".7aigent/sessions/1/"
         exists `shouldEqual` true
 
+    it "A24: session allocation creates the documented lock file path" do
+      withWorkspace \ws -> do
+        _ <- allocateSessionId ws
+        lockExists <- workspaceFileExists ws ".7aigent/sessions/.lock"
+        lockExists `shouldEqual` true
+
   ---------------------------------------------------------------------------
   -- A25 + A26: log event writing
   ---------------------------------------------------------------------------

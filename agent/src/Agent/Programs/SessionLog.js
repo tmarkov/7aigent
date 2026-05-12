@@ -56,3 +56,27 @@ export const fileExistsSync = (filePath) => () => {
         return false;
     }
 };
+
+// allocateSessionIdImpl :: String -> Effect Int
+export const allocateSessionIdImpl = (workspacePath) => () => {
+    const sessionsDir = path.join(workspacePath, ".7aigent", "sessions");
+    fs.mkdirSync(sessionsDir, { recursive: true });
+
+    const release = lockFile(path.join(sessionsDir, ".lock"))();
+    try {
+        const entries = fs.readdirSync(sessionsDir);
+        let maxId = 0;
+        for (const entry of entries) {
+            const parsed = Number.parseInt(entry, 10);
+            if (!Number.isNaN(parsed)) {
+                maxId = Math.max(maxId, parsed);
+            }
+        }
+
+        const newId = maxId + 1;
+        fs.mkdirSync(path.join(sessionsDir, String(newId)), { recursive: true });
+        return newId;
+    } finally {
+        release();
+    }
+};

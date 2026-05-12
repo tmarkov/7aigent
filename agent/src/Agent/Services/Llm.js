@@ -114,12 +114,35 @@ export const streamLlmImpl =
     },
   };
 
+  const mkError = (message, statusCode = null, isTimeout = false) => ({
+    message,
+    statusCode,
+    isTimeout,
+  });
+
+  const looksLikeTimeout = (err) =>
+    err?.code === "ETIMEDOUT" ||
+    err?.code === "ESOCKETTIMEDOUT" ||
+    /timeout|timed out/i.test(err?.message || "");
+
   const req = proto.request(options, (res) => {
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      onError(error)();
+    };
+    const succeed = (result) => {
+      if (settled) return;
+      settled = true;
+      onComplete(result)();
+    };
+
     if (res.statusCode !== 200) {
       let errBody = "";
       res.on("data", (c) => errBody += c.toString());
       res.on("end", () => {
-        onError("HTTP " + res.statusCode + ": " + errBody)();
+        fail(mkError("HTTP " + res.statusCode + ": " + errBody, res.statusCode, false));
       });
       return;
     }
@@ -127,6 +150,8 @@ export const streamLlmImpl =
     let textContent = "";
     const toolCallsMap = {}; // index -> { id, name, arguments }
     let inputTokens = 0;
+    let cachedInputTokens = 0;
+    let outputTokens = 0;
     let buffer = "";
 
     res.on("data", (chunk) => {
@@ -143,6 +168,8 @@ export const streamLlmImpl =
 
         if (parsed.usage) {
           inputTokens = parsed.usage.prompt_tokens || 0;
+          cachedInputTokens = parsed.usage.prompt_tokens_details?.cached_tokens || 0;
+          outputTokens = parsed.usage.completion_tokens || 0;
         }
         const choice = parsed.choices?.[0];
         if (!choice) continue;
@@ -168,13 +195,19 @@ export const streamLlmImpl =
       const toolCalls = Object.entries(toolCallsMap)
         .sort(([a], [b]) => Number(a) - Number(b))
         .map(([, tc]) => ({ id: tc.id, name: tc.name, input: tc.arguments }));
-      onComplete({ content: textContent, toolCalls, inputTokens })();
+      succeed({ content: textContent, toolCalls, inputTokens, cachedInputTokens, outputTokens });
     });
 
-    res.on("error", (err) => onError(err.message)());
+    res.on("error", (err) =>
+      fail(mkError(err.message, null, looksLikeTimeout(err))));
   });
 
-  req.on("error", (err) => onError(err.message)());
+  req.setTimeout(30000, () => {
+    req.destroy(new Error("Network timeout"));
+  });
+
+  req.on("error", (err) =>
+    onError(mkError(err.message, null, looksLikeTimeout(err)))());
   req.write(body);
   req.end();
 };

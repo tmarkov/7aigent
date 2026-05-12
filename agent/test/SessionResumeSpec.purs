@@ -137,10 +137,12 @@ sessionResumeSpec = do
         writeWorkspaceFile ws ".7aigent/sessions/1/log.jsonl" ""
         writeWorkspaceFile ws ".7aigent/sessions/1/julia_defs.jl"
           "struct Foo end\nf(x) = x + 1\n"
+        writeWorkspaceFile ws ".7aigent/sessions/1/julia_state.jls" "serialized"
         result <- loadSessionForResume ws (SessionId 1)
         case result of
-          ResumeReady r ->
+          ResumeReady r -> do
             Array.length r.juliaDefs `shouldSatisfy` (_ > 0)
+            r.hasStateFile `shouldEqual` true
           _ -> fail "Expected ResumeReady"
 
     it "A31: file absent → skipped with warning" do
@@ -185,28 +187,23 @@ sessionResumeSpec = do
 
   describe "A32: deserialization failure handling" do
 
-    it "A32: individual global fails → skipped with warning, others intact" do
-      -- Write a corrupt julia_state.jls that contains invalid serialized
-      -- data for one global. The resume logic should skip the failed
-      -- global and produce a warning.
+    it "A32: state file present is prepared for runtime restore" do
       withWorkspace \ws -> do
         let logContent = renderEvents
               [ sessionStartEvent { id: SessionId 1, timestamp: "t0", workspace: "/w", model: ModelName "m", resumedFrom: Nothing }
               , userMessageEvent "t1" "hello"
               , sessionEndEvent "t2" "eof"
-              ]
+               ]
         writeSessionLog ws (SessionId 1) logContent
-        -- Write a corrupt state file (not valid serialized Julia data)
         writeWorkspaceFile ws ".7aigent/sessions/1/julia_state.jls" "CORRUPT_DATA_HERE"
         writeWorkspaceFile ws ".7aigent/sessions/1/julia_defs.jl" "struct Foo end\n"
         result <- loadSessionForResume ws (SessionId 1)
         case result of
-          ResumeReady r -> do
-            -- Should have warnings about the corrupt state file
-            Array.length r.warnings `shouldSatisfy` (_ > 0)
-          _ -> fail "Expected ResumeReady with warnings about corrupt state"
+          ResumeReady r ->
+            r.hasStateFile `shouldEqual` true
+          _ -> fail "Expected ResumeReady with state restore metadata"
 
-    it "A32: completely absent julia_state.jls → treated as fresh session" do
+    it "A32: completely absent julia_state.jls → skipped with warning" do
       withWorkspace \ws -> do
         let logContent = renderEvents
               [ sessionStartEvent { id: SessionId 1, timestamp: "t0", workspace: "/w", model: ModelName "m", resumedFrom: Nothing }
@@ -220,9 +217,8 @@ sessionResumeSpec = do
         result <- loadSessionForResume ws (SessionId 1)
         case result of
           ResumeReady r -> do
-            -- No state to deserialize → no globals to restore, just
-            -- replay julia_defs.jl. Should succeed without error.
-            Array.length r.warnings `shouldSatisfy` (_ >= 0)
+            r.hasStateFile `shouldEqual` false
+            Array.length r.warnings `shouldSatisfy` (_ > 0)
           _ -> fail "Expected ResumeReady when julia_state.jls is absent"
 
   where

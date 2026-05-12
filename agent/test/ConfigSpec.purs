@@ -46,6 +46,12 @@ configSpec = do
         stateExists `shouldEqual` true
         -- Should have 6 notices (five files plus the state dir)
         (length notices) `shouldEqual` 6
+        configContent <- readWorkspaceFile ws ".7aigent/config.toml"
+        systemPrompt <- readWorkspaceFile ws ".7aigent/system_prompt.md"
+        String.contains (String.Pattern "YOUR_API_ENDPOINT_HERE") configContent
+          `shouldEqual` true
+        String.contains (String.Pattern "You are 7aigent") systemPrompt
+          `shouldEqual` true
 
     it "A2a: preserves existing files and only places missing ones" do
       withWorkspace \ws -> do

@@ -103,38 +103,41 @@ gitCommitSpec = do
 
     it "A6: selective hunk staging commits only specified hunks" do
       withGitRepo \ws -> do
-        addTrackedFile ws "a.txt" "aaa"
-        addTrackedFile ws "b.txt" "bbb"
-        modifyTrackedFile ws "a.txt" "AAA"
-        modifyTrackedFile ws "b.txt" "BBB"
+        addTrackedFile ws "a.txt"
+          "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\nthirteen\nfourteen\n"
+        modifyTrackedFile ws "a.txt"
+          "ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\nthirteen\nFOURTEEN\n"
         diffResult <- runGitDiff ws
-        let ids = parseHunkIds diffResult
-        -- Commit only H1 (first hunk)
+        diffResult `shouldSatisfy` contains "H1"
+        diffResult `shouldSatisfy` contains "H2"
         case NEA.fromArray [ HunkId "H1" ] of
           Just hunks -> do
             result <- runGitCommit ws (CommitHunks hunks) "Partial" Nothing
             case result of
               Right summary -> do
-                -- Only one file's change should be committed
                 summary `shouldSatisfy` contains "a.txt"
+                diffAfter <- runGitDiff ws
+                diffAfter `shouldSatisfy` contains "H1"
+                diffAfter `shouldSatisfy` contains "FOURTEEN"
               Left err ->
                 fail ("Selective commit failed: " <> show err)
           Nothing -> fail "NEA construction failed"
 
     it "A6: selective staging leaves other hunks uncommitted" do
       withGitRepo \ws -> do
-        addTrackedFile ws "a.txt" "aaa"
-        addTrackedFile ws "b.txt" "bbb"
-        modifyTrackedFile ws "a.txt" "AAA"
-        modifyTrackedFile ws "b.txt" "BBB"
-        diffResult <- runGitDiff ws
+        addTrackedFile ws "a.txt"
+          "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\nthirteen\nfourteen\n"
+        modifyTrackedFile ws "a.txt"
+          "ONE\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\nthirteen\nFOURTEEN\n"
+        _ <- runGitDiff ws
         -- Commit only H1
         case NEA.fromArray [ HunkId "H1" ] of
           Just hunks -> do
             _ <- runGitCommit ws (CommitHunks hunks) "Partial" Nothing
-            -- After partial commit, b.txt should still show as changed
             diffAfter <- runGitDiff ws
-            diffAfter `shouldSatisfy` contains "b.txt"
+            diffAfter `shouldSatisfy` contains "a.txt"
+            diffAfter `shouldSatisfy` contains "FOURTEEN"
+            shouldEqual false (contains "ONE" diffAfter)
           Nothing -> fail "NEA construction failed"
 
   where

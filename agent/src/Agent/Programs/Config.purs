@@ -50,6 +50,8 @@ foreign import lookupEnvImpl :: String -> Effect (Nullable String)
 
 foreign import lookupEnvSync :: String -> Nullable String
 
+foreign import readBundledDefaultImpl :: String -> Effect String
+
 ----------------------------------------------------------------------------
 -- A37: config parsing (pure)
 ----------------------------------------------------------------------------
@@ -119,13 +121,13 @@ placeDefaultConfigs (WorkspacePath wp) = do
             let destPath = configDir <> "/" <> name
             exists <- fileExists destPath
             if exists
-            then pure Nothing
-            else do
-                content <- case mSrcDir of
-                    Just srcDir -> FS.readTextFile UTF8 (srcDir <> "/" <> name)
-                    Nothing     -> pure ""
-                FS.writeTextFile UTF8 destPath content
-                pure (Just ("Created " <> ".7aigent/" <> name))
+                then pure Nothing
+                else do
+                    content <- case mSrcDir of
+                        Just srcDir -> FS.readTextFile UTF8 (srcDir <> "/" <> name)
+                        Nothing     -> liftEffect (readBundledDefaultImpl name)
+                    FS.writeTextFile UTF8 destPath content
+                    pure (Just ("Created " <> ".7aigent/" <> name))
         ) fileNames
     pure (Array.catMaybes ([ stateNotice ] <> results))
 

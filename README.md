@@ -1,15 +1,16 @@
 # 7aigent
 
 An AI agent for interactive codebase exploration. The agent indexes a codebase
-into a relational schema (`code` + `refs` tables, see [`design/`](design/)), then
+into a relational schema (`code` + `symbols`, see [`design/`](design/)), then
 drives a ReACT loop: an LLM reasons over the index by issuing Julia queries to a
-sandboxed REPL, reads the results, and iterates until it can answer the user's question.
+sandboxed IJulia kernel, reads the results, and iterates until it can answer the
+user's question.
 
 ## Architecture
 
 ```
 ┌─────────┐   prompt/result   ┌───────┐   Julia expr / output   ┌──────────────────┐
-│   LLM   │ ◄────────────────► │ agent │ ◄──────────────────────► │ sandbox (RemoteREPL) │
+│   LLM   │ ◄────────────────► │ agent │ ◄──────────────────────► │ sandbox (IJulia) │
 └─────────┘                   └───────┘                          │   CodeTree.jl    │
                                                                   │   SQLite DB      │
                                                                   └──────────────────┘
@@ -17,9 +18,9 @@ sandboxed REPL, reads the results, and iterates until it can answer the user's q
 
 | Component | Location | Role |
 |-----------|----------|------|
-| **CodeTree.jl** | [`CodeTree.jl/`](CodeTree.jl/) | Julia package — `code`/`refs` schema, indexing, query helpers |
-| **sandbox** | [`sandbox/`](sandbox/) | Sandboxed Julia process with RemoteREPL + CodeTree pre-loaded |
-| **agent** | [`agent/`](agent/) | ReACT loop — LLM ↔ sandbox bridge (language TBD) |
+| **CodeTree.jl** | [`CodeTree.jl/`](CodeTree.jl/) | Julia package — `code`/`symbols` schema, indexing, query helpers |
+| **sandbox** | [`sandbox/`](sandbox/) | Sandboxed Julia process exposing an IJulia kernel with CodeTree pre-loaded |
+| **agent** | [`agent/`](agent/) | PureScript/Node.js runner — LLM ↔ sandbox bridge, git tools, session logging/resume |
 
 ## Development
 

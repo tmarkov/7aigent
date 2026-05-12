@@ -46,6 +46,7 @@ foreign import mkdirSyncRecursive :: String -> Effect Unit
 foreign import appendFileSync :: String -> String -> Effect Unit
 foreign import readFileSyncImpl :: String -> Effect String
 foreign import fileExistsSync :: String -> Effect Boolean
+foreign import allocateSessionIdImpl :: String -> Effect Int
 
 ----------------------------------------------------------------------------
 -- A24: session ID allocation
@@ -53,17 +54,7 @@ foreign import fileExistsSync :: String -> Effect Boolean
 
 allocateSessionId :: WorkspacePath -> Aff SessionId
 allocateSessionId (WorkspacePath wp) = liftEffect do
-    let sessionsDir = wp <> "/.7aigent/sessions"
-    mkdirSyncRecursive sessionsDir
-    entries <- listDirSync sessionsDir
-    let maxId = foldl
-            (\acc entry -> case Int.fromString entry of
-                Just n -> max acc n
-                Nothing -> acc
-            ) 0 entries
-    let newId = maxId + 1
-    mkdirSyncRecursive (sessionsDir <> "/" <> show newId)
-    pure (SessionId newId)
+    SessionId <$> allocateSessionIdImpl wp
 
 ----------------------------------------------------------------------------
 -- A25: log event writing

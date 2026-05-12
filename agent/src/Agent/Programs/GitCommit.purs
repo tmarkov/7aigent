@@ -12,11 +12,11 @@ import Data.Array as Array
 import Data.Array.NonEmpty (NonEmptyArray)
 import Data.Array.NonEmpty as NEA
 import Data.Either (Either(..))
+import Data.Foldable (foldl)
 import Data.Maybe (Maybe(..))
 import Data.Set (Set)
 import Data.Set as Set
 import Data.String as String
-import Data.Traversable (traverse)
 import Effect (Effect)
 import Effect.Aff (Aff)
 import Effect.Class (liftEffect)
@@ -27,6 +27,13 @@ import Agent.Types (WorkspacePath(..), HunkId(..), AppError(..))
 -- FFI imports
 foreign import execGitCommitSync :: String -> String -> Effect String
 foreign import execGitCommitSafe :: String -> String -> Effect String
+foreign import execSelectiveGitCommit
+    :: String
+    -> String
+    -> String
+    -> Array String
+    -> String
+    -> Effect String
 
 ----------------------------------------------------------------------------
 -- A6: CommitWhat ADT
@@ -85,22 +92,22 @@ runGitCommitImpl wp CommitAll subject body = do
     summary <- execGitCommitSafe wp "log -1 --stat"
     pure summary
 runGitCommitImpl wp (CommitHunks hunks) subject body = do
-    -- Map hunk IDs to files: run git diff to get the diff output,
-    -- then parse it to find which files have which hunks
+    stagedDiff <- execGitCommitSafe wp "diff --cached"
     diffOutput <- execGitCommitSafe wp "diff"
-    let hunkArray = NEA.toArray hunks
-    let fileMap = buildHunkFileMap diffOutput
-    let filesToStage = Array.nub $ Array.concatMap
-            (\hid -> case Array.find (\fm -> fm.hunkId == hid) fileMap of
-                Just fm -> [fm.fileName]
-                Nothing -> []
-            ) hunkArray
-    _ <- traverse
-        (\f -> execGitCommitSync wp ("add -- " <> shellQuote f))
-        filesToStage
+    untrackedOutput <- execGitCommitSafe wp "ls-files --others --exclude-standard"
+    let selectedIds = Set.fromFoldable (NEA.toArray hunks)
+    let stagedBlocks = numberDiffBlocks (parseDiffBlocks stagedDiff true) 1
+    let unstagedStart = nextHunkId stagedBlocks 1
+    let unstagedBlocks = numberDiffBlocks (parseDiffBlocks diffOutput false) unstagedStart
+    let untrackedFiles = Array.filter (_ /= "")
+            (String.split (String.Pattern "\n") (String.trim untrackedOutput))
+    let trackedBlocks = stagedBlocks <> unstagedBlocks
+    let selectedPatch = renderPatch trackedBlocks (\hid -> Set.member hid selectedIds)
+    let restorePatch = renderPatch stagedBlocks (\hid -> not (Set.member hid selectedIds))
+    let selectedUntracked = selectUntrackedFiles untrackedFiles
+            (nextHunkId trackedBlocks 1) selectedIds
     let msg = buildCommitMessage subject body
-    _ <- execGitCommitSync wp ("commit -m " <> shellQuote msg)
-    summary <- execGitCommitSafe wp "log -1 --stat"
+    summary <- execSelectiveGitCommit wp selectedPatch restorePatch selectedUntracked msg
     pure summary
 
 buildCommitMessage :: String -> Maybe String -> String
@@ -111,53 +118,125 @@ shellQuote :: String -> String
 shellQuote s = "'" <> String.replaceAll
     (String.Pattern "'") (String.Replacement "'\\''") s <> "'"
 
--- Build a mapping from hunk ID (H1, H2, ...) to file name,
--- using the same sequential numbering as runGitDiff
-type HunkFileEntry = { hunkId :: HunkId, fileName :: String }
+type DiffBlock =
+    { fileName :: String
+    , headerLines :: Array String
+    , hunkTexts :: Array String
+    , fullBlock :: String
+    , staged :: Boolean
+    }
 
-buildHunkFileMap :: String -> Array HunkFileEntry
-buildHunkFileMap diffOutput =
+type NumberedDiffBlock =
+    { block :: DiffBlock
+    , hunkIds :: Array HunkId
+    }
+
+parseDiffBlocks :: String -> Boolean -> Array DiffBlock
+parseDiffBlocks diff staged =
+    if String.trim diff == ""
+    then []
+    else
+        let
+            parts = String.split (String.Pattern "diff --git ") diff
+            diffParts = Array.filter (_ /= "") (Array.drop 1 parts)
+        in
+            map (\part -> parseDiffBlock ("diff --git " <> part) staged) diffParts
+
+parseDiffBlock :: String -> Boolean -> DiffBlock
+parseDiffBlock fullBlock staged =
     let
-        parts = String.split (String.Pattern "diff --git ") diffOutput
-        diffParts = Array.filter (\s -> s /= "")
-            (Array.drop 1 parts)
-        -- Count hunks per block, assign sequential IDs
-        blocks = map parseBlockInfo diffParts
-    in
-        assignHunkIds blocks 1
-
-type BlockInfo = { fileName :: String, hunkCount :: Int }
-
-parseBlockInfo :: String -> BlockInfo
-parseBlockInfo block =
-    let
-        allLines = String.split (String.Pattern "\n") block
+        allLines = String.split (String.Pattern "\n") fullBlock
         fileName = case Array.head allLines of
             Nothing -> "unknown"
             Just firstLine ->
                 case String.indexOf (String.Pattern " b/") firstLine of
                     Nothing -> String.trim firstLine
                     Just idx -> String.drop (idx + 3) firstLine
-        hunkCount = Array.length $
-            Array.filter (\l -> String.take 2 l == "@@") allLines
+        indexedLines = Array.mapWithIndex (\idx line -> { idx, line }) allLines
+        hunkStarts = Array.filter (\l -> String.take 2 l.line == "@@") indexedLines
+        headerLines = case Array.head hunkStarts of
+            Nothing -> allLines
+            Just firstHunk -> Array.slice 0 firstHunk.idx allLines
+        hunkTexts = if Array.null hunkStarts
+            then []
+            else Array.mapWithIndex
+                (\i hunk ->
+                    let
+                        endIdx = case Array.index hunkStarts (i + 1) of
+                            Nothing -> Array.length allLines
+                            Just next -> next.idx
+                    in
+                        String.joinWith "\n" (Array.slice hunk.idx endIdx allLines)
+                )
+                hunkStarts
     in
         { fileName
-        , hunkCount: max 1 hunkCount
+        , headerLines
+        , hunkTexts
+        , fullBlock
+        , staged
         }
 
-assignHunkIds :: Array BlockInfo -> Int -> Array HunkFileEntry
-assignHunkIds blocks startId =
+numberDiffBlocks :: Array DiffBlock -> Int -> Array NumberedDiffBlock
+numberDiffBlocks blocks startId =
     let
-        go :: Int -> Array BlockInfo -> Array HunkFileEntry
+        go :: Int -> Array DiffBlock -> Array NumberedDiffBlock
         go _ [] = []
         go nextId bs = case Array.uncons bs of
             Nothing -> []
             Just { head: b, tail: rest } ->
-                let entries = Array.range nextId (nextId + b.hunkCount - 1)
-                        # map (\n ->
-                            { hunkId: HunkId ("H" <> show n)
-                            , fileName: b.fileName
-                            })
-                in entries <> go (nextId + b.hunkCount) rest
+                let count = max 1 (Array.length b.hunkTexts)
+                    hunkIds = Array.range nextId (nextId + count - 1)
+                        # map (\n -> HunkId ("H" <> show n))
+                in
+                    [ { block: b, hunkIds } ] <> go (nextId + count) rest
     in
         go startId blocks
+
+nextHunkId :: Array NumberedDiffBlock -> Int -> Int
+nextHunkId blocks startId =
+    foldl
+        (\next block -> next + Array.length block.hunkIds)
+        startId
+        blocks
+
+renderPatch :: Array NumberedDiffBlock -> (HunkId -> Boolean) -> String
+renderPatch blocks includeHunk =
+    let
+        rendered = map ensureTrailingNewline (Array.mapMaybe renderBlock blocks)
+    in
+        String.joinWith "" rendered
+  where
+    ensureTrailingNewline text
+        | String.null text = text
+        | String.drop (String.length text - 1) text == "\n" = text
+        | otherwise = text <> "\n"
+
+    renderBlock { block, hunkIds } =
+        if Array.null block.hunkTexts
+        then case Array.head hunkIds of
+            Just hid | includeHunk hid -> Just block.fullBlock
+            _ -> Nothing
+        else
+            let
+                selectedHunks = Array.mapMaybe
+                    (\entry -> if includeHunk entry.hunkId then Just entry.hunkText else Nothing)
+                    (Array.zipWith
+                        (\hunkId hunkText -> { hunkId, hunkText })
+                        hunkIds
+                        block.hunkTexts)
+            in
+                if Array.null selectedHunks
+                then Nothing
+                else Just (String.joinWith "\n" (block.headerLines <> selectedHunks))
+
+selectUntrackedFiles :: Array String -> Int -> Set HunkId -> Array String
+selectUntrackedFiles files startId selectedIds =
+    Array.mapMaybe
+        (\entry -> if Set.member entry.hunkId selectedIds then Just entry.fileName else Nothing)
+        (Array.mapWithIndex
+            (\idx fileName ->
+                { hunkId: HunkId ("H" <> show (startId + idx))
+                , fileName
+                })
+            files)
