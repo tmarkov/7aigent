@@ -2,7 +2,7 @@
 
 julia_version = "1.12.6"
 manifest_format = "2.0"
-project_hash = "a8aff9a186884ab7f462f1f7b93808107a9eb430"
+project_hash = "acb533a89317f572485b44cd82f7f9767f6ab2c6"
 
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
@@ -27,7 +27,7 @@ uuid = "8be319e6-bccf-4806-a6f7-6fae938471bc"
 version = "1.0.0"
 
 [[deps.CodeTree]]
-deps = ["DBInterface", "DataFrames", "DataFramesMeta", "SHA", "SQLite", "Tables", "TreeSitter"]
+deps = ["DBInterface", "DataFrames", "DataFramesMeta", "Markdown", "SHA", "SQLite", "Tables", "TreeSitter"]
 path = "."
 uuid = "342842c8-1a2a-4ebb-ae0f-32d4c88624eb"
 version = "0.1.0"
