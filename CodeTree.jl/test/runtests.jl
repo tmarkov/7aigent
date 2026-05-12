@@ -268,6 +268,54 @@ end
     end
 end
 
+@testset "R5: fallback discovery honours nested .gitignore rules without git" begin
+    tmp = mktempdir()
+    no_git_path = mktempdir()
+    try
+        mkpath(joinpath(tmp, ".git"))
+        mkpath(joinpath(tmp, "pkg", "src"))
+        mkpath(joinpath(tmp, "pkg", "node_modules"))
+        mkpath(joinpath(tmp, "pkg", "output"))
+        mkpath(joinpath(tmp, ".7aigent", "state"))
+
+        write(joinpath(tmp, ".git", "HEAD"), "ref: refs/heads/main\n")
+        write(joinpath(tmp, ".gitignore"), join([
+            "*.o",
+            "build/",
+            "**/.env",
+            ".7aigent/",
+            "",
+        ], '\n'))
+        write(joinpath(tmp, "pkg", ".gitignore"), join([
+            "node_modules/",
+            "output/",
+            "",
+        ], '\n'))
+
+        write(joinpath(tmp, "keep.jl"), "x = 1\n")
+        write(joinpath(tmp, ".env"), "SECRET=1\n")
+        write(joinpath(tmp, "tmp_test_artifact.o"), "not really an object\n")
+        write(joinpath(tmp, "pkg", "src", "main.jl"), "f() = 1\n")
+        write(joinpath(tmp, "pkg", "node_modules", "dep.js"), "module.exports = 1;\n")
+        write(joinpath(tmp, "pkg", "output", "bundle.js"), "console.log(1)\n")
+        write(joinpath(tmp, ".7aigent", "state", "ignored.txt"), "ignore me\n")
+
+        paths = withenv("PATH" => no_git_path) do
+            Set(CodeTree.discover_files(tmp))
+        end
+
+        @test paths == Set([
+            ".gitignore",
+            "keep.jl",
+            "pkg/.gitignore",
+            "pkg/src/main.jl",
+        ])
+    finally
+        rm(no_git_path; recursive=true, force=true)
+        rm(tmp; recursive=true, force=true)
+    end
+end
+
 @testset "R7: language_for_file maps known extensions to language names" begin
     lff = CodeTree.language_for_file
     @test lff(TEST_CONFIG, "algorithms.cpp")  == "cpp"
