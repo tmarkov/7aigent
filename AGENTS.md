@@ -17,7 +17,7 @@ to this repository. Read it fully before making any changes.
 │   └── loading-process.md         ← loading/indexing algorithm narrative
 ├── CodeTree.jl/               ← the Julia package
 │   ├── Project.toml
-│   ├── src/CodeTree.jl            ← package implementation (currently a stub)
+│   ├── src/CodeTree.jl            ← package implementation
 │   └── test/
 │       ├── runtests.jl            ← test entry point
 │       └── test_codebase/         ← fixture codebase used by tests

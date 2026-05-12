@@ -21,7 +21,7 @@ startupSpec = do
   describe "A2: startup orchestration" do
 
     it "A2: config validation failure → Abort, no sandbox spawned" do
-      let result = advanceStartup ValidatingConfig (Left (ConfigFieldMissing "model"))
+      let result = advanceStartup ValidatingConfig (Left (ConfigError "model"))
       case result of
         Abort err ->
           String.contains (String.Pattern "model") (show err)

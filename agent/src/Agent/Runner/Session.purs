@@ -10,9 +10,6 @@ module Agent.Runner.Session
 import Prelude
 
 import Data.Array as Array
-import Data.Array.NonEmpty as NEA
-import Data.Argonaut.Core as J
-import Data.Argonaut.Parser as JP
 import Data.Either (Either(..), fromRight)
 import Data.Foldable (for_, foldl, foldr)
 import Data.Int as Int
@@ -26,15 +23,15 @@ import Data.Tuple (Tuple(..))
 import Effect (Effect)
 import Effect.Aff (Aff, attempt)
 import Effect.Class (liftEffect)
-import Effect.Exception (message)
-import Foreign.Object as FO
 import Node.Encoding (Encoding(..))
 import Node.FS.Aff as FS
 import Node.Process as Process
 
 import Agent.Types
     ( WorkspacePath(..)
+    , Timestamp(..)
     , SessionId(..)
+    , SessionEndReason(..)
     , ModelName(..)
     , TokenCount(..)
     , HunkId(..)
@@ -43,10 +40,10 @@ import Agent.Types
     , ConversationHistory(..)
     , LlmResponse(..)
     , Message(..)
-    , ToolCall
-    , ToolCallId(..)
     , AppError(..)
     , LogEvent(..)
+    , extractContent
+    , renderTimestamp
     )
 import Agent.Programs.Config (parseConfig, readApiKey, placeDefaultConfigs)
 import Agent.Programs.SessionLog
@@ -58,10 +55,6 @@ import Agent.Programs.SessionResume (loadSessionForResume, ResumeResult(..))
 import Agent.Programs.Template (substituteTemplate)
 import Agent.Programs.ReactStep (reactStep, NextStep(..))
 import Agent.Programs.Compaction (buildCompactionPlan)
-import Agent.Programs.ToolOutput (processToolOutput)
-import Agent.Programs.GitDiff (runGitDiff, parseHunkIds)
-import Agent.Programs.GitCommit
-    ( CommitWhat(..), validateCommitWhat, runGitCommit )
 import Agent.Programs.JuliaDefs (extractDefs)
 import Agent.Programs.ReplSerialize
     ( buildRestoreSnippet
@@ -71,6 +64,7 @@ import Agent.Programs.SandboxPreflight
     ( SandboxPreflightResult(..)
     , runSandboxPreflight
     )
+import Agent.Runner.ToolExecution (doTool)
 import Agent.Services.Terminal (printLn, printStr, printErr)
 import Agent.Services.Stdin (readLine, writePrompt)
 import Agent.Services.Sandbox (SandboxHandle, spawnSandbox)
@@ -84,48 +78,12 @@ import Agent.Services.Llm (LlmUsage, callLlm)
 
 foreign import nowIsoImpl :: Effect String
 
-getTs :: Aff String
-getTs = liftEffect nowIsoImpl
+getTs :: Aff Timestamp
+getTs = Timestamp <$> liftEffect nowIsoImpl
 
 -- ---------------------------------------------------------------------------
 -- Utilities
 -- ---------------------------------------------------------------------------
-
--- | Produce a one-or-more-line summary of a tool call's input for display.
--- | For julia_repl, shows the code (capped at 10 lines).
--- | For git tools, shows the relevant fields.
-formatToolInput :: String -> String -> String
-formatToolInput "julia_repl" input =
-    let code = fromMaybe input do
-            json <- case JP.jsonParser input of
-                Right j -> Just j
-                Left _  -> Nothing
-            obj  <- J.toObject json
-            val  <- FO.lookup "code" obj
-            J.toString val
-        ls     = String.split (String.Pattern "\n") code
-        kept   = Array.take 10 ls
-        more   = Array.length ls > 10
-    in String.joinWith "\n" kept <> if more then "\n..." else ""
-formatToolInput "git_diff" _ = ""
-formatToolInput "git_commit" input =
-    let msg = do
-            json   <- case JP.jsonParser input of
-                Right j -> Just j
-                Left _  -> Nothing
-            obj    <- J.toObject json
-            msgVal <- FO.lookup "message" obj
-            J.toString msgVal
-        what = do
-            json    <- case JP.jsonParser input of
-                Right j -> Just j
-                Left _  -> Nothing
-            obj     <- J.toObject json
-            whatVal <- FO.lookup "what" obj
-            J.toString whatVal
-    in "message: " <> fromMaybe "(none)" msg
-       <> "  what: " <> fromMaybe "all" what
-formatToolInput _ input = input
 
 estimateTokens :: String -> TokenCount
 estimateTokens s = TokenCount (max 1 (String.length s / 4))
@@ -134,14 +92,8 @@ addMsg :: ConversationHistory -> Message -> ConversationHistory
 addMsg (ConversationHistory h) msg =
     ConversationHistory
         { messages: h.messages <>
-            [{ message: msg, tokens: estimateTokens (msgContent msg) }]
+            [{ message: msg, tokens: estimateTokens (extractContent msg) }]
         }
-
-msgContent :: Message -> String
-msgContent (SystemMessage r)    = r.content
-msgContent (UserMessage r)      = r.content
-msgContent (AssistantMessage r) = r.content
-msgContent (ToolResultMessage r) = r.output
 
 unwrapSid :: SessionId -> Int
 unwrapSid (SessionId n) = n
@@ -161,6 +113,13 @@ zeroLlmUsage =
     { inputTokens: TokenCount 0
     , cachedInputTokens: TokenCount 0
     , outputTokens: TokenCount 0
+    }
+
+type ReactLoopResult =
+    { history :: ConversationHistory
+    , knownHunks :: Set HunkId
+    , usageTotals :: LlmUsage
+    , error :: Maybe AppError
     }
 
 addLlmUsage :: LlmUsage -> LlmUsage -> LlmUsage
@@ -209,7 +168,7 @@ loadMeta ws n = do
             in case startEv of
                 Just (SessionStart r) -> pure $ Just
                     { id: r.id
-                    , started: String.take 16 r.timestamp
+                    , started: String.take 16 (renderTimestamp r.timestamp)
                     , duration: computeDuration r.timestamp endEv
                     , description: sessionDescription
                         (fromMaybe "(no description)"
@@ -226,7 +185,7 @@ loadMeta ws n = do
     isSessionEnd (SessionEnd _)       = true
     isSessionEnd _                    = false
 
-computeDuration :: String -> Maybe LogEvent -> Maybe String
+computeDuration :: Timestamp -> Maybe LogEvent -> Maybe String
 computeDuration _ Nothing = Nothing
 computeDuration _start (Just (SessionEnd _)) = Nothing  -- would need full date math
 computeDuration _ _ = Nothing
@@ -444,7 +403,7 @@ buildSystemPrompt (WorkspacePath wp) config startupOutput = do
     let vars = Map.fromFoldable
             [ Tuple "initial_repl_output" startupOutput
             , Tuple "agents-md" agentsMd
-            , Tuple "datetime" ts
+            , Tuple "datetime" (renderTimestamp ts)
             , Tuple "model" model
             ]
     case substituteTemplate vars tmpl of
@@ -479,7 +438,7 @@ runUserLoop ws sessionId config apiKey kernel history knownHunks usageTotals may
 
     -- EOF → clean exit
     when (String.null line) do
-        finishSession ws sessionId kernel history "eof"
+        finishSession ws sessionId kernel history SessionEndedEof
         liftEffect $ Process.exit' 0
 
     ts <- getTs
@@ -491,14 +450,18 @@ runUserLoop ws sessionId config apiKey kernel history knownHunks usageTotals may
             (TokenCount 0) knownHunks usageTotals
     liftEffect $ printLn (renderSessionTokenUsage loopResult.usageTotals)
 
-    case maybePrompt of
-        -- Single-turn mode: exit after the turn completes
-        Just _ -> do
-            finishSession ws sessionId kernel history' "prompt"
+    case loopResult.error, maybePrompt of
+        Just _, Just _ -> do
+            finishSession ws sessionId kernel loopResult.history SessionEndedError
+            liftEffect $ Process.exit' 1
+        Just _, Nothing ->
+            runUserLoop ws sessionId config apiKey kernel loopResult.history
+                loopResult.knownHunks loopResult.usageTotals Nothing
+        Nothing, Just _ -> do
+            finishSession ws sessionId kernel loopResult.history SessionEndedPrompt
             liftEffect $ Process.exit' 0
-        -- Interactive mode: loop back to wait for the next user message
-        Nothing ->
-            runUserLoop ws sessionId config apiKey kernel history'
+        Nothing, Nothing ->
+            runUserLoop ws sessionId config apiKey kernel loopResult.history
                 loopResult.knownHunks loopResult.usageTotals Nothing
 
 -- ---------------------------------------------------------------------------
@@ -515,7 +478,7 @@ runReactLoop
     -> TokenCount
     -> Set HunkId
     -> LlmUsage
-    -> Aff { knownHunks :: Set HunkId, usageTotals :: LlmUsage }
+    -> Aff ReactLoopResult
 runReactLoop ws sessionId config apiKey kernel history accumulated knownHunks usageTotals = do
     liftEffect $ printLn ""
     llmR <- callLlm config apiKey history (liftEffect <<< printStr)
@@ -524,7 +487,7 @@ runReactLoop ws sessionId config apiKey kernel history accumulated knownHunks us
     case llmR of
         Left err -> do
             liftEffect $ printErr ("LLM error: " <> show err)
-            pure { knownHunks, usageTotals }
+            pure { history, knownHunks, usageTotals, error: Just err }
 
         Right result -> case result.response of
             response@(LlmResponse r) -> do
@@ -550,143 +513,45 @@ runReactLoop ws sessionId config apiKey kernel history accumulated knownHunks us
                 case reactStep config newAcc history' response of
 
                     PromptUser ->
-                        pure { knownHunks, usageTotals: usageTotals' }
+                        pure
+                            { history: history'
+                            , knownHunks
+                            , usageTotals: usageTotals'
+                            , error: Nothing
+                            }
 
                     CompactThenPromptUser -> do
                         compactR <- doCompact ws sessionId config apiKey history' usageTotals'
-                        pure { knownHunks, usageTotals: compactR.usageTotals }
+                        pure
+                            { history: compactR.history
+                            , knownHunks
+                            , usageTotals: compactR.usageTotals
+                            , error: Nothing
+                            }
 
                     ExecuteTool tc -> do
                         Tuple history'' hunks' <-
-                            doTool ws sessionId config kernel history' tc knownHunks
+                            doTool getTs ws sessionId config kernel history' tc knownHunks
                         runReactLoop ws sessionId config apiKey kernel history''
                             newAcc hunks' usageTotals'
 
                     ExecuteToolThenCompact tc -> do
                         Tuple history'' hunks' <-
-                            doTool ws sessionId config kernel history' tc knownHunks
+                            doTool getTs ws sessionId config kernel history' tc knownHunks
                         compactR <- doCompact ws sessionId config apiKey history'' usageTotals'
                         runReactLoop ws sessionId config apiKey kernel compactR.history
                             (TokenCount 0) hunks' compactR.usageTotals
 
                     ExecuteToolThenEndTurn tc -> do
-                        Tuple _ hunks' <-
-                            doTool ws sessionId config kernel history' tc knownHunks
+                        Tuple history'' hunks' <-
+                            doTool getTs ws sessionId config kernel history' tc knownHunks
                         liftEffect $ printLn "\n[Token limit reached — please continue]"
-                        pure { knownHunks: hunks', usageTotals: usageTotals' }
-
--- ---------------------------------------------------------------------------
--- Tool dispatch (A3-A6)
--- ---------------------------------------------------------------------------
-
-doTool
-    :: WorkspacePath
-    -> SessionId
-    -> Config
-    -> KernelHandle
-    -> ConversationHistory
-    -> ToolCall
-    -> Set HunkId
-    -> Aff (Tuple ConversationHistory (Set HunkId))
-doTool ws sessionId config kernel history tc knownHunks = do
-    ts <- getTs
-    writeLogEvent ws sessionId (EvtToolCall
-        { timestamp: ts
-        , toolName: tc.name
-        , toolCallId: tc.id
-        , input: tc.input
-        })
-    liftEffect $ printLn ("\n[Tool: " <> tc.name <> "]")
-    let inputSummary = formatToolInput tc.name tc.input
-    when (not (String.null inputSummary)) do
-        liftEffect $ printLn inputSummary
-
-    Tuple rawOut hunks' <- dispatchTool ws config kernel tc knownHunks
-
-    let proc = processToolOutput config.outputThresholdChars rawOut
-    liftEffect $ printLn proc.displayText
-
-    ts2 <- getTs
-    writeLogEvent ws sessionId (ToolResult
-        { timestamp: ts2
-        , toolCallId: tc.id
-        , output: proc.fullOutput
-        , truncated: proc.truncated
-        })
-
-    let toolMsg = ToolResultMessage { toolCallId: tc.id, output: proc.llmFacing }
-    pure (Tuple (addMsg history toolMsg) hunks')
-
-dispatchTool
-    :: WorkspacePath
-    -> Config
-    -> KernelHandle
-    -> ToolCall
-    -> Set HunkId
-    -> Aff (Tuple String (Set HunkId))
-dispatchTool ws _config kernel tc knownHunks =
-    case tc.name of
-        "julia_repl" -> do
-            let code = fromMaybe tc.input do
-                    json <- case JP.jsonParser tc.input of
-                        Right j -> Just j
-                        Left _  -> Nothing
-                    obj  <- J.toObject json
-                    val  <- FO.lookup "code" obj
-                    J.toString val
-            out <- executeCode kernel (RawJulia code) (const (pure unit))
-            pure (Tuple out Set.empty)
-
-        "git_diff" -> do
-            diff <- runGitDiff ws
-            let ids = parseHunkIds diff
-            pure (Tuple diff ids)
-
-        "git_commit" -> do
-            let parsed = do
-                    json <- case JP.jsonParser tc.input of
-                        Right j -> Just j
-                        Left _  -> Nothing
-                    obj <- J.toObject json
-                    whatJson <- FO.lookup "what" obj
-                    let whatStr = fromMaybe (J.stringify whatJson)
-                                    (J.toString whatJson)
-                    let msg = fromMaybe "Commit" do
-                                  msgJson <- FO.lookup "message" obj
-                                  J.toString msgJson
-                    let body = do
-                                  bodyJson <- FO.lookup "body" obj
-                                  J.toString bodyJson
-                    pure { what: whatStr, message: msg, body }
-            case parsed of
-                Nothing -> pure (Tuple "Invalid git_commit input" knownHunks)
-                Just r ->
-                    case parseCommitWhat r.what knownHunks of
-                        Left err -> pure (Tuple (show err) knownHunks)
-                        Right cw -> do
-                            commitR <- runGitCommit ws cw r.message r.body
-                            case commitR of
-                                Left err  -> pure (Tuple (show err) knownHunks)
-                                Right msg -> pure (Tuple msg Set.empty)
-
-        other ->
-            pure (Tuple ("Unknown tool: " <> other) knownHunks)
-
--- | Parse the `what` field from a git_commit tool call.
-parseCommitWhat :: String -> Set HunkId -> Either AppError CommitWhat
-parseCommitWhat input knownHunks
-    | input == "all" || input == "\"all\"" = Right CommitAll
-    | otherwise =
-        case JP.jsonParser input of
-            Left _ -> Left (StaleHunkIds [])
-            Right json ->
-                case J.toArray json of
-                    Nothing -> Left (StaleHunkIds [])
-                    Just arr ->
-                        let ids = Array.mapMaybe (map HunkId <<< J.toString) arr
-                        in case NEA.fromArray ids of
-                            Nothing -> Left (StaleHunkIds [])
-                            Just ne -> validateCommitWhat knownHunks (CommitHunks ne)
+                        pure
+                            { history: history''
+                            , knownHunks: hunks'
+                            , usageTotals: usageTotals'
+                            , error: Nothing
+                            }
 
 -- ---------------------------------------------------------------------------
 -- Compaction (A33-A36)
@@ -770,7 +635,7 @@ doCompact ws@(WorkspacePath wp) sessionId config apiKey history usageTotals = do
                     , usageTotals: usageTotals'
                     }
   where
-    toE m = { message: m, tokens: estimateTokens (msgContent m) }
+    toE m = { message: m, tokens: estimateTokens (extractContent m) }
 
 showMsg :: Message -> String
 showMsg (SystemMessage r)    = "[system] " <> r.content
@@ -787,7 +652,7 @@ finishSession
     -> SessionId
     -> KernelHandle
     -> ConversationHistory
-    -> String
+    -> SessionEndReason
     -> Aff Unit
 finishSession ws@(WorkspacePath wp) sessionId kernel _history reason = do
     evtsR <- readLogEvents ws sessionId

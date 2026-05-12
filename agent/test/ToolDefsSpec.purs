@@ -9,6 +9,7 @@ import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (shouldEqual, shouldSatisfy, fail)
 
 import Agent.Programs.ToolDefs (toolDefinitions, ToolDef)
+import Agent.Types (renderToolName)
 
 toolDefsSpec :: Spec Unit
 toolDefsSpec = do
@@ -21,7 +22,7 @@ toolDefsSpec = do
     it "A3: julia_repl tool is defined with a required 'code' parameter" do
       case findTool "julia_repl" of
         Just tool -> do
-          tool.name `shouldEqual` "julia_repl"
+          renderToolName tool.name `shouldEqual` "julia_repl"
           hasRequiredParam tool "code" `shouldEqual` true
         Nothing ->
           fail "julia_repl tool not found in definitions"
@@ -29,7 +30,7 @@ toolDefsSpec = do
     it "A3: git_diff tool is defined with no parameters" do
       case findTool "git_diff" of
         Just tool -> do
-          tool.name `shouldEqual` "git_diff"
+          renderToolName tool.name `shouldEqual` "git_diff"
           Array.length tool.parameters `shouldEqual` 0
         Nothing ->
           fail "git_diff tool not found in definitions"
@@ -37,7 +38,7 @@ toolDefsSpec = do
     it "A3: git_commit tool has required 'what' and 'message', optional 'body'" do
       case findTool "git_commit" of
         Just tool -> do
-          tool.name `shouldEqual` "git_commit"
+          renderToolName tool.name `shouldEqual` "git_commit"
           hasRequiredParam tool "what" `shouldEqual` true
           hasRequiredParam tool "message" `shouldEqual` true
           hasOptionalParam tool "body" `shouldEqual` true
@@ -46,7 +47,7 @@ toolDefsSpec = do
 
   where
   findTool :: String -> Maybe ToolDef
-  findTool name = Array.find (\t -> t.name == name) toolDefinitions
+  findTool name = Array.find (\t -> renderToolName t.name == name) toolDefinitions
 
   hasRequiredParam :: ToolDef -> String -> Boolean
   hasRequiredParam tool paramName =

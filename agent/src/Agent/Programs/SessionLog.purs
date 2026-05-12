@@ -30,14 +30,22 @@ import Data.Argonaut.Parser as JP
 
 import Agent.Types
     ( WorkspacePath(..)
-    , SessionId(..)
+    , Timestamp(..)
     , ModelName(..)
+    , SessionEndReason
+    , ToolName
+    , SessionId(..)
     , ToolCallId(..)
     , TokenCount(..)
     , LogEvent(..)
     , ConversationHistory(..)
     , Message(..)
     , AppError(..)
+    , renderTimestamp
+    , renderToolName
+    , renderSessionEndReason
+    , toolNameFromString
+    , sessionEndReasonFromString
     )
 
 -- FFI imports
@@ -90,7 +98,7 @@ encodeLogEventJson (SessionStart r) =
     mkObj
         [ Tuple "type" (J.fromString "session_start")
         , Tuple "id" (J.fromNumber (Int.toNumber (unwrapSessionId r.id)))
-        , Tuple "timestamp" (J.fromString r.timestamp)
+        , Tuple "timestamp" (J.fromString (renderTimestamp r.timestamp))
         , Tuple "workspace" (J.fromString r.workspace)
         , Tuple "model" (J.fromString (unwrapModelName r.model))
         , Tuple "resumed_from" (case r.resumedFrom of
@@ -100,27 +108,27 @@ encodeLogEventJson (SessionStart r) =
 encodeLogEventJson (EvtUserMessage r) =
     mkObj
         [ Tuple "type" (J.fromString "user_message")
-        , Tuple "timestamp" (J.fromString r.timestamp)
+        , Tuple "timestamp" (J.fromString (renderTimestamp r.timestamp))
         , Tuple "content" (J.fromString r.content)
         ]
 encodeLogEventJson (EvtLlmResponse r) =
     mkObj
         [ Tuple "type" (J.fromString "llm_response")
-        , Tuple "timestamp" (J.fromString r.timestamp)
+        , Tuple "timestamp" (J.fromString (renderTimestamp r.timestamp))
         , Tuple "content" (J.fromString r.content)
         ]
 encodeLogEventJson (EvtToolCall r) =
     mkObj
         [ Tuple "type" (J.fromString "tool_call")
-        , Tuple "timestamp" (J.fromString r.timestamp)
-        , Tuple "tool" (J.fromString r.toolName)
+        , Tuple "timestamp" (J.fromString (renderTimestamp r.timestamp))
+        , Tuple "tool" (J.fromString (renderToolName r.toolName))
         , Tuple "tool_call_id" (J.fromString (unwrapToolCallId r.toolCallId))
         , Tuple "input" (J.fromString r.input)
         ]
 encodeLogEventJson (ToolResult r) =
     mkObj
         [ Tuple "type" (J.fromString "tool_result")
-        , Tuple "timestamp" (J.fromString r.timestamp)
+        , Tuple "timestamp" (J.fromString (renderTimestamp r.timestamp))
         , Tuple "tool_call_id" (J.fromString (unwrapToolCallId r.toolCallId))
         , Tuple "output" (J.fromString r.output)
         , Tuple "truncated" (J.fromBoolean r.truncated)
@@ -128,7 +136,7 @@ encodeLogEventJson (ToolResult r) =
 encodeLogEventJson (TokenUsage r) =
     mkObj
         [ Tuple "type" (J.fromString "token_usage")
-        , Tuple "timestamp" (J.fromString r.timestamp)
+        , Tuple "timestamp" (J.fromString (renderTimestamp r.timestamp))
         , Tuple "input_tokens" (J.fromNumber (Int.toNumber (unwrapTokenCount r.inputTokens)))
         , Tuple "cached_input_tokens" (J.fromNumber (Int.toNumber (unwrapTokenCount r.cachedInputTokens)))
         , Tuple "output_tokens" (J.fromNumber (Int.toNumber (unwrapTokenCount r.outputTokens)))
@@ -139,7 +147,7 @@ encodeLogEventJson (TokenUsage r) =
 encodeLogEventJson (Compaction r) =
     mkObj
         [ Tuple "type" (J.fromString "compaction")
-        , Tuple "timestamp" (J.fromString r.timestamp)
+        , Tuple "timestamp" (J.fromString (renderTimestamp r.timestamp))
         , Tuple "summary" (J.fromString r.summary)
         , Tuple "initial_message_count" (J.fromNumber (Int.toNumber r.initialMessageCount))
         , Tuple "compacted_message_count" (J.fromNumber (Int.toNumber r.compactedMessageCount))
@@ -149,30 +157,30 @@ encodeLogEventJson (Compaction r) =
 encodeLogEventJson (SessionEnd r) =
     mkObj
         [ Tuple "type" (J.fromString "session_end")
-        , Tuple "timestamp" (J.fromString r.timestamp)
-        , Tuple "reason" (J.fromString r.reason)
+        , Tuple "timestamp" (J.fromString (renderTimestamp r.timestamp))
+        , Tuple "reason" (J.fromString (renderSessionEndReason r.reason))
         ]
 encodeLogEventJson (Escape r) =
     mkObj
         [ Tuple "type" (J.fromString "escape")
-        , Tuple "timestamp" (J.fromString r.timestamp)
+        , Tuple "timestamp" (J.fromString (renderTimestamp r.timestamp))
         ]
 encodeLogEventJson (Sigint r) =
     mkObj
         [ Tuple "type" (J.fromString "sigint")
-        , Tuple "timestamp" (J.fromString r.timestamp)
+        , Tuple "timestamp" (J.fromString (renderTimestamp r.timestamp))
         ]
 encodeLogEventJson (TimeoutCheck r) =
     mkObj
         [ Tuple "type" (J.fromString "timeout_check")
-        , Tuple "timestamp" (J.fromString r.timestamp)
+        , Tuple "timestamp" (J.fromString (renderTimestamp r.timestamp))
         , Tuple "elapsed_seconds" (J.fromNumber (Int.toNumber r.elapsedSeconds))
         , Tuple "partial_output" (J.fromString r.partialOutput)
         ]
 encodeLogEventJson (TimeoutResponse r) =
     mkObj
         [ Tuple "type" (J.fromString "timeout_response")
-        , Tuple "timestamp" (J.fromString r.timestamp)
+        , Tuple "timestamp" (J.fromString (renderTimestamp r.timestamp))
         , Tuple "interrupt" (J.fromBoolean r.interrupt)
         ]
 
@@ -185,9 +193,9 @@ mkObj = J.fromObject <<< FO.fromFoldable
 
 decodeLogEvent :: String -> Either AppError LogEvent
 decodeLogEvent input = case JP.jsonParser input of
-    Left parseErr -> Left (ConfigFieldMissing ("JSON parse error: " <> parseErr))
+    Left parseErr -> Left (JsonDecodeError ("JSON parse error: " <> parseErr))
     Right json -> case J.toObject json of
-        Nothing -> Left (ConfigFieldMissing "Expected JSON object")
+        Nothing -> Left (JsonDecodeError "Expected JSON object")
         Just obj -> decodeLogEventObj obj
 
 decodeLogEventObj :: FO.Object J.Json -> Either AppError LogEvent
@@ -206,7 +214,7 @@ decodeLogEventObj obj = do
                     _ -> Nothing
             Right $ SessionStart
                 { id: SessionId (numToInt idNum)
-                , timestamp: ts
+                , timestamp: Timestamp ts
                 , workspace: ws
                 , model: ModelName mdl
                 , resumedFrom: resumed
@@ -214,19 +222,19 @@ decodeLogEventObj obj = do
         "user_message" -> do
             ts <- getStr obj "timestamp"
             content <- getStr obj "content"
-            Right $ EvtUserMessage { timestamp: ts, content }
+            Right $ EvtUserMessage { timestamp: Timestamp ts, content }
         "llm_response" -> do
             ts <- getStr obj "timestamp"
             content <- getStr obj "content"
-            Right $ EvtLlmResponse { timestamp: ts, content }
+            Right $ EvtLlmResponse { timestamp: Timestamp ts, content }
         "tool_call" -> do
             ts <- getStr obj "timestamp"
             tool <- getStr obj "tool"
             tcId <- getStr obj "tool_call_id"
             inp <- getStr obj "input"
             Right $ EvtToolCall
-                { timestamp: ts
-                , toolName: tool
+                { timestamp: Timestamp ts
+                , toolName: toolNameFromString tool
                 , toolCallId: ToolCallId tcId
                 , input: inp
                 }
@@ -236,7 +244,7 @@ decodeLogEventObj obj = do
             out <- getStr obj "output"
             trunc <- getBool obj "truncated"
             Right $ ToolResult
-                { timestamp: ts
+                { timestamp: Timestamp ts
                 , toolCallId: ToolCallId tcId
                 , output: out
                 , truncated: trunc
@@ -250,7 +258,7 @@ decodeLogEventObj obj = do
             totalCached <- getNum obj "total_session_cached_input_tokens"
             totalOutp <- getNum obj "total_session_output_tokens"
             Right $ TokenUsage
-                { timestamp: ts
+                { timestamp: Timestamp ts
                 , inputTokens: TokenCount (numToInt inp)
                 , cachedInputTokens: TokenCount (numToInt cached)
                 , outputTokens: TokenCount (numToInt outp)
@@ -266,7 +274,7 @@ decodeLogEventObj obj = do
             final <- getNum obj "final_message_count"
             totalBefore <- getNum obj "total_tokens_before"
             Right $ Compaction
-                { timestamp: ts
+                { timestamp: Timestamp ts
                 , summary
                 , initialMessageCount: numToInt initial
                 , compactedMessageCount: numToInt compacted
@@ -276,48 +284,51 @@ decodeLogEventObj obj = do
         "session_end" -> do
             ts <- getStr obj "timestamp"
             reason <- getStr obj "reason"
-            Right $ SessionEnd { timestamp: ts, reason }
+            Right $ SessionEnd
+                { timestamp: Timestamp ts
+                , reason: sessionEndReasonFromString reason
+                }
         "escape" -> do
             ts <- getStr obj "timestamp"
-            Right $ Escape { timestamp: ts }
+            Right $ Escape { timestamp: Timestamp ts }
         "sigint" -> do
             ts <- getStr obj "timestamp"
-            Right $ Sigint { timestamp: ts }
+            Right $ Sigint { timestamp: Timestamp ts }
         "timeout_check" -> do
             ts <- getStr obj "timestamp"
             elapsed <- getNum obj "elapsed_seconds"
             partial <- getStr obj "partial_output"
             Right $ TimeoutCheck
-                { timestamp: ts
+                { timestamp: Timestamp ts
                 , elapsedSeconds: numToInt elapsed
                 , partialOutput: partial
                 }
         "timeout_response" -> do
             ts <- getStr obj "timestamp"
             interrupt <- getBool obj "interrupt"
-            Right $ TimeoutResponse { timestamp: ts, interrupt }
+            Right $ TimeoutResponse { timestamp: Timestamp ts, interrupt }
         other ->
-            Left (ConfigFieldMissing ("Unknown event type: " <> other))
+            Left (JsonDecodeError ("Unknown event type: " <> other))
 
 getStr :: FO.Object J.Json -> String -> Either AppError String
 getStr obj key = case FO.lookup key obj of
-    Nothing -> Left (ConfigFieldMissing ("Missing field: " <> key))
+    Nothing -> Left (JsonDecodeError ("Missing field: " <> key))
     Just v -> case J.toString v of
-        Nothing -> Left (ConfigFieldMissing ("Field " <> key <> " is not a string"))
+        Nothing -> Left (JsonDecodeError ("Field " <> key <> " is not a string"))
         Just s -> Right s
 
 getNum :: FO.Object J.Json -> String -> Either AppError Number
 getNum obj key = case FO.lookup key obj of
-    Nothing -> Left (ConfigFieldMissing ("Missing field: " <> key))
+    Nothing -> Left (JsonDecodeError ("Missing field: " <> key))
     Just v -> case J.toNumber v of
-        Nothing -> Left (ConfigFieldMissing ("Field " <> key <> " is not a number"))
+        Nothing -> Left (JsonDecodeError ("Field " <> key <> " is not a number"))
         Just n -> Right n
 
 getBool :: FO.Object J.Json -> String -> Either AppError Boolean
 getBool obj key = case FO.lookup key obj of
-    Nothing -> Left (ConfigFieldMissing ("Missing field: " <> key))
+    Nothing -> Left (JsonDecodeError ("Missing field: " <> key))
     Just v -> case J.toBoolean v of
-        Nothing -> Left (ConfigFieldMissing ("Field " <> key <> " is not a boolean"))
+        Nothing -> Left (JsonDecodeError ("Field " <> key <> " is not a boolean"))
         Just b -> Right b
 
 numToInt :: Number -> Int

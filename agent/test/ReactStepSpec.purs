@@ -10,15 +10,24 @@ import Test.Spec.Assertions (shouldEqual, fail)
 import Test.Helpers.Conversation (systemMsg, userMsg, assistantMsg, mkHistory, mkHistoryWithTokens)
 import Test.Helpers.LlmResponse (textResponse, toolCallResponse)
 import Agent.Programs.ReactStep (reactStep, NextStep(..))
-import Agent.Types (ToolCallId(..), TokenCount(..), ModelName(..), Config, LlmResponse(..))
+import Agent.Types
+  ( ApiEndpoint(..)
+  , EnvVarName(..)
+  , ToolName(..)
+  , ToolCallId(..)
+  , TokenCount(..)
+  , ModelName(..)
+  , Config
+  , LlmResponse(..)
+  )
 
 -- | A minimal config for tests. Token thresholds are set high enough
 -- that compaction is not triggered unless the test wants it.
 testConfig :: Config
 testConfig =
-  { apiEndpoint: "https://example.com"
+  { apiEndpoint: ApiEndpoint "https://example.com"
   , model: ModelName "test"
-  , apiKeyEnv: "KEY"
+  , apiKeyEnv: EnvVarName "KEY"
   , outputThresholdChars: 20000
   , maxApiRetries: 3
   , maxTokensPerTurn: TokenCount 200000
@@ -41,7 +50,7 @@ reactStepSpec = do
       let response = toolCallResponse "julia_repl" "1+1" (ToolCallId "tc1") (TokenCount 500)
       let step = reactStep testConfig (TokenCount 500) history response
       case step of
-        ExecuteTool tc -> tc.name `shouldEqual` "julia_repl"
+        ExecuteTool tc -> tc.name `shouldEqual` JuliaRepl
         _ -> fail "Expected ExecuteTool"
 
   describe "A1: ReACT step — no tool call response" do
@@ -70,7 +79,7 @@ reactStepSpec = do
       let response = toolCallResponse "julia_repl" "x" (ToolCallId "tc1") (TokenCount 160000)
       let step = reactStep testConfig (TokenCount 160000) history response
       case step of
-        ExecuteToolThenCompact tc -> tc.name `shouldEqual` "julia_repl"
+        ExecuteToolThenCompact tc -> tc.name `shouldEqual` JuliaRepl
         _ -> fail "Expected ExecuteToolThenCompact"
 
     it "A1: tokens at threshold (not above) → no compaction" do
@@ -93,7 +102,7 @@ reactStepSpec = do
       let response = LlmResponse
             { content: "Let me check that for you."
             , toolCalls:
-                [ { name: "julia_repl"
+                [ { name: JuliaRepl
                   , input: "1+1"
                   , id: ToolCallId "tc1"
                   }
@@ -104,7 +113,7 @@ reactStepSpec = do
       case step of
         ExecuteTool tc -> do
           -- The tool call is the primary action
-          tc.name `shouldEqual` "julia_repl"
+          tc.name `shouldEqual` JuliaRepl
           -- The response text must still be available to the controller
           -- for streaming to the terminal before executing the tool.
           let (LlmResponse r) = response
@@ -133,7 +142,7 @@ reactStepSpec = do
       -- should still execute, but the turn ends after.
       let step = reactStep config (TokenCount 60000) history response
       case step of
-        ExecuteToolThenEndTurn tc -> tc.name `shouldEqual` "julia_repl"
+        ExecuteToolThenEndTurn tc -> tc.name `shouldEqual` JuliaRepl
         _ -> fail "Expected ExecuteToolThenEndTurn"
 
     it "A37a: tokens at limit → turn continues (not strictly above)" do
@@ -190,5 +199,5 @@ reactStepSpec = do
       -- Compaction should take priority: compact first, then after
       -- compaction the token limit can be re-evaluated fresh
       case step of
-        ExecuteToolThenCompact tc -> tc.name `shouldEqual` "julia_repl"
+        ExecuteToolThenCompact tc -> tc.name `shouldEqual` JuliaRepl
         _ -> fail "Expected ExecuteToolThenCompact (compaction takes priority)"

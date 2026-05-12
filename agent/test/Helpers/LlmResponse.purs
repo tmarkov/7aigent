@@ -10,6 +10,7 @@ import Agent.Types
   , ToolCall
   , ToolCallId(..)
   , TokenCount(..)
+  , toolNameFromString
   )
 
 -- | An LLM response containing only text (no tool calls).
@@ -24,7 +25,7 @@ textResponse content inputTokens = LlmResponse
 toolCallResponse :: String -> String -> ToolCallId -> TokenCount -> LlmResponse
 toolCallResponse toolName input tcId inputTokens = LlmResponse
   { content: ""
-  , toolCalls: [ { name: toolName, input, id: tcId } ]
+  , toolCalls: [ { name: toolNameFromString toolName, input, id: tcId } ]
   , inputTokens
   }
 

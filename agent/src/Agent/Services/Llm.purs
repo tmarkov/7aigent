@@ -15,15 +15,19 @@ import Data.String as String
 import Effect (Effect)
 import Effect.Aff (Aff, Milliseconds(..), delay, makeAff, nonCanceler)
 import Agent.Types
-    ( Config
+    ( ApiEndpoint(..)
+    , Config
     , ConversationHistory(..)
     , Message(..)
     , ModelName(..)
     , ToolCall
+    , ToolName
     , ToolCallId(..)
     , TokenCount(..)
     , LlmResponse(..)
     , AppError(..)
+    , renderToolName
+    , toolNameFromString
     )
 import Agent.Programs.Retry (ApiError(..), RetryDecision(..), retryDecision)
 import Agent.Programs.ToolDefs (toolDefinitions)
@@ -102,24 +106,31 @@ callLlm config apiKey (ConversationHistory h) onToken = go 0
                                 delay (Milliseconds (Int.toNumber ms))
                                 go (attempt + 1)
                             GiveUp _ ->
-                                pure (Left (ConfigFieldMissing ("LLM API: " <> err.message)))
+                                pure (Left (LlmApiError err.message))
                     Nothing ->
-                        pure (Left (ConfigFieldMissing ("LLM API: " <> err.message)))
+                        pure (Left (LlmApiError err.message))
 
     runOnce = makeAff \resolve -> do
+        let ApiEndpoint endpoint = config.apiEndpoint
         streamLlmImpl
-            config.apiEndpoint
+            endpoint
             apiKey
             modelName
             messages
-            toolDefinitions
+            (map renderToolDef toolDefinitions)
             onToken
             (\err -> resolve (Right (Left err)))
             (\llmResult -> resolve (Right (Right llmResult)))
         pure nonCanceler
 
+    renderToolDef td =
+        { name: renderToolName td.name
+        , description: td.description
+        , parameters: td.parameters
+        }
+
     toToolCall tc =
-        { name: tc.name
+        { name: toolNameFromString tc.name
         , input: tc.input
         , id: ToolCallId tc.id
         }

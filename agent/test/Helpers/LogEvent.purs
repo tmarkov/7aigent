@@ -22,10 +22,13 @@ import Data.Maybe (Maybe)
 import Data.String as String
 import Agent.Types
   ( LogEvent(..)
+  , Timestamp(..)
   , SessionId(..)
   , ModelName(..)
   , ToolCallId(..)
   , TokenCount(..)
+  , toolNameFromString
+  , sessionEndReasonFromString
   )
 import Agent.Programs.SessionLog (encodeLogEvent)
 
@@ -37,27 +40,32 @@ sessionStartEvent
      , resumedFrom :: Maybe SessionId
      }
   -> LogEvent
-sessionStartEvent r = SessionStart r
+sessionStartEvent r = SessionStart (r { timestamp = Timestamp r.timestamp })
 
 userMessageEvent :: String -> String -> LogEvent
 userMessageEvent timestamp content =
-  EvtUserMessage { timestamp, content }
+  EvtUserMessage { timestamp: Timestamp timestamp, content }
 
 llmResponseEvent :: String -> String -> LogEvent
 llmResponseEvent timestamp content =
-  EvtLlmResponse { timestamp, content }
+  EvtLlmResponse { timestamp: Timestamp timestamp, content }
 
 toolCallEvent :: String -> String -> ToolCallId -> String -> LogEvent
 toolCallEvent timestamp toolName toolCallId input =
-  EvtToolCall { timestamp, toolName, toolCallId, input }
+  EvtToolCall
+    { timestamp: Timestamp timestamp
+    , toolName: toolNameFromString toolName
+    , toolCallId
+    , input
+    }
 
 toolResultEvent :: String -> ToolCallId -> String -> Boolean -> LogEvent
 toolResultEvent timestamp toolCallId output truncated =
-  ToolResult { timestamp, toolCallId, output, truncated }
+  ToolResult { timestamp: Timestamp timestamp, toolCallId, output, truncated }
 
 tokenUsageEvent :: String -> TokenCount -> TokenCount -> LogEvent
 tokenUsageEvent timestamp inputTokens outputTokens = TokenUsage
-  { timestamp
+  { timestamp: Timestamp timestamp
   , inputTokens
   , cachedInputTokens: TokenCount 0
   , outputTokens
@@ -75,25 +83,32 @@ compactionEvent
      , totalTokensBefore :: Int
      }
   -> LogEvent
-compactionEvent r = Compaction r
+compactionEvent r = Compaction (r { timestamp = Timestamp r.timestamp })
 
 sessionEndEvent :: String -> String -> LogEvent
 sessionEndEvent timestamp reason =
-  SessionEnd { timestamp, reason }
+  SessionEnd
+    { timestamp: Timestamp timestamp
+    , reason: sessionEndReasonFromString reason
+    }
 
 escapeEvent :: String -> LogEvent
-escapeEvent timestamp = Escape { timestamp }
+escapeEvent timestamp = Escape { timestamp: Timestamp timestamp }
 
 sigintEvent :: String -> LogEvent
-sigintEvent timestamp = Sigint { timestamp }
+sigintEvent timestamp = Sigint { timestamp: Timestamp timestamp }
 
 timeoutCheckEvent :: String -> Int -> String -> LogEvent
 timeoutCheckEvent timestamp elapsedSeconds partialOutput =
-  TimeoutCheck { timestamp, elapsedSeconds, partialOutput }
+  TimeoutCheck
+    { timestamp: Timestamp timestamp
+    , elapsedSeconds
+    , partialOutput
+    }
 
 timeoutResponseEvent :: String -> Boolean -> LogEvent
 timeoutResponseEvent timestamp interrupt =
-  TimeoutResponse { timestamp, interrupt }
+  TimeoutResponse { timestamp: Timestamp timestamp, interrupt }
 
 -- | Render an array of log events as a JSONL string (one JSON object
 -- per line), using the same encoding the runner uses for `log.jsonl`.

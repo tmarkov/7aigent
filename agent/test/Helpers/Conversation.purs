@@ -17,6 +17,7 @@ import Agent.Types
   , ConversationHistory(..)
   , ToolCallId(..)
   , TokenCount(..)
+  , toolNameFromString
   )
 
 -- | Construct a system message.
@@ -36,7 +37,7 @@ assistantToolCallMsg :: String -> String -> ToolCallId -> Message
 assistantToolCallMsg toolName input tcId =
   AssistantMessage
     { content: ""
-    , toolCalls: [ { name: toolName, input, id: tcId } ]
+    , toolCalls: [ { name: toolNameFromString toolName, input, id: tcId } ]
     }
 
 -- | Construct a tool result message.

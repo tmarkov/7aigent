@@ -5,11 +5,16 @@ module Agent.Types
   ( WorkspacePath(..)
   , SessionId(..)
   , ModelName(..)
+  , ApiEndpoint(..)
+  , EnvVarName(..)
+  , Timestamp(..)
+  , ToolName(..)
   , ToolCallId(..)
   , TokenCount(..)
   , HunkId(..)
   , RawJulia(..)
   , Port(..)
+  , SessionEndReason(..)
   , Config
   , ToolCall
   , CompactionPlan
@@ -20,6 +25,11 @@ module Agent.Types
   , AppError(..)
   , LoopState(..)
   , ControllerAction(..)
+  , renderTimestamp
+  , renderToolName
+  , toolNameFromString
+  , renderSessionEndReason
+  , sessionEndReasonFromString
   , unwrapConversationHistory
   , extractContent
   , isToolResultMessage
@@ -39,6 +49,18 @@ newtype SessionId = SessionId Int
 
 newtype ModelName = ModelName String
 
+newtype ApiEndpoint = ApiEndpoint String
+
+newtype EnvVarName = EnvVarName String
+
+newtype Timestamp = Timestamp String
+
+data ToolName
+  = JuliaRepl
+  | GitDiff
+  | GitCommit
+  | UnknownToolName String
+
 newtype ToolCallId = ToolCallId String
 
 newtype TokenCount = TokenCount Int
@@ -48,6 +70,13 @@ newtype HunkId = HunkId String
 newtype RawJulia = RawJulia String
 
 newtype Port = Port Int
+
+data SessionEndReason
+  = SessionEndedEof
+  | SessionEndedSigint
+  | SessionEndedError
+  | SessionEndedPrompt
+  | SessionEndedOther String
 
 -- Eq / Ord / Show instances via newtype deriving
 
@@ -62,6 +91,23 @@ derive newtype instance Show SessionId
 derive newtype instance Eq ModelName
 derive newtype instance Ord ModelName
 derive newtype instance Show ModelName
+
+derive newtype instance Eq ApiEndpoint
+derive newtype instance Ord ApiEndpoint
+derive newtype instance Show ApiEndpoint
+
+derive newtype instance Eq EnvVarName
+derive newtype instance Ord EnvVarName
+derive newtype instance Show EnvVarName
+
+derive newtype instance Eq Timestamp
+derive newtype instance Ord Timestamp
+derive newtype instance Show Timestamp
+
+derive instance Eq ToolName
+derive instance Ord ToolName
+instance Show ToolName where
+  show = renderToolName
 
 derive newtype instance Eq ToolCallId
 derive newtype instance Ord ToolCallId
@@ -81,15 +127,20 @@ derive newtype instance Show RawJulia
 derive newtype instance Eq Port
 derive newtype instance Show Port
 
+derive instance Eq SessionEndReason
+derive instance Ord SessionEndReason
+instance Show SessionEndReason where
+  show = renderSessionEndReason
+
 -- ---------------------------------------------------------------------------
 -- Type aliases
 -- ---------------------------------------------------------------------------
 
 -- | Runner configuration parsed from `.7aigent/config.toml`.
 type Config =
-  { apiEndpoint :: String
+  { apiEndpoint :: ApiEndpoint
   , model :: ModelName
-  , apiKeyEnv :: String
+  , apiKeyEnv :: EnvVarName
   , outputThresholdChars :: Int
   , maxApiRetries :: Int
   , maxTokensPerTurn :: TokenCount
@@ -100,7 +151,7 @@ type Config =
 
 -- | A tool call issued by the LLM within a conversation turn.
 type ToolCall =
-  { name :: String
+  { name :: ToolName
   , input :: String
   , id :: ToolCallId
   }
@@ -128,7 +179,7 @@ derive instance Eq LlmResponse
 instance Show LlmResponse where
   show (LlmResponse r) =
     "(LlmResponse { content: " <> show r.content
-    <> ", toolCalls: " <> show (map _.name r.toolCalls)
+    <> ", toolCalls: " <> show (map renderToolName (map _.name r.toolCalls))
     <> ", inputTokens: " <> show r.inputTokens <> " })"
 
 -- | A single message in the conversation history.
@@ -159,27 +210,27 @@ instance Show ConversationHistory where
 data LogEvent
   = SessionStart
       { id :: SessionId
-      , timestamp :: String
+      , timestamp :: Timestamp
       , workspace :: String
       , model :: ModelName
       , resumedFrom :: Maybe SessionId
       }
-  | EvtUserMessage { timestamp :: String, content :: String }
-  | EvtLlmResponse { timestamp :: String, content :: String }
+  | EvtUserMessage { timestamp :: Timestamp, content :: String }
+  | EvtLlmResponse { timestamp :: Timestamp, content :: String }
   | EvtToolCall
-      { timestamp :: String
-      , toolName :: String
+      { timestamp :: Timestamp
+      , toolName :: ToolName
       , toolCallId :: ToolCallId
       , input :: String
       }
   | ToolResult
-      { timestamp :: String
+      { timestamp :: Timestamp
       , toolCallId :: ToolCallId
       , output :: String
       , truncated :: Boolean
       }
   | TokenUsage
-      { timestamp :: String
+      { timestamp :: Timestamp
       , inputTokens :: TokenCount
       , cachedInputTokens :: TokenCount
       , outputTokens :: TokenCount
@@ -188,34 +239,34 @@ data LogEvent
       , totalSessionOutputTokens :: TokenCount
       }
   | Compaction
-      { timestamp :: String
+      { timestamp :: Timestamp
       , summary :: String
       , initialMessageCount :: Int
       , compactedMessageCount :: Int
       , finalMessageCount :: Int
       , totalTokensBefore :: Int
       }
-  | SessionEnd { timestamp :: String, reason :: String }
-  | Escape { timestamp :: String }
-  | Sigint { timestamp :: String }
+  | SessionEnd { timestamp :: Timestamp, reason :: SessionEndReason }
+  | Escape { timestamp :: Timestamp }
+  | Sigint { timestamp :: Timestamp }
   | TimeoutCheck
-      { timestamp :: String
+      { timestamp :: Timestamp
       , elapsedSeconds :: Int
       , partialOutput :: String
       }
-  | TimeoutResponse { timestamp :: String, interrupt :: Boolean }
+  | TimeoutResponse { timestamp :: Timestamp, interrupt :: Boolean }
 
 instance Show LogEvent where
   show (SessionStart r) = "(SessionStart " <> show r.id <> ")"
   show (EvtUserMessage r) = "(UserMessage " <> show r.content <> ")"
   show (EvtLlmResponse r) = "(LlmResponse " <> show r.content <> ")"
-  show (EvtToolCall r) = "(ToolCall " <> show r.toolName <> ")"
+  show (EvtToolCall r) = "(ToolCall " <> renderToolName r.toolName <> ")"
   show (ToolResult r) = "(ToolResult " <> show r.toolCallId <> ")"
   show (TokenUsage _) = "(TokenUsage)"
   show (Compaction r) = "(Compaction " <> show r.summary <> ")"
-  show (SessionEnd r) = "(SessionEnd " <> show r.reason <> ")"
-  show (Escape r) = "(Escape " <> show r.timestamp <> ")"
-  show (Sigint r) = "(Sigint " <> show r.timestamp <> ")"
+  show (SessionEnd r) = "(SessionEnd " <> renderSessionEndReason r.reason <> ")"
+  show (Escape r) = "(Escape " <> renderTimestamp r.timestamp <> ")"
+  show (Sigint r) = "(Sigint " <> renderTimestamp r.timestamp <> ")"
   show (TimeoutCheck r) =
     "(TimeoutCheck " <> show r.elapsedSeconds <> ")"
   show (TimeoutResponse r) =
@@ -223,28 +274,34 @@ instance Show LogEvent where
 
 -- | Errors that can occur during runner operation.
 data AppError
-  = ConfigFieldMissing String
+  = ConfigError String
   | PlaceholderValue String
   | StartupExpressionError String
   | SandboxLaunchError String
+  | KernelError String
+  | LlmApiError String
+  | GitError String
   | SandboxCrashed
   | StaleHunkIds (Array HunkId)
   | TemplateError String
   | CompactionError String
   | SessionResumeError String
-  | DecodeError String
+  | JsonDecodeError String
 
 instance Show AppError where
-  show (ConfigFieldMissing s) = "ConfigFieldMissing: " <> s
+  show (ConfigError s) = "ConfigError: " <> s
   show (PlaceholderValue s) = "Placeholder value detected: " <> s
   show (StartupExpressionError s) = "StartupExpressionError: " <> s
   show (SandboxLaunchError s) = "SandboxLaunchError: " <> s
+  show (KernelError s) = "KernelError: " <> s
+  show (LlmApiError s) = "LlmApiError: " <> s
+  show (GitError s) = "GitError: " <> s
   show SandboxCrashed = "SandboxCrashed"
   show (StaleHunkIds ids) = "StaleHunkIds: " <> show ids
   show (TemplateError s) = "TemplateError: " <> s
   show (CompactionError s) = "CompactionError: " <> s
   show (SessionResumeError s) = "SessionResumeError: " <> s
-  show (DecodeError s) = "DecodeError: " <> s
+  show (JsonDecodeError s) = "JsonDecodeError: " <> s
 
 -- | The current state of the ReACT loop, as seen by the controller.
 data LoopState
@@ -257,7 +314,7 @@ instance Show LoopState where
   show (AwaitingLlm _ p) =
     "(AwaitingLlm { text: " <> show p.text <> " })"
   show (ExecutingTool _ tc _) =
-    "(ExecutingTool " <> show tc.name <> ")"
+    "(ExecutingTool " <> renderToolName tc.name <> ")"
   show (AwaitingUser _) = "(AwaitingUser)"
 
 -- | Actions the controller must execute in response to an event.
@@ -286,6 +343,35 @@ unwrapConversationHistory
   :: ConversationHistory
   -> Array { message :: Message, tokens :: TokenCount }
 unwrapConversationHistory (ConversationHistory h) = h.messages
+
+renderTimestamp :: Timestamp -> String
+renderTimestamp (Timestamp timestamp) = timestamp
+
+renderToolName :: ToolName -> String
+renderToolName JuliaRepl = "julia_repl"
+renderToolName GitDiff = "git_diff"
+renderToolName GitCommit = "git_commit"
+renderToolName (UnknownToolName name) = name
+
+toolNameFromString :: String -> ToolName
+toolNameFromString "julia_repl" = JuliaRepl
+toolNameFromString "git_diff" = GitDiff
+toolNameFromString "git_commit" = GitCommit
+toolNameFromString other = UnknownToolName other
+
+renderSessionEndReason :: SessionEndReason -> String
+renderSessionEndReason SessionEndedEof = "eof"
+renderSessionEndReason SessionEndedSigint = "sigint"
+renderSessionEndReason SessionEndedError = "error"
+renderSessionEndReason SessionEndedPrompt = "prompt"
+renderSessionEndReason (SessionEndedOther reason) = reason
+
+sessionEndReasonFromString :: String -> SessionEndReason
+sessionEndReasonFromString "eof" = SessionEndedEof
+sessionEndReasonFromString "sigint" = SessionEndedSigint
+sessionEndReasonFromString "error" = SessionEndedError
+sessionEndReasonFromString "prompt" = SessionEndedPrompt
+sessionEndReasonFromString other = SessionEndedOther other
 
 -- | Extract the textual content from any Message variant.
 extractContent :: Message -> String

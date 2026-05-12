@@ -5,6 +5,7 @@ module Agent.Programs.ToolDefs
     ) where
 
 import Prelude ((<>))
+import Agent.Types (ToolName(..))
 
 type ToolParam =
     { name :: String
@@ -13,14 +14,14 @@ type ToolParam =
     }
 
 type ToolDef =
-    { name :: String
+    { name :: ToolName
     , description :: String
     , parameters :: Array ToolParam
     }
 
 toolDefinitions :: Array ToolDef
 toolDefinitions =
-    [ { name: "julia_repl"
+    [ { name: JuliaRepl
       , description:
             "Execute Julia code in the sandbox REPL."
       , parameters:
@@ -31,12 +32,12 @@ toolDefinitions =
               }
             ]
       }
-    , { name: "git_diff"
+    , { name: GitDiff
       , description:
             "Show the current git diff with hunk IDs."
       , parameters: []
       }
-    , { name: "git_commit"
+    , { name: GitCommit
       , description:
             "Commit changes to the repository."
       , parameters:

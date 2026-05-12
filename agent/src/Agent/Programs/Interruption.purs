@@ -11,10 +11,12 @@ import Agent.Types
     ( LoopState(..)
     , ControllerAction(..)
     , LogEvent(..)
+    , Timestamp(..)
     , ConversationHistory(..)
     , Message(..)
     , ToolCall
-    , ToolCallId(..)
+    , ToolName(..)
+    , SessionEndReason(..)
     , TokenCount(..)
     , SessionId
     )
@@ -41,16 +43,16 @@ handleEscape state = case state of
                 }
         in  { nextState: AwaitingUser newHistory
             , actions: [CancelLlmRequest]
-            , logEvents: [Escape { timestamp: "" }]
+            , logEvents: [Escape { timestamp: Timestamp "" }]
             }
     ExecutingTool history tc _partialOutput ->
         let action =
-                if tc.name == "julia_repl"
+                if tc.name == JuliaRepl
                 then InterruptJulia
                 else InterruptHostProcess
         in  { nextState: AwaitingUser history
             , actions: [action]
-            , logEvents: [Escape { timestamp: "" }]
+            , logEvents: [Escape { timestamp: Timestamp "" }]
             }
     AwaitingUser _ ->
         { nextState: state
@@ -79,13 +81,16 @@ handleSigint state sid = case state of
                 , ExitRunner
                 ]
             , logEvents:
-                [ Sigint { timestamp: "" }
-                , SessionEnd { timestamp: "", reason: "sigint" }
+                [ Sigint { timestamp: Timestamp "" }
+                , SessionEnd
+                    { timestamp: Timestamp ""
+                    , reason: SessionEndedSigint
+                    }
                 ]
             }
     ExecutingTool history tc partialOutput ->
         let action =
-                if tc.name == "julia_repl"
+                if tc.name == JuliaRepl
                 then InterruptJulia
                 else InterruptHostProcess
             toolResult = ToolResultMessage
@@ -106,8 +111,11 @@ handleSigint state sid = case state of
                 , ExitRunner
                 ]
             , logEvents:
-                [ Sigint { timestamp: "" }
-                , SessionEnd { timestamp: "", reason: "sigint" }
+                [ Sigint { timestamp: Timestamp "" }
+                , SessionEnd
+                    { timestamp: Timestamp ""
+                    , reason: SessionEndedSigint
+                    }
                 ]
             }
     AwaitingUser _ ->
@@ -117,8 +125,11 @@ handleSigint state sid = case state of
             , ExitRunner
             ]
         , logEvents:
-            [ Sigint { timestamp: "" }
-            , SessionEnd { timestamp: "", reason: "sigint" }
+            [ Sigint { timestamp: Timestamp "" }
+            , SessionEnd
+                { timestamp: Timestamp ""
+                , reason: SessionEndedSigint
+                }
             ]
         }
 

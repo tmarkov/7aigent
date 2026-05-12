@@ -12,7 +12,6 @@ import Agent.Types
     , ConversationHistory(..)
     , LlmResponse(..)
     , ToolCall
-    , ToolCallId(..)
     )
 
 data NextStep
@@ -51,30 +50,19 @@ reactStep config (TokenCount accumulated) _history
             config.preserveInitial
         TokenCount preserveFin =
             config.preserveFinal
-        hasToolCalls =
-            not (Array.null resp.toolCalls)
         -- Can only compact if there are enough tokens beyond the
         -- preserved initial and final blocks
         canCompact =
             accumulated > preserveInit + preserveFin
-    in  if hasToolCalls
-        then
-            let tc = unsafeFirstToolCall resp.toolCalls
-            in  if accumulated > compactThresh
+    in  case Array.head resp.toolCalls of
+            Just tc ->
+                if accumulated > compactThresh
                 then ExecuteToolThenCompact tc
                 else if accumulated > maxPerTurn
                 then ExecuteToolThenEndTurn tc
                 else ExecuteTool tc
-        else
-            -- Text-only: only compact if there are enough tokens
-            -- beyond preserved initial+final blocks
-            if accumulated > compactThresh
-                && canCompact
-            then CompactThenPromptUser
-            else PromptUser
-
-unsafeFirstToolCall :: Array ToolCall -> ToolCall
-unsafeFirstToolCall tcs = case Array.head tcs of
-    Nothing -> { name: "", input: ""
-               , id: ToolCallId "" }
-    Just tc -> tc
+            Nothing ->
+                if accumulated > compactThresh
+                    && canCompact
+                then CompactThenPromptUser
+                else PromptUser

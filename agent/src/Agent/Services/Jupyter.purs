@@ -31,7 +31,7 @@ foreign import connectKernelImpl
 connectKernel :: String -> Aff (Either AppError KernelHandle)
 connectKernel kernelJsonPath = makeAff \resolve -> do
     connectKernelImpl kernelJsonPath
-        (\msg -> resolve (Right (Left (ConfigFieldMissing ("Kernel: " <> msg)))))
+        (\msg -> resolve (Right (Left (KernelError msg))))
         (\h   -> resolve (Right (Right h)))
     pure nonCanceler
 

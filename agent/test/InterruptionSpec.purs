@@ -19,6 +19,7 @@ import Agent.Types
   ( LoopState(..)
   , ControllerAction(..)
   , LogEvent(..)
+  , ToolName(..)
   , ToolCall
   , ToolCallId(..)
   , SessionId(..)
@@ -34,13 +35,13 @@ sampleHistory :: ConversationHistory
 sampleHistory = mkHistory [ systemMsg "sys", userMsg "hello" ]
 
 juliaToolCall :: ToolCall
-juliaToolCall = { name: "julia_repl", input: "1+1", id: ToolCallId "tc1" }
+juliaToolCall = { name: JuliaRepl, input: "1+1", id: ToolCallId "tc1" }
 
 gitDiffToolCall :: ToolCall
-gitDiffToolCall = { name: "git_diff", input: "", id: ToolCallId "tc2" }
+gitDiffToolCall = { name: GitDiff, input: "", id: ToolCallId "tc2" }
 
 gitCommitToolCall :: ToolCall
-gitCommitToolCall = { name: "git_commit", input: "{}", id: ToolCallId "tc3" }
+gitCommitToolCall = { name: GitCommit, input: "{}", id: ToolCallId "tc3" }
 
 interruptionSpec :: Spec Unit
 interruptionSpec = do
@@ -82,7 +83,7 @@ interruptionSpec = do
       historyContainsText "partial answer" result `shouldEqual` true
 
     it "A11: partial tool call is discarded" do
-      let partialTc = { name: "julia_repl", input: "incompl", id: ToolCallId "tc1" }
+      let partialTc = { name: JuliaRepl, input: "incompl", id: ToolCallId "tc1" }
       let state = AwaitingLlm sampleHistory { text: "text", toolCalls: [partialTc] }
       let result = handleEscape state
       -- The tool call should not appear in any action
@@ -122,7 +123,7 @@ interruptionSpec = do
       hasAction CancelLlmRequest result `shouldEqual` true
 
     it "A12: partial tool call discarded" do
-      let partialTc = { name: "julia_repl", input: "x", id: ToolCallId "tc1" }
+      let partialTc = { name: JuliaRepl, input: "x", id: ToolCallId "tc1" }
       let state = AwaitingLlm sampleHistory { text: "", toolCalls: [partialTc] }
       let result = handleSigint state (SessionId 1)
       hasAction CancelLlmRequest result `shouldEqual` true

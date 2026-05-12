@@ -24,6 +24,8 @@ import Node.FS.Perms (permsAll)
 
 import Agent.Types
     ( WorkspacePath(..)
+    , ApiEndpoint(..)
+    , EnvVarName(..)
     , ModelName(..)
     , TokenCount(..)
     , Config
@@ -58,12 +60,12 @@ foreign import readBundledDefaultImpl :: String -> Effect String
 
 parseConfig :: String -> Either AppError Config
 parseConfig input
-    | String.trim input == "" = Left (ConfigFieldMissing "config is empty")
+    | String.trim input == "" = Left (ConfigError "config is empty")
     | otherwise =
         let r = parseTomlPure input
         in
             if not r.success
-            then Left (ConfigFieldMissing r.error)
+            then Left (ConfigError r.error)
             else
                 -- Check for placeholder values
                 if r.api_endpoint == "YOUR_API_ENDPOINT_HERE"
@@ -71,9 +73,9 @@ parseConfig input
                 else if r.model == "YOUR_MODEL_HERE"
                 then Left (PlaceholderValue "model contains a placeholder value")
                 else Right
-                    { apiEndpoint: r.api_endpoint
+                    { apiEndpoint: ApiEndpoint r.api_endpoint
                     , model: ModelName r.model
-                    , apiKeyEnv: r.api_key_env
+                    , apiKeyEnv: EnvVarName r.api_key_env
                     , outputThresholdChars: Int.round r.output_threshold_chars
                     , maxApiRetries: Int.round r.max_api_retries
                     , maxTokensPerTurn: TokenCount (Int.round r.max_tokens_per_turn)
@@ -86,14 +88,14 @@ parseConfig input
 -- A38: API key from environment
 ----------------------------------------------------------------------------
 
-readApiKey :: String -> Aff (Either AppError String)
-readApiKey envVarName = liftEffect do
+readApiKey :: EnvVarName -> Aff (Either AppError String)
+readApiKey (EnvVarName envVarName) = liftEffect do
     mVal <- toMaybe <$> lookupEnvImpl envVarName
     pure $ case mVal of
-        Nothing -> Left (ConfigFieldMissing
+        Nothing -> Left (ConfigError
             ("Environment variable " <> envVarName <> " is not set"))
         Just val
-            | val == "" -> Left (ConfigFieldMissing
+            | val == "" -> Left (ConfigError
                 ("Environment variable " <> envVarName <> " is empty"))
             | otherwise -> Right val
 

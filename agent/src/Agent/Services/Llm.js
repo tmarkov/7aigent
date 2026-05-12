@@ -11,6 +11,27 @@ function msgTag(msg) {
   return msg?.constructor?.name?.replace(/\d+$/, "") ?? "";
 }
 
+function toolNameTag(name) {
+  return name?.constructor?.name?.replace(/\d+$/, "") ?? "";
+}
+
+function encodeToolName(name) {
+  if (typeof name === "string") return name;
+
+  switch (toolNameTag(name)) {
+    case "JuliaRepl":
+      return "julia_repl";
+    case "GitDiff":
+      return "git_diff";
+    case "GitCommit":
+      return "git_commit";
+    case "UnknownToolName":
+      return typeof name.value0 === "string" ? name.value0 : String(name.value0 ?? "");
+    default:
+      return typeof name?.value0 === "string" ? name.value0 : String(name);
+  }
+}
+
 function encodeMessage(msg) {
   switch (msgTag(msg)) {
     case "SystemMessage":
@@ -25,7 +46,7 @@ function encodeMessage(msg) {
         r.tool_calls = tcs.map((tc) => ({
           id: typeof tc.id === "object" ? tc.id.value0 : tc.id,
           type: "function",
-          function: { name: tc.name, arguments: tc.input },
+          function: { name: encodeToolName(tc.name), arguments: tc.input },
         }));
       }
       return r;

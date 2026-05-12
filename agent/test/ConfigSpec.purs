@@ -14,7 +14,7 @@ import Test.Spec.Assertions (shouldEqual, shouldSatisfy, fail)
 
 import Test.Helpers.Workspace (withWorkspace, withPopulatedWorkspace, readWorkspaceFile, workspaceFileExists, writeWorkspaceFile)
 import Agent.Programs.Config (parseConfig, readApiKey, placeDefaultConfigs)
-import Agent.Types (WorkspacePath(..), AppError(..), ModelName(..))
+import Agent.Types (ApiEndpoint(..), EnvVarName(..), WorkspacePath(..), AppError(..), ModelName(..))
 
 foreign import setEnv :: String -> String -> Effect Unit
 foreign import unsetEnv :: String -> Effect Unit
@@ -93,7 +93,7 @@ configSpec = do
             ]
       case parseConfig toml of
         Right config -> do
-          config.apiEndpoint `shouldEqual` "https://api.example.com/v1"
+          config.apiEndpoint `shouldEqual` ApiEndpoint "https://api.example.com/v1"
           config.model `shouldEqual` ModelName "test-model"
           config.outputThresholdChars `shouldEqual` 20000
           config.maxApiRetries `shouldEqual` 3
@@ -127,7 +127,7 @@ configSpec = do
 
     it "A38: reads key from a set, non-empty env var" do
       liftEffect $ setEnv "TEST_7AIGENT_KEY_SET" "sk-test-key-12345"
-      result <- readApiKey "TEST_7AIGENT_KEY_SET"
+      result <- readApiKey (EnvVarName "TEST_7AIGENT_KEY_SET")
       liftEffect $ unsetEnv "TEST_7AIGENT_KEY_SET"
       case result of
         Right key -> key `shouldEqual` "sk-test-key-12345"
@@ -135,12 +135,12 @@ configSpec = do
 
     it "A38: fails with informative error when env var is unset" do
       liftEffect $ unsetEnv "TEST_7AIGENT_KEY_UNSET_SURELY"
-      result <- readApiKey "TEST_7AIGENT_KEY_UNSET_SURELY"
+      result <- readApiKey (EnvVarName "TEST_7AIGENT_KEY_UNSET_SURELY")
       result `shouldSatisfy` isLeft
 
     it "A38: fails when env var is set to empty string" do
       liftEffect $ setEnv "TEST_7AIGENT_KEY_EMPTY" ""
-      result <- readApiKey "TEST_7AIGENT_KEY_EMPTY"
+      result <- readApiKey (EnvVarName "TEST_7AIGENT_KEY_EMPTY")
       liftEffect $ unsetEnv "TEST_7AIGENT_KEY_EMPTY"
       result `shouldSatisfy` isLeft
 
@@ -179,11 +179,11 @@ configSpec = do
     it "A39: error names the missing field" do
       let toml = "model = \"test\""
       case parseConfig toml of
-        Left (ConfigFieldMissing field) ->
+        Left (ConfigError field) ->
           String.contains (String.Pattern "api_endpoint") field
             `shouldEqual` true
         Left _ ->
-          fail "Expected ConfigFieldMissing error"
+          fail "Expected ConfigError"
         Right _ ->
           fail "Expected parse to fail for incomplete config"
 

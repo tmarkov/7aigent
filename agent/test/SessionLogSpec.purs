@@ -37,7 +37,9 @@ import Agent.Programs.SessionLog
   )
 import Agent.Types
   ( WorkspacePath(..)
+  , Timestamp(..)
   , SessionId(..)
+  , ToolName(..)
   , ModelName(..)
   , ToolCallId(..)
   , TokenCount(..)
@@ -121,7 +123,7 @@ sessionLogSpec = do
           case decoded of
             EvtUserMessage r -> do
               r.content `shouldEqual` "test message"
-              r.timestamp `shouldEqual` "2026-01-15T14:32:01Z"
+              r.timestamp `shouldEqual` Timestamp "2026-01-15T14:32:01Z"
             _ -> fail "Expected UserMessage event"
         Left err -> fail ("Decode failed: " <> show err)
 
@@ -149,7 +151,7 @@ sessionLogSpec = do
       let event = toolCallEvent "t1" "julia_repl" (ToolCallId "tc1") "1+1"
       case decodeLogEvent (encodeLogEvent event) of
         Right (EvtToolCall r) -> do
-          r.toolName `shouldEqual` "julia_repl"
+          r.toolName `shouldEqual` JuliaRepl
           r.toolCallId `shouldEqual` ToolCallId "tc1"
           r.input `shouldEqual` "1+1"
         Right _ -> fail "Expected ToolCall event"
@@ -193,14 +195,14 @@ sessionLogSpec = do
     it "A26: escape event round-trips correctly" do
       let event = escapeEvent "t1"
       case decodeLogEvent (encodeLogEvent event) of
-        Right (Escape r) -> r.timestamp `shouldEqual` "t1"
+        Right (Escape r) -> r.timestamp `shouldEqual` Timestamp "t1"
         Right _ -> fail "Expected Escape event"
         Left err -> fail ("Decode failed: " <> show err)
 
     it "A26: sigint event round-trips correctly" do
       let event = sigintEvent "t1"
       case decodeLogEvent (encodeLogEvent event) of
-        Right (Sigint r) -> r.timestamp `shouldEqual` "t1"
+        Right (Sigint r) -> r.timestamp `shouldEqual` Timestamp "t1"
         Right _ -> fail "Expected Sigint event"
         Left err -> fail ("Decode failed: " <> show err)
 
