@@ -823,6 +823,31 @@ end
     end
 end
 
+@testset "R26: unchanged file rows are reused from the persisted cache" begin
+    tmp = _tmp_codebase()
+    try
+        load(tmp, TEST_CONFIG)
+
+        cache_db_path = joinpath(tmp, ".7aigent", "code_tree", "index.db")
+        sdb = SQLite.DB(cache_db_path)
+        DBInterface.execute(
+            sdb,
+            "UPDATE code SET summary = ? WHERE file = ? AND kind = ?",
+            ["CACHE_SENTINEL", "data/config.toml", "file"],
+        )
+        close(sdb)
+
+        db2 = load(tmp, TEST_CONFIG)
+        toml_row = only(filter(
+            r -> isequal(r.file, "data/config.toml") && r.kind == "file",
+            db2.code,
+        ))
+        @test toml_row.summary == "CACHE_SENTINEL"
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
 @testset "R1 + R25a + R26: stale fixture cache is not reused when qname rows are incompatible" begin
     tmp = _tmp_codebase()
     try

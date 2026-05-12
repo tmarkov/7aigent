@@ -160,30 +160,28 @@ function load(
         if !ismissing(row.file)
     )
 
-    # Group symbol rows by file.
+    # Group symbol rows by file for freshly parsed files only. Unchanged files
+    # keep their existing cached symbol rows.
+    fresh_files = Set(keys(fresh_file_rows))
     sym_rows_by_file = Dict{String, Vector{SymbolRow}}()
     for sym_row in eachrow(getfield(db.symbols, :_df))
         f = get(id_to_file, sym_row.node_id, nothing)
         isnothing(f) && continue
+        f ∈ fresh_files || continue
         push!(get!(sym_rows_by_file, f, SymbolRow[]),
               (node_id=sym_row.node_id, symbol=sym_row.symbol, kind=sym_row.kind))
     end
 
-    # Save freshly parsed files to cache; update commit_hash for cached files.
+    # Save freshly parsed files to cache; unchanged files keep their cached code
+    # and symbol rows and only refresh the file metadata.
     for rel in rel_files
-        sym_rows = get(sym_rows_by_file, rel, SymbolRow[])
         if haskey(fresh_file_rows, rel)
+            sym_rows = get(sym_rows_by_file, rel, SymbolRow[])
             _save_file_rows!(cache_db, rel, hashes[rel], commit_hash,
                              fresh_file_rows[rel], sym_rows)
         else
-            # Unchanged file: just refresh commit_hash and symbol rows.
+            # Unchanged file: just refresh commit_hash metadata.
             _upsert_file!(cache_db, rel, hashes[rel], commit_hash)
-            DBInterface.execute(cache_db, "DELETE FROM symbols WHERE file = ?", [rel])
-            for s in sym_rows
-                DBInterface.execute(cache_db,
-                    "INSERT INTO symbols (file, node_id, symbol, kind) VALUES (?,?,?,?)",
-                    [rel, s.node_id, s.symbol, s.kind])
-            end
         end
     end
 

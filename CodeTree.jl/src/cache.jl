@@ -13,7 +13,8 @@ using Tables
 const _CACHE_SUBDIR = joinpath(".7aigent", "code_tree")
 const _CACHE_FILE   = "index.db"
 const _CACHE_COMPAT_KEY = "compat_version"
-const _CACHE_COMPAT_VERSION = "3"
+const _CACHE_CODEBASE_NAME_KEY = "codebase_name"
+const _CACHE_COMPAT_VERSION = "4"
 
 # ---------------------------------------------------------------------------
 # Open / create
@@ -37,9 +38,11 @@ function _open_or_create_cache(root_path::String)::SQLite.DB
     dir = joinpath(root_path, _CACHE_SUBDIR)
     isdir(dir) || mkpath(dir)
     db = SQLite.DB(_cache_path(root_path))
-    _ensure_cache_compatible!(db)
+    codebase_name = basename(root_path)
+    _ensure_cache_compatible!(db, codebase_name)
     _init_cache_schema!(db)
     _set_cache_meta!(db, _CACHE_COMPAT_KEY, _CACHE_COMPAT_VERSION)
+    _set_cache_meta!(db, _CACHE_CODEBASE_NAME_KEY, codebase_name)
     return db
 end
 
@@ -93,7 +96,7 @@ function _init_cache_schema!(db::SQLite.DB)::Nothing
     return nothing
 end
 
-function _ensure_cache_compatible!(db::SQLite.DB)::Nothing
+function _ensure_cache_compatible!(db::SQLite.DB, codebase_name::String)::Nothing
     DBInterface.execute(db, """
         CREATE TABLE IF NOT EXISTS cache_meta (
             key   TEXT PRIMARY KEY,
@@ -101,7 +104,11 @@ function _ensure_cache_compatible!(db::SQLite.DB)::Nothing
         )
     """)
     cached_version = _get_cache_meta(db, _CACHE_COMPAT_KEY)
-    cached_version == _CACHE_COMPAT_VERSION && return
+    cached_codebase_name = _get_cache_meta(db, _CACHE_CODEBASE_NAME_KEY)
+    if cached_version == _CACHE_COMPAT_VERSION &&
+       cached_codebase_name == codebase_name
+        return
+    end
 
     DBInterface.execute(db, "BEGIN")
     try
@@ -118,7 +125,7 @@ function _ensure_cache_compatible!(db::SQLite.DB)::Nothing
 end
 
 function _first_result_row(result)::Union{Nothing,Any}
-    rows = collect(result)
+    rows = collect(Tables.namedtupleiterator(result))
     isempty(rows) && return nothing
     return rows[1]
 end
