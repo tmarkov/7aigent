@@ -28,7 +28,7 @@ configSpec = do
 
   describe "A2a: config file placement" do
 
-    it "A2a: places all 5 default files into an empty workspace" do
+    it "A2a: places all 5 default files and the state dir into an empty workspace" do
       withWorkspace \ws -> do
         notices <- placeDefaultConfigs ws
         -- All five workspace config files should now exist
@@ -37,13 +37,15 @@ configSpec = do
         compPromptExists <- workspaceFileExists ws ".7aigent/compaction_prompt.md"
         summaryExists   <- workspaceFileExists ws ".7aigent/summary_message.md"
         startupExists   <- workspaceFileExists ws ".7aigent/startup.jl"
+        stateExists     <- workspaceFileExists ws ".7aigent/state/"
         configExists `shouldEqual` true
         sysPromptExists `shouldEqual` true
         compPromptExists `shouldEqual` true
         summaryExists `shouldEqual` true
         startupExists `shouldEqual` true
-        -- Should have 5 notices (one per placed file)
-        (length notices) `shouldEqual` 5
+        stateExists `shouldEqual` true
+        -- Should have 6 notices (five files plus the state dir)
+        (length notices) `shouldEqual` 6
 
     it "A2a: preserves existing files and only places missing ones" do
       withWorkspace \ws -> do
@@ -53,15 +55,17 @@ configSpec = do
         -- config.toml should keep custom content
         content <- readWorkspaceFile ws ".7aigent/config.toml"
         content `shouldEqual` "custom = true"
-        -- Only 4 files were placed (config.toml was skipped)
-        (length notices) `shouldEqual` 4
+        -- Only 5 items were placed (config.toml was skipped, state was created)
+        (length notices) `shouldEqual` 5
 
     it "A2a: each notice names the placed file" do
       withWorkspace \ws -> do
         notices <- placeDefaultConfigs ws
         -- Each notice should mention the file path
         let hasConfigNotice = any (String.contains (String.Pattern "config.toml")) notices
+        let hasStateNotice = any (String.contains (String.Pattern ".7aigent/state")) notices
         hasConfigNotice `shouldEqual` true
+        hasStateNotice `shouldEqual` true
 
   ---------------------------------------------------------------------------
   -- A37: config parsing

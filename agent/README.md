@@ -9,4 +9,8 @@ The agent runner — the ReACT loop between the LLM and the sandbox REPL.
 3. Executes tool calls (`julia_repl`, `git_diff`, `git_commit`), feeds results back to the LLM
 4. Repeats until the LLM emits a final answer with no tool call
 
+On first run it bootstraps `.7aigent/`, creates `.7aigent/state/`, and if it
+finds a stale `state/nogit` alongside `.git`, it asks whether to halt or to
+re-trust the current git metadata and proceed.
+
 See [`../design/agent-requirements.md`](../design/agent-requirements.md) for the full specification.

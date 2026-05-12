@@ -19,6 +19,7 @@ import Test.OutputThresholdSpec (outputThresholdSpec)
 import Test.ReactStepSpec (reactStepSpec)
 import Test.ReplSerializeSpec (replSerializeSpec)
 import Test.RetrySpec (retrySpec)
+import Test.SandboxPreflightSpec (sandboxPreflightSpec)
 import Test.SessionListingSpec (sessionListingSpec)
 import Test.SessionLogSpec (sessionLogSpec)
 import Test.SessionResumeSpec (sessionResumeSpec)
@@ -42,6 +43,7 @@ main = launchAff_ $ runSpec [ consoleReporter ] do
   reactStepSpec
   replSerializeSpec
   retrySpec
+  sandboxPreflightSpec
   sessionListingSpec
   sessionLogSpec
   sessionResumeSpec

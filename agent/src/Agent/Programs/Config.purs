@@ -102,7 +102,15 @@ readApiKey envVarName = liftEffect do
 placeDefaultConfigs :: WorkspacePath -> Aff (Array String)
 placeDefaultConfigs (WorkspacePath wp) = do
     let configDir = wp <> "/.7aigent"
+    let stateDir = configDir <> "/state"
     FS.mkdir' configDir { recursive: true, mode: permsAll }
+    stateExists <- fileExists stateDir
+    stateNotice <-
+        if stateExists
+        then pure Nothing
+        else do
+            FS.mkdir' stateDir { recursive: true, mode: permsAll }
+            pure (Just "Created .7aigent/state")
     let fileNames = [ "config.toml", "system_prompt.md", "compaction_prompt.md"
                     , "summary_message.md", "startup.jl" ]
     let mSrcDir = toMaybe (lookupEnvSync "AGENT_CONFIG_DIR")
@@ -119,7 +127,7 @@ placeDefaultConfigs (WorkspacePath wp) = do
                 FS.writeTextFile UTF8 destPath content
                 pure (Just ("Created " <> ".7aigent/" <> name))
         ) fileNames
-    pure (Array.catMaybes results)
+    pure (Array.catMaybes ([ stateNotice ] <> results))
 
 fileExists :: String -> Aff Boolean
 fileExists path = do

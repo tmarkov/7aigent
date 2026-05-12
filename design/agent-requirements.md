@@ -46,20 +46,23 @@ The runner connects to the sandbox over the Jupyter messaging protocol
 
 **A2** — On startup, before the first user prompt, the runner:
 
-1. Ensures all workspace configuration files are present (A2a).
+1. Ensures all workspace bootstrap files and directories are present (A2a).
 2. Reads and validates `config.toml` (A37–A39).
-3. Spawns the sandbox via `7aigent-sandbox` with the current working directory
+3. Performs the pre-launch git trust-state check (A2b–A2d).
+4. Spawns the sandbox via `7aigent-sandbox` with the current working directory
    as the workspace path.
-4. Reads the `kernel.json` path printed by the launcher.
-5. Connects to the Jupyter kernel.
-6. Executes the Julia startup sequence (A19–A20).
+5. Reads the `kernel.json` path printed by the launcher.
+6. Connects to the Jupyter kernel.
+7. Executes the Julia startup sequence (A19–A20).
 
-**A2a** — Before starting a session, the runner checks for the presence of
-each workspace configuration file listed below. Any file that is absent is
-copied from the runner's bundled `config/` directory into the workspace,
-and a notice is printed to the terminal for each file placed (e.g.
-`Created .7aigent/system_prompt.md from defaults`). The files and their
-default sources are:
+**A2a** — Before starting a session, the runner ensures that the workspace
+contains a `.7aigent/` directory with the configuration files listed below and
+with a `.7aigent/state/` directory. Any listed file that is absent is copied
+from the runner's bundled `config/` directory into the workspace. If
+`.7aigent/state/` is absent, the runner creates it as a directory. A notice is
+printed to the terminal for each file or directory created (e.g.
+`Created .7aigent/system_prompt.md from defaults`,
+`Created .7aigent/state`). The files and their default sources are:
 
 | Workspace path | Default source |
 |----------------|----------------|
@@ -72,6 +75,31 @@ default sources are:
 After placing any missing files, the runner proceeds to validate `config.toml`
 (A37–A39). If required fields in `config.toml` still hold placeholder values,
 the runner exits with an informative error directing the user to edit the file.
+
+**A2b** — Before spawning the sandbox, the runner checks whether
+`.7aigent/state/nogit` exists and whether `.git` exists in the workspace root.
+If `nogit` is absent or `.git` is absent, the runner proceeds without prompting.
+If both are present, the runner treats this as a trust-state conflict and
+intervenes before sandbox launch.
+
+**A2c** — When a trust-state conflict from A2b is detected, the runner inspects
+the `.git` object and reports its kind to the user as one of:
+
+- `git directory`
+- `git symlink`
+- `gitfile`
+- `other git object`
+
+The inspection is based on the object currently present at `.git`; for
+`gitfile`, the runner does not need to parse or validate the target at this
+stage, only identify the file as a gitfile for display.
+
+**A2d** — After reporting the conflict from A2c, the runner prompts the user to
+either halt or to remove `.7aigent/state/nogit` and proceed. The prompt must
+make clear that proceeding re-trusts the current `.git` metadata for this and
+future launches. If the user chooses to halt, the runner exits before sandbox
+spawn. If the user chooses to proceed, the runner removes
+`.7aigent/state/nogit` on the host and then continues startup.
 
 ---
 

@@ -64,6 +64,10 @@ import Agent.Programs.GitCommit
     ( CommitWhat(..), validateCommitWhat, runGitCommit )
 import Agent.Programs.JuliaDefs (extractDefs)
 import Agent.Programs.ReplSerialize (buildSerializationSnippet)
+import Agent.Programs.SandboxPreflight
+    ( SandboxPreflightResult(..)
+    , runSandboxPreflight
+    )
 import Agent.Services.Terminal (printLn, printStr, printErr)
 import Agent.Services.Stdin (readLine, writePrompt)
 import Agent.Services.Sandbox (SandboxHandle, spawnSandbox)
@@ -256,6 +260,14 @@ startSession ws@(WorkspacePath wp) resumedFrom existingHistory prompt = do
             exit1
         Right k -> pure k
 
+    preflight <- runSandboxPreflight ws promptSandboxPreflight
+    case preflight of
+        HaltStartup -> do
+            liftEffect $ printErr "Startup halted before sandbox launch."
+            exit1
+        ContinueStartup ->
+            pure unit
+
     -- A24: allocate session ID
     sessionId <- allocateSessionId ws
 
@@ -332,6 +344,13 @@ runStartupSequence (WorkspacePath wp) kernel = do
             out2 <- executeCode kernel (RawJulia code) (const (pure unit))
             liftEffect $ printLn "OK"
             pure (out1 <> "\n" <> out2)
+
+promptSandboxPreflight :: String -> Aff String
+promptSandboxPreflight message = do
+    liftEffect $ printLn ""
+    liftEffect $ printLn message
+    liftEffect $ writePrompt "> "
+    readLine
 
 -- ---------------------------------------------------------------------------
 -- A21-A22: system prompt template

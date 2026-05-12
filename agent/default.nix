@@ -41,7 +41,7 @@ buildNpmPackage {
   src     = ./.;
 
   # Update with: nix run nixpkgs#prefetch-npm-deps agent/package-lock.json
-  npmDepsHash = "sha256-EvtaZjdW/+5cFywhCi24EQQ9sykdQu/U8KEec27Zc88=";
+  npmDepsHash = "sha256-ITLCHv0KOcnLIn79HpXuhvDfo2pc9kskIrfasM08y08=";
 
   # pkg-config + zeromq: required to compile the zeromq native Node.js addon.
   # purescript + spago: compile PureScript source and run tests.

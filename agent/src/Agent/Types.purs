@@ -226,6 +226,7 @@ data AppError
   = ConfigFieldMissing String
   | PlaceholderValue String
   | StartupExpressionError String
+  | SandboxLaunchError String
   | SandboxCrashed
   | StaleHunkIds (Array HunkId)
   | TemplateError String
@@ -237,6 +238,7 @@ instance Show AppError where
   show (ConfigFieldMissing s) = "ConfigFieldMissing: " <> s
   show (PlaceholderValue s) = "Placeholder value detected: " <> s
   show (StartupExpressionError s) = "StartupExpressionError: " <> s
+  show (SandboxLaunchError s) = "SandboxLaunchError: " <> s
   show SandboxCrashed = "SandboxCrashed"
   show (StaleHunkIds ids) = "StaleHunkIds: " <> show ids
   show (TemplateError s) = "TemplateError: " <> s

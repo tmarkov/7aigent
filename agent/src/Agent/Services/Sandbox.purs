@@ -27,6 +27,6 @@ foreign import spawnSandboxImpl
 spawnSandbox :: WorkspacePath -> Aff (Either AppError SandboxHandle)
 spawnSandbox (WorkspacePath wp) = makeAff \resolve -> do
     spawnSandboxImpl wp
-        (\msg -> resolve (Right (Left (ConfigFieldMissing ("Sandbox: " <> msg)))))
+        (\msg -> resolve (Right (Left (SandboxLaunchError msg))))
         (\h   -> resolve (Right (Right h)))
     pure nonCanceler
