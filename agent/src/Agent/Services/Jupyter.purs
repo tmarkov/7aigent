@@ -2,8 +2,10 @@
 -- | Covers A4, A16, A19, A20.
 module Agent.Services.Jupyter
     ( KernelHandle
+    , ExecutionResult
     , connectKernel
     , executeCode
+    , executeCodeDetailed
     , interruptKernel
     , closeKernel
     ) where
@@ -14,9 +16,14 @@ import Effect (Effect)
 import Effect.Aff (Aff, makeAff, nonCanceler)
 import Agent.Types (RawJulia(..), AppError(..))
 
+type ExecutionResult =
+    { output :: String
+    , hadError :: Boolean
+    }
+
 -- | A live connection to the Jupyter kernel.
 type KernelHandle =
-    { execute   :: String -> (String -> Effect Unit) -> (String -> Effect Unit) -> Effect Unit
+    { execute   :: String -> (String -> Effect Unit) -> (ExecutionResult -> Effect Unit) -> Effect Unit
     , interrupt :: Effect Unit -> Effect Unit
     , close     :: Effect Unit
     }
@@ -39,7 +46,12 @@ connectKernel kernelJsonPath = makeAff \resolve -> do
 -- | and resolving with the full output string when complete.
 executeCode :: KernelHandle -> RawJulia -> (String -> Effect Unit) -> Aff String
 executeCode kernel (RawJulia code) onToken = makeAff \resolve -> do
-    kernel.execute code onToken (\out -> resolve (Right out))
+    kernel.execute code onToken (\result -> resolve (Right result.output))
+    pure nonCanceler
+
+executeCodeDetailed :: KernelHandle -> RawJulia -> (String -> Effect Unit) -> Aff ExecutionResult
+executeCodeDetailed kernel (RawJulia code) onToken = makeAff \resolve -> do
+    kernel.execute code onToken (\result -> resolve (Right result))
     pure nonCanceler
 
 -- | Send an interrupt_request to the kernel control channel.

@@ -8,7 +8,12 @@ import Data.String as String
 import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (shouldEqual, shouldSatisfy, fail)
 
-import Agent.Programs.Startup (advanceStartup, StartupPhase(..), StartupNext(..))
+import Agent.Programs.Startup
+  ( advanceStartup
+  , interpretStartupExecution
+  , StartupPhase(..)
+  , StartupNext(..)
+  )
 import Agent.Types (AppError(..), WorkspacePath(..), RawJulia(..))
 
 startupSpec :: Spec Unit
@@ -98,6 +103,26 @@ startupSpec = do
           String.contains (String.Pattern "MethodError") (show err)
             `shouldEqual` true
         _ -> fail "Expected Abort with Julia error text"
+
+  describe "A20: startup execution result interpretation" do
+
+    it "A20: kernel error output is treated as a startup failure" do
+      let result = interpretStartupExecution
+            { output: "UndefVarError: db not defined"
+            , hadError: true
+            }
+      case result of
+        Left (StartupExpressionError msg) ->
+          String.contains (String.Pattern "UndefVarError") msg `shouldEqual` true
+        _ -> fail "Expected startup failure from hadError=true"
+
+    it "A19: non-error startup output is accepted" do
+      case interpretStartupExecution
+          { output: "CodeTree loaded"
+          , hadError: false
+          } of
+        Right output -> output `shouldEqual` "CodeTree loaded"
+        Left _ -> fail "Expected successful startup output"
 
   ---------------------------------------------------------------------------
   -- A20a: sandbox unexpected exit

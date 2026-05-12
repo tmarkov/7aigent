@@ -593,6 +593,51 @@ end
     end
 end
 
+@testset "R13: Markdown paragraph immediately followed by a list does not crash load()" begin
+    tmp = _fresh_tmp_codebase()
+    try
+        list_md = joinpath(tmp, "docs", "list-boundary.md")
+        write(list_md, join([
+            "# List Boundary",
+            "",
+            "Intro paragraph:",
+            "- first item",
+            "- second item",
+            "",
+            "Closing paragraph.",
+            "",
+        ], '\n'))
+
+        db = load(tmp, TEST_CONFIG; detail_threshold = 0)
+        list_rows = sort(filter(r -> isequal(r.file, "docs/list-boundary.md"), db.code), :line_start)
+
+        @test any(r -> r.kind == "function" && r.line_start == 1 && r.line_end == 2, eachrow(list_rows))
+        @test any(
+            r -> r.kind == "chunk" &&
+                 r.line_start == 3 &&
+                 r.line_end == 3 &&
+                 occursin("Intro paragraph:", something(r.source, "")),
+            eachrow(list_rows),
+        )
+        @test any(
+            r -> r.kind == "chunk" &&
+                 r.line_start == 4 &&
+                 r.line_end == 6 &&
+                 occursin("- first item", something(r.source, "")),
+            eachrow(list_rows),
+        )
+        @test !any(
+            r -> r.kind == "chunk" &&
+                 r.line_start == 3 &&
+                 r.line_end == 6 &&
+                 occursin("- first item", something(r.source, "")),
+            eachrow(list_rows),
+        )
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
 @testset "R21a + R21b: Markdown symbols belong only to the leaf that contains the span" begin
     tmp = _fresh_tmp_codebase()
     try

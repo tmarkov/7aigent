@@ -78,7 +78,7 @@ export const connectKernelImpl = (kernelJsonPath) => (onError) => (onSuccess) =>
   const iopub = new zmq.Subscriber();
   const control = new zmq.Dealer();
 
-  // Map from msgId -> { resolve, onToken, output: string[] }
+  // Map from msgId -> { resolve, onToken, output: string[], hadError: boolean }
   const pending = new Map();
 
   async function iopubLoop() {
@@ -109,13 +109,17 @@ export const connectKernelImpl = (kernelJsonPath) => (onError) => (onSuccess) =>
           // Strip ANSI escape codes for the stored output (sent to the LLM);
           // keep them for the terminal display via onToken.
           const plainText = rawText.replace(/\x1b\[[0-9;]*[mGKJH]/g, "");
+          handler.hadError = true;
           handler.onToken(rawText)();
           handler.output.push(plainText);
           break;
         }
         case "status":
           if (parsed.content.execution_state === "idle") {
-            handler.resolve(handler.output.join(""));
+            handler.resolve({
+              output: handler.output.join(""),
+              hadError: handler.hadError,
+            });
             pending.delete(parentMsgId);
           }
           break;
@@ -132,8 +136,8 @@ export const connectKernelImpl = (kernelJsonPath) => (onError) => (onSuccess) =>
     iopubLoop().catch((_) => {/* socket closed on cleanup */});
 
     const handle = {
-      // execute :: String -> (String -> Effect Unit) -> (String -> Effect Unit) -> Effect Unit
-      // onToken is called for each partial output; onComplete is called with the full output
+      // execute :: String -> (String -> Effect Unit) -> (ExecutionResult -> Effect Unit) -> Effect Unit
+      // onToken is called for each partial output; onComplete is called with the full execution result
       execute: (code) => (onToken) => (onComplete) => () => {
         const msgId = crypto.randomUUID();
         const msg = buildMsg(key, sessionId, "execute_request", {
@@ -146,14 +150,17 @@ export const connectKernelImpl = (kernelJsonPath) => (onError) => (onSuccess) =>
         }, msgId);
 
         const p = new Promise((resolve) => {
-          pending.set(msgId, { resolve, onToken, output: [] });
+          pending.set(msgId, { resolve, onToken, output: [], hadError: false });
         });
 
         shell.send(msg).then(() => {
-          p.then((output) => onComplete(output)());
+          p.then((result) => onComplete(result)());
         }).catch((err) => {
           pending.delete(msgId);
-          onComplete("[kernel error: " + err.message + "]")();
+          onComplete({
+            output: "[kernel error: " + err.message + "]",
+            hadError: true,
+          })();
         });
       },
 

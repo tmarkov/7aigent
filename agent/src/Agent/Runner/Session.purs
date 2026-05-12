@@ -55,6 +55,7 @@ import Agent.Programs.SessionResume (loadSessionForResume, ResumeResult(..))
 import Agent.Programs.Template (substituteTemplate)
 import Agent.Programs.ReactStep (reactStep, NextStep(..))
 import Agent.Programs.Compaction (buildCompactionPlan)
+import Agent.Programs.Startup (interpretStartupExecution)
 import Agent.Programs.JuliaDefs (extractDefs)
 import Agent.Programs.ReplSerialize
     ( buildRestoreSnippet
@@ -69,7 +70,7 @@ import Agent.Services.Terminal (printLn, printStr, printErr)
 import Agent.Services.Stdin (readLine, writePrompt)
 import Agent.Services.Sandbox (SandboxHandle, spawnSandbox)
 import Agent.Services.Jupyter
-    ( KernelHandle, connectKernel, executeCode, interruptKernel, closeKernel )
+    ( KernelHandle, connectKernel, executeCode, executeCodeDetailed, interruptKernel, closeKernel )
 import Agent.Services.Llm (LlmUsage, callLlm)
 
 -- ---------------------------------------------------------------------------
@@ -285,8 +286,18 @@ startSession ws@(WorkspacePath wp) resumedFrom existingHistory resumeState promp
             exit1
         Right k -> pure k
 
+    let cleanupSandbox = do
+            liftEffect $ closeKernel kernel
+            liftEffect $ sandbox.kill
+
     -- A19: run Julia startup sequence
-    startupOutput <- runStartupSequence ws kernel
+    startupResult <- runStartupSequence ws kernel
+    startupOutput <- case startupResult of
+        Left _ -> do
+            cleanupSandbox
+            exit1
+        Right output ->
+            pure output
 
     case resumedFrom, resumeState of
         Just priorSid, Just resumeData ->
@@ -295,7 +306,13 @@ startSession ws@(WorkspacePath wp) resumedFrom existingHistory resumeState promp
             pure unit
 
     -- A21-A22: build system prompt
-    systemPrompt <- buildSystemPrompt ws config startupOutput
+    systemPromptR <- buildSystemPrompt ws config startupOutput
+    systemPrompt <- case systemPromptR of
+        Left _ -> do
+            cleanupSandbox
+            exit1
+        Right promptText ->
+            pure promptText
 
     -- Log session start
     ts <- getTs
@@ -321,31 +338,44 @@ startSession ws@(WorkspacePath wp) resumedFrom existingHistory resumeState promp
         ws sessionId config apiKey kernel initHistory Set.empty zeroLlmUsage prompt
 
     -- Cleanup
-    liftEffect $ closeKernel kernel
-    liftEffect $ sandbox.kill
+    cleanupSandbox
     liftEffect $ Process.exit' exitCode
 
 -- ---------------------------------------------------------------------------
 -- A19: Julia startup sequence
 -- ---------------------------------------------------------------------------
 
-runStartupSequence :: WorkspacePath -> KernelHandle -> Aff String
+runStartupSequence :: WorkspacePath -> KernelHandle -> Aff (Either AppError String)
 runStartupSequence (WorkspacePath wp) kernel = do
-    liftEffect $ printStr "Loading CodeTree... "
-    out1 <- executeCode kernel (RawJulia "using CodeTree") (const (pure unit))
-    liftEffect $ printLn "OK"
+    out1 <- runStartupExpression kernel "Loading CodeTree" "using CodeTree"
+    case out1 of
+        Left err ->
+            pure (Left err)
+        Right startupPrelude -> do
+            startupR <- attempt (FS.readTextFile UTF8 (wp <> "/.7aigent/startup.jl"))
+            let code = case startupR of
+                    Left _ -> ""
+                    Right t -> t
+            if String.null (String.trim code)
+                then pure (Right startupPrelude)
+                else do
+                    out2 <- runStartupExpression kernel "Running startup.jl" code
+                    pure (map (\s -> startupPrelude <> "\n" <> s) out2)
 
-    startupR <- attempt (FS.readTextFile UTF8 (wp <> "/.7aigent/startup.jl"))
-    let code = case startupR of
-            Left _ -> ""
-            Right t -> t
-    if String.null (String.trim code)
-        then pure out1
-        else do
-            liftEffect $ printStr "Running startup.jl... "
-            out2 <- executeCode kernel (RawJulia code) (const (pure unit))
+runStartupExpression :: KernelHandle -> String -> String -> Aff (Either AppError String)
+runStartupExpression kernel label code = do
+    liftEffect $ printStr (label <> "... ")
+    result <- executeCodeDetailed kernel (RawJulia code) (const (pure unit))
+    case interpretStartupExecution result of
+        Left (StartupExpressionError msg) -> do
+            liftEffect $ printErr ("\n" <> msg)
+            pure (Left (StartupExpressionError msg))
+        Left err -> do
+            liftEffect $ printErr ("\n" <> show err)
+            pure (Left err)
+        Right output -> do
             liftEffect $ printLn "OK"
-            pure (out1 <> "\n" <> out2)
+            pure (Right output)
 
 promptSandboxPreflight :: String -> Aff String
 promptSandboxPreflight message = do
@@ -388,7 +418,7 @@ wrapDefinitionReplay expr = String.joinWith "\n"
 -- A21-A22: system prompt template
 -- ---------------------------------------------------------------------------
 
-buildSystemPrompt :: WorkspacePath -> Config -> String -> Aff String
+buildSystemPrompt :: WorkspacePath -> Config -> String -> Aff (Either AppError String)
 buildSystemPrompt (WorkspacePath wp) config startupOutput = do
     tmplR <- attempt (FS.readTextFile UTF8 (wp <> "/.7aigent/system_prompt.md"))
     let tmpl = case tmplR of
@@ -411,8 +441,8 @@ buildSystemPrompt (WorkspacePath wp) config startupOutput = do
     case substituteTemplate vars tmpl of
         Left err -> do
             liftEffect $ printErr ("Error in system_prompt.md: " <> show err)
-            exit1
-        Right s -> pure s
+            pure (Left (TemplateError ("system_prompt.md: " <> show err)))
+        Right s -> pure (Right s)
 
 -- ---------------------------------------------------------------------------
 -- A1: outer loop — user prompt ↔ LLM loop

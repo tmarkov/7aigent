@@ -1,12 +1,12 @@
 module Agent.Programs.Startup
     ( advanceStartup
+    , interpretStartupExecution
     , StartupPhase(..)
     , StartupNext(..)
     ) where
 
 import Prelude
 import Data.Either (Either(..))
-import Data.String as String
 import Agent.Types (AppError(..))
 
 data StartupPhase
@@ -35,6 +35,14 @@ instance Show StartupNext where
     show (Abort err) =
         "(Abort " <> show err <> ")"
 
+interpretStartupExecution
+    :: { output :: String, hadError :: Boolean }
+    -> Either AppError String
+interpretStartupExecution result =
+    if result.hadError
+    then Left (StartupExpressionError result.output)
+    else Right result.output
+
 advanceStartup
     :: StartupPhase
     -> Either AppError String
@@ -42,7 +50,7 @@ advanceStartup
 advanceStartup ValidatingConfig (Left err) = Abort err
 advanceStartup ValidatingConfig (Right _) =
     NextStep (ExecutingStartup 0)
-advanceStartup (ExecutingStartup idx) (Left err) =
+advanceStartup (ExecutingStartup _) (Left err) =
     Abort err
 advanceStartup (ExecutingStartup idx) (Right output) =
     if idx >= 1
