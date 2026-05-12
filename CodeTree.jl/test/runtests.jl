@@ -383,11 +383,29 @@ end
     @test ismissing(toml_row.language)
 end
 
-@testset "R8: unknown-language file is a single leaf node with no children" begin
+@testset "R8: unknown-language file splits into blank-line-delimited chunk leaves" begin
     code = _db().code
     toml_node = only(filter(r -> isequal(r.file, "data/config.toml") && r.kind == "file", code))
-    @test toml_node.n_children == 0
-    @test !ismissing(toml_node.source)
+    @test toml_node.n_children == 4
+    @test ismissing(toml_node.source)
+
+    chunks = sort(
+        collect(eachrow(filter(r -> isequal(r.parent, toml_node.id), code))),
+        by = r -> r.line_start,
+    )
+    @test [chunk.kind for chunk in chunks] == ["chunk", "chunk", "chunk", "chunk"]
+    @test [(chunk.line_start, chunk.line_end) for chunk in chunks] == [
+        (1, 4),
+        (5, 9),
+        (10, 14),
+        (15, 16),
+    ]
+    @test all(chunk.n_children == 0 for chunk in chunks)
+    @test all(!ismissing(chunk.source) for chunk in chunks)
+    @test all(
+        any(!isempty(strip(line)) for line in split(chunk.source, '\n'))
+        for chunk in chunks
+    )
 end
 
 @testset "R10: landmark nodes always appear in db.code" begin
@@ -891,6 +909,36 @@ end
             db2.code,
         ))
         @test toml_row.summary == "CACHE_SENTINEL"
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R25a + R26: stale cache rows are dropped when compat_version changes" begin
+    tmp = _tmp_codebase()
+    try
+        load(tmp, TEST_CONFIG)
+
+        cache_db_path = joinpath(tmp, ".7aigent", "code_tree", "index.db")
+        sdb = SQLite.DB(cache_db_path)
+        DBInterface.execute(
+            sdb,
+            "UPDATE cache_meta SET value = ? WHERE key = ?",
+            ["stale-version", "compat_version"],
+        )
+        DBInterface.execute(
+            sdb,
+            "UPDATE code SET summary = ? WHERE file = ? AND kind = ?",
+            ["STALE_CACHE_SENTINEL", "data/config.toml", "file"],
+        )
+        close(sdb)
+
+        db2 = load(tmp, TEST_CONFIG)
+        toml_row = only(filter(
+            r -> isequal(r.file, "data/config.toml") && r.kind == "file",
+            db2.code,
+        ))
+        @test ismissing(toml_row.summary)
     finally
         rm(tmp; recursive=true)
     end

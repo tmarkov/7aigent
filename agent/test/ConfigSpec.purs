@@ -53,6 +53,10 @@ configSpec = do
           `shouldEqual` true
         String.contains (String.Pattern "You are 7aigent") systemPrompt
           `shouldEqual` true
+        String.contains (String.Pattern "progressively disclose a file") systemPrompt
+          `shouldEqual` true
+        String.contains (String.Pattern "something(r.file, \"\")") systemPrompt
+          `shouldEqual` true
         String.contains (String.Pattern "using DataFrames, DataFramesMeta") startupContent
           `shouldEqual` true
 

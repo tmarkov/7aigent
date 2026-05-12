@@ -384,6 +384,86 @@ function _markdown_block_name(block::MarkdownBlock, kind::String)::String
     return kind
 end
 
+function _blank_line_chunk_spans(
+    src_lines::Vector{<:AbstractString},
+)::Vector{Tuple{Int,Int}}
+    n_lines = length(src_lines)
+    n_lines == 0 && return Tuple{Int,Int}[]
+
+    block_starts = Int[]
+    i = 1
+    while i <= n_lines
+        while i <= n_lines && isempty(strip(src_lines[i]))
+            i += 1
+        end
+        i > n_lines && break
+
+        push!(block_starts, i)
+        while i <= n_lines && !isempty(strip(src_lines[i]))
+            i += 1
+        end
+    end
+
+    isempty(block_starts) && return Tuple{Int,Int}[]
+
+    spans = Tuple{Int,Int}[]
+    for (idx, block_start) in enumerate(block_starts)
+        chunk_ls = idx == 1 ? 1 : block_start
+        chunk_le = idx < length(block_starts) ? block_starts[idx + 1] - 1 : n_lines
+        push!(spans, (chunk_ls, chunk_le))
+    end
+    return spans
+end
+
+function _build_blank_line_chunk_rows(
+    src::String,
+    src_lines::Vector{<:AbstractString},
+    language::Union{String,Missing},
+    file_row::CodeRow,
+    file_id::NodeId,
+    file_path::FilePath,
+    depth::Int,
+    file_qname::QName,
+)::Vector{CodeRow}
+    spans = _blank_line_chunk_spans(src_lines)
+    if isempty(spans)
+        file_row.source = src
+        return [file_row]
+    end
+
+    span_names = fill("chunk", length(spans))
+    span_starts = first.(spans)
+    id_suffixes = assign_ordinal_ids(span_names, span_starts)
+    qname_suffixes = assign_ordinal_ids(span_names, span_starts)
+
+    child_rows = CodeRow[]
+    for (i, (chunk_ls, chunk_le)) in enumerate(spans)
+        node_qname = child_qname(file_qname, qname_suffixes[i])
+        span_src = join(src_lines[max(1, chunk_ls):min(length(src_lines), chunk_le)], '\n')
+        push!(child_rows, CodeRow(
+            child_node_id(file_id, id_suffixes[i]).val,
+            file_id.val,
+            depth + 1,
+            i - 1,
+            "chunk",
+            "chunk",
+            node_qname.val,
+            language,
+            missing,
+            span_src,
+            missing,
+            file_path.val,
+            chunk_ls,
+            chunk_le,
+            chunk_le - chunk_ls + 1,
+            0,
+        ))
+    end
+
+    file_row.n_children = length(child_rows)
+    return vcat([file_row], child_rows)
+end
+
 function _build_markdown_rows(
     src::String,
     entry::LanguageEntry,
@@ -565,16 +645,18 @@ function build_file_rows(
         )
     end
 
-    # R8: unknown language or no tree-sitter grammar → single leaf
+    # R8: unknown language or no tree-sitter grammar → blank-line chunk fallback
     if isnothing(entry) || isnothing(entry.grammar_symbol)
-        file_row.source = src
-        return [file_row]
+        return _build_blank_line_chunk_rows(
+            src, src_lines, language, file_row, file_id, file_path, depth, file_qname,
+        )
     end
 
     tree = parse_source(src, entry.grammar_symbol)
     if isnothing(tree)
-        file_row.source = src
-        return [file_row]
+        return _build_blank_line_chunk_rows(
+            src, src_lines, language, file_row, file_id, file_path, depth, file_qname,
+        )
     end
 
     # GC.@preserve keeps `tree` alive for the entire node traversal.

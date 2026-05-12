@@ -367,7 +367,12 @@ definition_patterns:
   - (import_from_statement name: (dotted_name (identifier) @symbol))
 ```
 
-For an unsupported language (no config file), the entire file becomes a single leaf node. No symbol extraction is performed.
+For an unsupported language (no config file or no available tree-sitter
+grammar), the file is still represented structurally: the file row remains the
+parent, and each non-blank block becomes a `kind=chunk` child leaf. Runs of one
+or more blank lines act as separators, but those blank lines are absorbed into
+an adjacent chunk so no blank-only chunk is emitted and the full-span invariant
+is preserved. No symbol extraction is performed.
 
 ---
 

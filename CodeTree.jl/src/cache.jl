@@ -14,7 +14,7 @@ const _CACHE_SUBDIR = joinpath(".7aigent", "code_tree")
 const _CACHE_FILE   = "index.db"
 const _CACHE_COMPAT_KEY = "compat_version"
 const _CACHE_CODEBASE_NAME_KEY = "codebase_name"
-const _CACHE_COMPAT_VERSION = "4"
+const _CACHE_COMPAT_VERSION = "5"
 
 # ---------------------------------------------------------------------------
 # Open / create

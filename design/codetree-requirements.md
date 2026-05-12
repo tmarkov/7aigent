@@ -101,8 +101,13 @@ files gets a `kind=module` node; there is exactly one `kind=codebase` root.
 
 **R7** — Language is detected from file extension.
 
-**R8** — Files with no entry in the language config are loaded as a single
-leaf node (the file node itself, with no children).
+**R8** — Files with no entry in the language config, or with no available
+tree-sitter grammar, are loaded without compound parsing. The file still gets
+its `kind=file` row, but if it contains any non-blank lines those lines are
+split into `kind=chunk` child leaves using runs of blank lines as separators.
+Separator blank lines are absorbed into the neighbouring chunk so no
+`kind=chunk` row consists only of blank lines. If the file is entirely blank,
+the file node remains a leaf.
 
 ---
 

@@ -147,7 +147,7 @@ Code structure is classified into these kinds, which map across languages:
 | `variable` | Module/class-level constant or field | `PST` (piece-square table) |
 | `type` | Type def, typedef, alias | `type Piece = ...` |
 | `comment` | Docstrings, doc comments | Module docstring, class docstring |
-| `chunk` | Gap-filling leaf; lines not covered by any compound child | Declaration lines, trailing code |
+| `chunk` | Gap-filling leaf; lines not covered by any compound child, or blank-line-delimited fallback content in unsupported files | Declaration lines, trailing code, unsupported-language blocks |
 
 ### Tree Structure
 

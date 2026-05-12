@@ -18,26 +18,67 @@ The `CodeTree` package parses the code as a tree, and then adds a row to the dat
 
 ## CodeTree API
 
-Query the database using standard Julia DataFrame operations:
+Query the database using standard Julia/DataFrame operations, but use the
+table as a tree: first narrow to the right file/module/function, then inspect
+its children, then read leaf `source` only where needed.
+
+Key habits:
+- Use `file` for path searches, `name` for local identifiers/basenames, and
+  `summary`/`source` for text content.
+- `file`, `summary`, and `source` may be `missing`. For substring checks, use
+  `something(r.file, "")`, `something(r.summary, "")`, or
+  `something(r.source, "")`.
+- `source` is populated only on leaf nodes (`n_children == 0`). If a parent
+  node has no `source`, inspect `filter(r -> r.parent == node.id, db.code)`.
+
+Use task-oriented patterns like these:
 
 ```julia
-# List all files
-filter(r -> r.kind == "file", db.code)
+# Task: find candidate files for a runner/session refactor.
+runner_files = filter(r ->
+    r.kind == "file" &&
+    occursin("agent/src/Agent/Runner", lowercase(something(r.file, ""))),
+    db.code,
+)
 
-# Find all functions
-filter(r -> r.kind == "function", db.code)
+# Task: progressively disclose a file before reading source.
+session_file = only(filter(r ->
+    r.kind == "file" && r.file == "agent/src/Agent/Runner/Session.purs",
+    db.code,
+))
+session_children = sort(
+    filter(r -> r.parent == session_file.id, db.code),
+    [:line_start],
+)
 
-# Find a node by name
-filter(r -> r.name == "quick_sort", db.code)
+# Task: search content safely inside a narrowed subtree.
+token_leaves = filter(r ->
+    r.parent == session_file.id &&
+    !ismissing(r.source) &&
+    occursin("estimatetokens", lowercase(something(r.source, ""))),
+    db.code,
+)
 
-# Find children of a node
-filter(r -> r.parent == "src/algorithms.cpp", db.code)
+# Task: find callers once you know a symbol name.
+call_sites = filter(r ->
+    r.symbol == "estimateTokens" && r.kind == "call",
+    db.symbols,
+)
+join(
+    call_sites,
+    select(db.code, :id, :file, :line_start, :line_end),
+    on = :node_id => :id,
+)
 
-# Read a node's full source
-only(filter(r -> r.name == "quick_sort", db.code)).source
-
-# List symbols (calls, var_refs) in a node
-filter(r -> r.node_id == "src/algorithms.cpp:quick_sort", db.symbols)
+# Task: inspect unsupported-language files through fallback chunks.
+config_file = only(filter(r ->
+    r.kind == "file" && r.file == "data/config.toml",
+    db.code,
+))
+config_chunks = sort(
+    filter(r -> r.parent == config_file.id, db.code),
+    [:line_start],
+)
 ```
 
 ### db.code columns
@@ -45,18 +86,18 @@ filter(r -> r.node_id == "src/algorithms.cpp:quick_sort", db.symbols)
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | String | Unique node id (e.g. `"src/algorithms.cpp:quick_sort"`) |
-| `parent` | String | Parent node id |
+| `parent` | String? | Parent node id; missing on the codebase root |
 | `depth` | Int | Nesting depth (0 = root) |
 | `kind` | String | `"file"`, `"function"`, `"class"`, `"module"`, `"chunk"`, `"comment"` |
 | `name` | String | Node name |
-| `language` | String | `"cpp"`, `"julia"`, `"markdown"` or missing |
-| `file` | String | Relative path from workspace root |
-| `line_start` | Int | First line (1-indexed) |
-| `line_end` | Int | Last line (1-indexed) |
-| `n_lines` | Int | Number of lines |
+| `language` | String? | `"cpp"`, `"julia"`, `"markdown"` or missing |
+| `file` | String? | Relative path from workspace root; missing on non-file structural rows |
+| `line_start` | Int? | First line (1-indexed); missing on non-file structural rows |
+| `line_end` | Int? | Last line (1-indexed); missing on non-file structural rows |
+| `n_lines` | Int? | Number of lines; missing on non-file structural rows |
 | `n_children` | Int | Number of direct children |
-| `summary` | String | Docstring/comment summary (may be missing) |
-| `source` | String | Full source text (leaf nodes only) |
+| `summary` | String? | Docstring/comment summary (may be missing) |
+| `source` | String? | Full source text (leaf nodes only; missing on parents) |
 
 ### db.symbols columns
 
