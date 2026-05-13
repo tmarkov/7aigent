@@ -185,6 +185,7 @@ codebase:chess
 
 - **`source`**: Full source text — **leaf nodes only** (`n_children = 0`)
   - Stored only at leaves; non-leaf nodes carry structural metadata but no source text
+  - `get_source(db, id)` reconstructs the current source text for any node span, including non-leaf nodes
   - Any file can be reconstructed by concatenating its leaf nodes' `source` in `line_start` order
   - Searching `source` across all rows finds every occurrence in the codebase (leaves cover every line exactly once)
   - Storing source at every level would cause O(depth) redundancy — the same text repeated in every ancestor

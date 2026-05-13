@@ -133,7 +133,7 @@ Parse the file using the appropriate language grammar. This produces a concrete 
 Create a `kind=file` row:
 - `name` = filename
 - `qname` = relative path from codebase root
-- `source` = NULL (file nodes are non-leaf nodes once children are added; source is stored only on leaf nodes)
+- `source` = NULL (file nodes are non-leaf nodes once children are added; source is stored only on leaf nodes, while `get_source(db, id)` reconstructs any node's span on demand)
 - `line_start = 1`, `line_end` = total line count
 - `summary` = module-level docstring or header comment if present (see Step 5); else NULL
 

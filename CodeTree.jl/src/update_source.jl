@@ -9,6 +9,24 @@
 #   6. Rolls back all in-memory state if the disk write fails (R35)
 
 """
+    get_source(db, id) -> String
+
+Return the current source text for node `id` from the in-memory buffer.
+
+For leaf nodes this matches the `source` column. For non-leaf nodes, whose
+`source` column is `missing`, this reconstructs the node span on demand using
+the node's `(line_start, line_end)` range.
+"""
+function get_source(
+    db::CodeTreeDB,
+    id::AbstractString,
+)::String
+    _, file_rel, node_ls, node_le = _lookup_node_span(db, String(id))
+    cur_src = db._buffer[file_rel]
+    return _slice_lines(cur_src, Int(node_ls), Int(node_le))
+end
+
+"""
     update_source(db, id, new_source)
 
 Replace the source of node `id` in `db` with `new_source`.
@@ -25,19 +43,9 @@ function update_source(
     id_str  = String(id)
     new_src = String(new_source)
 
-    code_df = getfield(db.code,    :_df)
+    code_df = getfield(db.code, :_df)
     syms_df = getfield(db.symbols, :_df)
-
-    # --- Look up target node ---
-    idx = findfirst(==(id_str), code_df.id)
-    isnothing(idx) && throw(ArgumentError("Node '$id_str' not found in db.code"))
-
-    file_rel = code_df[idx, :file]
-    node_ls  = code_df[idx, :line_start]
-    node_le  = code_df[idx, :line_end]
-    ismissing(file_rel) && throw(ArgumentError("Node '$id_str' has no file association"))
-    (ismissing(node_ls) || ismissing(node_le)) &&
-        throw(ArgumentError("Node '$id_str' has no line range"))
+    _, file_rel, node_ls, node_le = _lookup_node_span(db, id_str)
 
     file_rel_typed = FilePath(file_rel)
     abs_path = joinpath(db.root, file_rel)
@@ -50,6 +58,16 @@ function update_source(
         _replace_file_in_db!(db, file_rel_typed, disk_src)
         throw(ErrorException(
             "File '$(file_rel)' was modified externally; db has been refreshed. Please retry."))
+    end
+
+    # R30b: verify the current node span against the buffer-backed accessor so
+    # leaf and non-leaf nodes share the same edit path.
+    current_node_src = get_source(db, id_str)
+    disk_node_src = _slice_lines(disk_src, Int(node_ls), Int(node_le))
+    if disk_node_src != current_node_src
+        _replace_file_in_db!(db, file_rel_typed, disk_src)
+        throw(ErrorException(
+            "Node '$id_str' no longer matches on-disk content; db has been refreshed. Please retry."))
     end
 
     # --- R31: splice new content into the buffer copy ---
@@ -91,6 +109,41 @@ end
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+function _lookup_node_span(
+    db::CodeTreeDB,
+    id_str::String,
+)::Tuple{Int,String,Int,Int}
+    code_df = getfield(db.code, :_df)
+    idx = findfirst(==(id_str), code_df.id)
+    isnothing(idx) && throw(ArgumentError("Node '$id_str' not found in db.code"))
+
+    file_rel = code_df[idx, :file]
+    node_ls  = code_df[idx, :line_start]
+    node_le  = code_df[idx, :line_end]
+    ismissing(file_rel) && throw(ArgumentError("Node '$id_str' has no file association"))
+    (ismissing(node_ls) || ismissing(node_le)) &&
+        throw(ArgumentError("Node '$id_str' has no line range"))
+
+    return (idx, file_rel, Int(node_ls), Int(node_le))
+end
+
+function _slice_lines(src::String, ls::Int, le::Int)::String
+    lines = split(src, '\n')
+    if !isempty(lines) && isempty(lines[end])
+        pop!(lines)
+    end
+
+    if isempty(lines)
+        (ls == 1 && le == 1) || throw(ArgumentError("Invalid line span $ls:$le for empty source"))
+        return ""
+    end
+
+    ls < 1 && throw(ArgumentError("line_start must be >= 1"))
+    le < ls && throw(ArgumentError("line_end must be >= line_start"))
+    le <= length(lines) || throw(ArgumentError("line_end $le exceeds source length $(length(lines))"))
+    return join(lines[ls:le], '\n')
+end
 
 # Replace lines ls..le (1-indexed, inclusive) of `src` with `new_src`.
 function _splice_lines(src::String, ls::Int, le::Int, new_src::String)::String

@@ -33,6 +33,10 @@ These architectural decisions are requirements, not implementation details.
   rather than returning a new object. Used to resync after external changes to
   the codebase.
 
+- **`get_source(db, id) -> String`** — returns the current source text for any
+  node span from the in-memory buffer. For leaf nodes this matches the `source`
+  column; for non-leaf nodes it reconstructs the span on demand.
+
 - **`update_source(db, id, new_source)`** — the sole mutation path. Updates
   both `db.code` and `db.symbols` together.
 
@@ -55,7 +59,7 @@ These architectural decisions are requirements, not implementation details.
 | `qname` | String? | Qualified name (dot-joined path from root); unique across `db.code`. When two sibling nodes share the same qualified name, the same ordinal suffix rule as `id` applies: the first keeps the base qname, the second becomes `…name$2`, etc. |
 | `language` | String? | Programming language, inherited from the file node |
 | `summary` | String? | 1–3 sentence description; `missing` if not found |
-| `source` | String? | Full source text; populated only for leaf nodes (`n_children = 0`). `missing` for all non-leaf nodes. |
+| `source` | String? | Full source text; populated only for leaf nodes (`n_children = 0`). `missing` for all non-leaf nodes; callers use `get_source(db, id)` to retrieve source text for any node. |
 | `signature` | String? | Declaration line only; `missing` for non-declarative nodes |
 | `file` | String? | Relative file path from codebase root |
 | `line_start` | Int? | First line in the file |
@@ -317,7 +321,14 @@ file path to current source content. On `load`, all discovered files are read
 into this buffer. The DataFrames are always indexed from the buffer, never
 directly from disk.
 
-**R30** — `update_source(db, id, new_source)` is the sole mutation path.
+**R29a** — `get_source(db, id)` returns the current text of node `id` by
+slicing the in-memory buffer over that node's `(line_start, line_end)` span.
+For leaf nodes, this equals the node's `source` column. For non-leaf nodes,
+this reconstructs the span on demand even though `source` is `missing`.
+
+**R30** — `update_source(db, id, new_source)` is the sole mutation path. It
+must accept both leaf and non-leaf nodes, as long as the target node has a
+file association and line range.
 There is no other supported way to change codebase content.
 
 **R30a** — Before applying any edit, `update_source` computes the SHA-256
@@ -328,6 +339,11 @@ the file from disk (as in R27), updates `db.code`, `db.symbols`, and the
 buffer to reflect the new on-disk state, and then raises an informative error
 explaining that the file changed externally and the `db` has been refreshed.
 The caller may inspect the updated `db` and retry.
+
+**R30b** — Any comparison or verification of the current source text of the
+target node inside `update_source` is performed against `get_source(db, id)`,
+not against the raw `source` column. Non-leaf nodes must therefore verify and
+edit correctly even though their `source` column is `missing`.
 
 **R31** — `update_source` reconstructs the new file content in memory by
 replacing lines `line_start` through `line_end` (inclusive) of the target

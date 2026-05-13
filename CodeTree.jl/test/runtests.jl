@@ -1046,6 +1046,31 @@ end
     end
 end
 
+@testset "R29a: get_source returns current source for both leaf and non-leaf nodes" begin
+    tmp = _tmp_codebase()
+    try
+        db = load(tmp, TEST_CONFIG)
+
+        leaf = only(filter(
+            r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"),
+            db.code,
+        ))
+        @test get_source(db, leaf.id) == leaf.source
+
+        toml_file = only(filter(
+            r -> isequal(r.file, "data/config.toml") && r.kind == "file",
+            db.code,
+        ))
+        @test ismissing(toml_file.source)
+
+        expected = read(joinpath(tmp, "data", "config.toml"), String)
+        endswith(expected, '\n') && (expected = expected[1:end-1])
+        @test get_source(db, toml_file.id) == expected
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
 @testset "reload: after external file change, db is updated in-place" begin
     tmp = _tmp_codebase()
     try
@@ -1084,6 +1109,42 @@ end
 
         updated = filter(r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"), db.code)
         @test nrow(updated) >= 1
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R30 + R29a: update_source succeeds on a non-leaf file node" begin
+    tmp = _tmp_codebase()
+    try
+        db = load(tmp, TEST_CONFIG)
+        file_node = only(filter(
+            r -> isequal(r.file, "data/config.toml") && r.kind == "file",
+            db.code,
+        ))
+        @test file_node.n_children > 0
+        @test ismissing(file_node.source)
+
+        new_src = join([
+            "[sorting]",
+            "default_algorithm = \"merge_sort\"",
+            "",
+            "[limits]",
+            "detail_threshold = 99",
+            "",
+        ], '\n')
+        update_source(db, file_node.id, new_src)
+
+        updated_file = only(filter(
+            r -> isequal(r.file, "data/config.toml") && r.kind == "file",
+            db.code,
+        ))
+        @test updated_file.n_children == 2
+        @test ismissing(updated_file.source)
+        @test get_source(db, updated_file.id) == chomp(new_src)
+        child_sources = collect(skipmissing(filter(r -> isequal(r.parent, updated_file.id), db.code).source))
+        @test any(src -> occursin("merge_sort", src), child_sources)
+        @test any(src -> occursin("detail_threshold = 99", src), child_sources)
     finally
         rm(tmp; recursive=true)
     end
