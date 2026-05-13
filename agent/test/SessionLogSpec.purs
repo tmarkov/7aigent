@@ -15,6 +15,7 @@ import Test.Spec.Assertions (shouldEqual, shouldSatisfy, fail)
 import Test.Helpers.Workspace (withWorkspace, readWorkspaceFile, workspaceFileExists, writeWorkspaceFile)
 import Test.Helpers.LogEvent
   ( sessionStartEvent
+  , systemPromptEvent
   , userMessageEvent
   , llmResponseEvent
   , sessionEndEvent
@@ -130,6 +131,7 @@ sessionLogSpec = do
     it "A26: all event types encode with correct type field" do
       let events =
             [ sessionStartEvent { id: SessionId 1, timestamp: "t", workspace: "/w", model: ModelName "m", resumedFrom: Nothing }
+            , systemPromptEvent "t" "system text"
             , userMessageEvent "t" "content"
             , llmResponseEvent "t" "response"
             , sessionEndEvent "t" "eof"
@@ -137,9 +139,10 @@ sessionLogSpec = do
       let jsons = map encodeLogEvent events
       -- Each encoded event must contain its type identifier
       Array.index jsons 0 `shouldSatisfy` \j -> containsPattern "session_start" j
-      Array.index jsons 1 `shouldSatisfy` \j -> containsPattern "user_message" j
-      Array.index jsons 2 `shouldSatisfy` \j -> containsPattern "llm_response" j
-      Array.index jsons 3 `shouldSatisfy` \j -> containsPattern "session_end" j
+      Array.index jsons 1 `shouldSatisfy` \j -> containsPattern "system_prompt" j
+      Array.index jsons 2 `shouldSatisfy` \j -> containsPattern "user_message" j
+      Array.index jsons 3 `shouldSatisfy` \j -> containsPattern "llm_response" j
+      Array.index jsons 4 `shouldSatisfy` \j -> containsPattern "session_end" j
 
   ---------------------------------------------------------------------------
   -- A26: encode/decode round-trip for all event types
@@ -155,6 +158,15 @@ sessionLogSpec = do
           r.toolCallId `shouldEqual` ToolCallId "tc1"
           r.input `shouldEqual` "1+1"
         Right _ -> fail "Expected ToolCall event"
+        Left err -> fail ("Decode failed: " <> show err)
+
+    it "A26: system_prompt event round-trips correctly" do
+      let event = systemPromptEvent "t1" "You are 7aigent."
+      case decodeLogEvent (encodeLogEvent event) of
+        Right (EvtSystemPrompt r) -> do
+          r.timestamp `shouldEqual` Timestamp "t1"
+          r.content `shouldEqual` "You are 7aigent."
+        Right _ -> fail "Expected SystemPrompt event"
         Left err -> fail ("Decode failed: " <> show err)
 
     it "A26: tool_result event round-trips correctly" do

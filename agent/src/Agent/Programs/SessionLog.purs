@@ -105,6 +105,12 @@ encodeLogEventJson (SessionStart r) =
             Nothing -> J.jsonNull
             Just (SessionId n) -> J.fromNumber (Int.toNumber n))
         ]
+encodeLogEventJson (EvtSystemPrompt r) =
+    mkObj
+        [ Tuple "type" (J.fromString "system_prompt")
+        , Tuple "timestamp" (J.fromString (renderTimestamp r.timestamp))
+        , Tuple "content" (J.fromString r.content)
+        ]
 encodeLogEventJson (EvtUserMessage r) =
     mkObj
         [ Tuple "type" (J.fromString "user_message")
@@ -219,6 +225,10 @@ decodeLogEventObj obj = do
                 , model: ModelName mdl
                 , resumedFrom: resumed
                 }
+        "system_prompt" -> do
+            ts <- getStr obj "timestamp"
+            content <- getStr obj "content"
+            Right $ EvtSystemPrompt { timestamp: Timestamp ts, content }
         "user_message" -> do
             ts <- getStr obj "timestamp"
             content <- getStr obj "content"

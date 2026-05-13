@@ -1,6 +1,7 @@
 -- | Pure builders for LogEvent values and JSONL round-trip helpers.
 module Test.Helpers.LogEvent
   ( sessionStartEvent
+  , systemPromptEvent
   , userMessageEvent
   , llmResponseEvent
   , toolCallEvent
@@ -41,6 +42,10 @@ sessionStartEvent
      }
   -> LogEvent
 sessionStartEvent r = SessionStart (r { timestamp = Timestamp r.timestamp })
+
+systemPromptEvent :: String -> String -> LogEvent
+systemPromptEvent timestamp content =
+  EvtSystemPrompt { timestamp: Timestamp timestamp, content }
 
 userMessageEvent :: String -> String -> LogEvent
 userMessageEvent timestamp content =

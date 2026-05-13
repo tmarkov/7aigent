@@ -323,6 +323,10 @@ startSession ws@(WorkspacePath wp) resumedFrom existingHistory resumeState promp
         , model: config.model
         , resumedFrom
         })
+    writeLogEvent ws sessionId (EvtSystemPrompt
+        { timestamp: ts
+        , content: systemPrompt
+        })
 
     -- Build initial conversation history
     let initHistory = case resumedFrom of

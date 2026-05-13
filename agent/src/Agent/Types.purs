@@ -215,6 +215,7 @@ data LogEvent
       , model :: ModelName
       , resumedFrom :: Maybe SessionId
       }
+  | EvtSystemPrompt { timestamp :: Timestamp, content :: String }
   | EvtUserMessage { timestamp :: Timestamp, content :: String }
   | EvtLlmResponse { timestamp :: Timestamp, content :: String }
   | EvtToolCall
@@ -258,6 +259,7 @@ data LogEvent
 
 instance Show LogEvent where
   show (SessionStart r) = "(SessionStart " <> show r.id <> ")"
+  show (EvtSystemPrompt r) = "(SystemPrompt " <> show r.content <> ")"
   show (EvtUserMessage r) = "(UserMessage " <> show r.content <> ")"
   show (EvtLlmResponse r) = "(LlmResponse " <> show r.content <> ")"
   show (EvtToolCall r) = "(ToolCall " <> renderToolName r.toolName <> ")"
