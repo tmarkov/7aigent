@@ -53,11 +53,31 @@ configSpec = do
           `shouldEqual` true
         String.contains (String.Pattern "You are 7aigent") systemPrompt
           `shouldEqual` true
-        String.contains (String.Pattern "progressively disclose a file") systemPrompt
+        String.contains (String.Pattern "start with the tree root") systemPrompt
           `shouldEqual` true
-        String.contains (String.Pattern "something(r.file, \"\")") systemPrompt
+        String.contains
+          (String.Pattern "!ismissing(r.parent) && r.parent == node.id")
+          systemPrompt
+          `shouldEqual` true
+        String.contains (String.Pattern "coalesce(r.file, \"\")") systemPrompt
+          `shouldEqual` true
+        String.contains
+          (String.Pattern "avoid patterns like `r.parent == node.id && ...`")
+          systemPrompt
+          `shouldEqual` true
+        String.contains (String.Pattern "get_source(db, id)") systemPrompt
+          `shouldEqual` true
+        String.contains (String.Pattern "source = missing") systemPrompt
+          `shouldEqual` true
+        String.contains (String.Pattern "{{agents-md}}") systemPrompt
+          `shouldEqual` true
+        String.contains (String.Pattern "DataFrame display in this REPL is already tuned") systemPrompt
           `shouldEqual` true
         String.contains (String.Pattern "using DataFrames, DataFramesMeta") startupContent
+          `shouldEqual` true
+        String.contains (String.Pattern "LLM_DF_TRUNCATE = 360") startupContent
+          `shouldEqual` true
+        String.contains (String.Pattern "Base.show(io::IO, df::DataFrame") startupContent
           `shouldEqual` true
 
     it "A2a: preserves existing files and only places missing ones" do

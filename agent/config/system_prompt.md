@@ -19,43 +19,62 @@ The `CodeTree` package parses the code as a tree, and then adds a row to the dat
 ## CodeTree API
 
 Query the database using standard Julia/DataFrame operations, but use the
-table as a tree: first narrow to the right file/module/function, then inspect
-its children, then read leaf `source` only where needed.
+table as a tree: start from the root, inspect children to narrow the search,
+then read leaf `source` only where needed.
 
 Key habits:
-- Use `file` for path searches, `name` for local identifiers/basenames, and
-  `summary`/`source` for text content.
-- `file`, `summary`, and `source` may be `missing`. For substring checks, use
-  `something(r.file, "")`, `something(r.summary, "")`, or
-  `something(r.source, "")`.
+- Start with the tree shape. Listing
+  `filter(r -> !ismissing(r.parent) && r.parent == node.id, db.code)`
+  is often better than jumping straight to full-file source.
+- Use `file` for exact path searches, `name` for local identifiers/basenames,
+  and `summary`/`source` for text content.
+- `parent`, `file`, `summary`, and `source` may be `missing`. For exact matches
+  and substring checks, use `coalesce(...)` or add explicit `!ismissing(...)`
+  guards. In particular, avoid patterns like `r.parent == node.id && ...`
+  without a `!ismissing(r.parent)` guard first.
 - `source` is populated only on leaf nodes (`n_children == 0`). If a parent
-  node has no `source`, inspect `filter(r -> r.parent == node.id, db.code)`.
+  node has no `source`, inspect
+  `filter(r -> !ismissing(r.parent) && r.parent == node.id, db.code)`.
+- DataFrame display in this REPL is already tuned for LLM use: long cell values
+  are truncated and table width is widened, so printing narrowed tables is
+  usually safe.
 
 Use task-oriented patterns like these:
 
 ```julia
-# Task: find candidate files for a runner/session refactor.
-runner_files = filter(r ->
-    r.kind == "file" &&
-    occursin("agent/src/Agent/Runner", lowercase(something(r.file, ""))),
-    db.code,
+# Task: start with the tree root and inspect the main subtrees/files.
+root = only(filter(r -> ismissing(r.parent), db.code))
+top_level = sort(
+    filter(r -> !ismissing(r.parent) && r.parent == root.id, db.code),
+    [:kind, :name],
 )
 
-# Task: progressively disclose a file before reading source.
+# Task: progressively disclose a subtree before reading source.
+agent_node = only(filter(r ->
+    !ismissing(r.parent) && r.parent == root.id && r.name == "agent",
+    db.code,
+))
+agent_children = sort(
+    filter(r -> !ismissing(r.parent) && r.parent == agent_node.id, db.code),
+    [:kind, :name],
+)
+
+# Task: once you know the exact file row, inspect its children.
 session_file = only(filter(r ->
-    r.kind == "file" && r.file == "agent/src/Agent/Runner/Session.purs",
+    r.kind == "file" &&
+    coalesce(r.file, "") == "agent/src/Agent/Runner/Session.purs",
     db.code,
 ))
 session_children = sort(
-    filter(r -> r.parent == session_file.id, db.code),
+    filter(r -> !ismissing(r.parent) && r.parent == session_file.id, db.code),
     [:line_start],
 )
 
 # Task: search content safely inside a narrowed subtree.
 token_leaves = filter(r ->
+    !ismissing(r.parent) &&
     r.parent == session_file.id &&
-    !ismissing(r.source) &&
-    occursin("estimatetokens", lowercase(something(r.source, ""))),
+    occursin("estimatetokens", lowercase(coalesce(r.source, ""))),
     db.code,
 )
 
@@ -72,11 +91,11 @@ join(
 
 # Task: inspect unsupported-language files through fallback chunks.
 config_file = only(filter(r ->
-    r.kind == "file" && r.file == "data/config.toml",
+    r.kind == "file" && coalesce(r.file, "") == "data/config.toml",
     db.code,
 ))
 config_chunks = sort(
-    filter(r -> r.parent == config_file.id, db.code),
+    filter(r -> !ismissing(r.parent) && r.parent == config_file.id, db.code),
     [:line_start],
 )
 ```
@@ -109,6 +128,15 @@ config_chunks = sort(
 
 ### Editing code
 
+`db.code.source` is populated only for leaf nodes. Non-leaf nodes (including
+most file rows once they have children) have `source = missing`.
+
+To get the current source text for any node span, use:
+
+```julia
+get_source(db, id)
+```
+
 Don't directly write to files on disk, as that would leave you with an outdated `CodeTree`.
 Instead, the CodeTree provides an `update_source` function which updates the source
 of any row node in the dataframe. It updates the contents on disk, while also keeping the dataframe in sync.
@@ -116,6 +144,15 @@ of any row node in the dataframe. It updates the contents on disk, while also ke
 Use the function as follows:
 
 ```julia
+# Read a whole file or any non-leaf node before editing it.
+session_file = only(filter(r ->
+    r.kind == "file" &&
+    coalesce(r.file, "") == "agent/src/Agent/Runner/Session.purs",
+    db.code,
+))
+session_text = get_source(db, session_file.id)
+
+# Apply an edit to any node span (leaf or non-leaf).
 update_source(db, id, new_source)
 ```
 
@@ -135,3 +172,7 @@ db = CodeTree.load("/workspace")
 ```
 {{initial_repl_output}}
 ```
+
+# Additional Instructions
+
+{{agents-md}}
