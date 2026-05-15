@@ -66,7 +66,7 @@ Traditional approaches:
 - **Language-specific tools**: IDE go-to-definition shows you the definition, not what it does
 
 This schema:
-- Store a curated 1-3 sentence summary at every level
+- Store documentation-derived summaries eagerly and support richer on-demand summaries in higher-level tooling
 - Browse by reading summaries without diving into code
 - Progressive disclosure: read summaries → expand interesting nodes → read source
 
@@ -179,6 +179,8 @@ codebase:chess
 ### Content
 
 - **`summary`**: 1-3 sentence human-readable summary
+  - Initially populated from docstrings, comments, or README content when available
+  - Additional tooling may enrich missing summaries on demand using the tree structure and source excerpts
   - "Recursive minimax with alpha-beta pruning"
   - "Board representation and move generation"
   - **This is the key value-add and cannot be derived**

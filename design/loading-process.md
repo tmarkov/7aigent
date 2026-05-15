@@ -174,7 +174,7 @@ Among all children of a node, set `sibling_order` = 0, 1, 2, ... in ascending `l
 
 Set `n_children` for each node = count of its direct children.
 
-### Step 5: Extract Summaries
+### Step 5: Extract Initial Summaries
 
 For each node produced in Step 4, attempt to extract a summary from documentation:
 
@@ -204,7 +204,9 @@ For each node produced in Step 4, attempt to extract a summary from documentatio
 **Comments:**
 - The comment text itself is the summary (it's both `source` and `summary`).
 
-All summary extraction is heuristic. The `summary` column is NULL when nothing is found — it is never mechanically generated from structure.
+All summary extraction in `load_codebase` is heuristic and documentation-only.
+The `summary` column is NULL when nothing is found — it is never mechanically
+generated from structure and no external LLM is consulted during indexing.
 
 ### Step 6: Extract Symbols
 
@@ -288,7 +290,10 @@ When the user modifies source code through the tool:
 
 4. **Update ancestor `n_children`** if nodes were added or removed.
 
-LLM-generated summaries are stored in the `code` table. When a file is re-indexed, its nodes' summaries are reset to whatever documentation extraction finds (Step 5). If an LLM summary was previously generated and the source has changed, it is cleared. If the source is unchanged (same hash), the cached LLM summary is preserved.
+`reload` and file re-indexing only guarantee the documentation-derived
+`summary` values produced by Step 5. Any richer on-demand summaries generated
+later by REPL or agent tooling (see `repl-api-requirements.md`) are outside the
+indexing/cache contract defined in this document.
 
 ---
 
@@ -384,7 +389,7 @@ is preserved. No symbol extraction is performed.
 | Gap filling | Chunk nodes | Avoids trivial single-statement rows while maintaining spanning |
 | Compound node set | Configurable per language | Languages differ; keep config small |
 | Summary extraction | Documentation only (docstrings, comments, READMEs) | Mechanical reformatting adds noise; summaries should convey intent |
-| LLM summaries | On demand, not at index time | Cost, latency, and correctness — only generate when user needs it |
+| LLM summaries | Explicit `summarize!`, not at index time | Cost, latency, and correctness — the loader stays documentation-only; richer summaries are requested later for specific rows |
 | Source storage | Leaf nodes only | Eliminates O(depth) redundancy; reconstruction from leaves is lossless via spanning invariant |
 | Symbol extraction | Call always + var_ref if not locally defined | Calls need always-record to handle overloads; var_refs filter locals to reduce noise |
 | No to_id resolution | Names only in symbols table | Name-to-node resolution is ambiguous under overloading; callers query db.code directly |

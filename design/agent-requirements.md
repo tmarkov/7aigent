@@ -275,6 +275,11 @@ closed socket or failed heartbeat), the runner writes a `session_end` event
 with `reason = "error"` to the session log, prints an informative message to
 the terminal, and exits.
 
+**A20b** — The runner services the Jupyter summary RPC defined in
+`repl-api-requirements.md`. Summary-helper LLM calls use the same configured
+model and retry policy as the main session but are not appended to the REACT
+conversation history.
+
 ---
 
 ### System Prompt
@@ -335,9 +340,10 @@ concurrently.
 | `session_end`      | `timestamp`, `reason` (`"eof"`, `"sigint"`, `"error"`)                                    |
 
 A `token_usage` event is written after every LLM API call that includes token
-counts — including the main conversation, compaction calls, and timeout-check
-calls. The session totals accumulate across all such calls. After each turn,
-the runner also displays the cumulative session token counts on the terminal.
+counts — including the main conversation, compaction calls, timeout-check
+calls, and REPL-summary calls. The session totals accumulate across all such
+calls. After each turn, the runner also displays the cumulative session token
+counts on the terminal.
 
 **A27** — The session description used in listings (A40) is the content of
 the first `user_message` event, truncated to 120 characters.
@@ -482,7 +488,7 @@ the conversation history and does not count against `max_tokens_per_turn`.
 ### Configuration
 
 **A37** — The runner reads `.7aigent/config.toml` from the workspace
-directory. The required fields are:
+directory. The runner-owned required fields are:
 
 ```toml
 api_endpoint           = "https://openrouter.ai/api/v1"
@@ -497,7 +503,9 @@ preserve_final         = 40000
 ```
 
 `compaction_threshold`, `preserve_initial`, and `preserve_final` are token
-counts governing context compaction (A33–A36).
+counts governing context compaction (A33–A36). Additional sections may be
+present for other layers, including the REPL API; runner configuration parsing
+must ignore unknown sections and keys that it does not own.
 
 **A37a** — `max_tokens_per_turn` is the maximum total input tokens the runner
 may consume across all LLM calls within a single turn (the ReACT loop between

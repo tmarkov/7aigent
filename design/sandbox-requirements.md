@@ -174,9 +174,10 @@ commit is always made outside the sandbox.
 ### Offline Operation
 
 **S13** — The container image depends on no network access at runtime. All
-Julia packages required by the sandbox — `IJulia`, `ZeroMQ`, `CodeTree`, and
-their transitive dependencies — are pre-installed in the Nix store and
-available via bind mount. `Pkg.add` is never called at runtime.
+Julia packages required by the sandbox — `IJulia`, `ZeroMQ`, `CodeTree`, the
+dedicated REPL API module, and their transitive dependencies — are pre-installed
+in the Nix store and available via bind mount. `Pkg.add` is never called at
+runtime.
 
 **S14** — The Julia depot inside the container is configured with a writable
 scratch path (`/tmp/julia-depot`) prepended before the read-only Nix-managed

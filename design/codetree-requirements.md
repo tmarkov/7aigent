@@ -17,8 +17,10 @@ These architectural decisions are requirements, not implementation details.
   and what `update_source` operates on.
 
 - **`CodeTree <: AbstractDataFrame`** — the `code` table, exposed as a
-  read-only DataFrame. All DataFrames.jl query, filter, grouping, and join
-  operations work on it. Direct mutation raises an informative error.
+  queryable DataFrame. All DataFrames.jl query, filter, grouping, and join
+  operations work on it. Direct mutation is forbidden except for the `summary`
+  column, which higher-level tools may update in place for session-scoped
+  annotations.
 
 - **`CodeSymbols <: AbstractDataFrame`** — the `symbols` table, with the
   same read-only contract.
@@ -58,7 +60,7 @@ These architectural decisions are requirements, not implementation details.
 | `name` | String | Short identifier |
 | `qname` | String? | Qualified name (dot-joined path from root); unique across `db.code`. When two sibling nodes share the same qualified name, the same ordinal suffix rule as `id` applies: the first keeps the base qname, the second becomes `…name$2`, etc. |
 | `language` | String? | Programming language, inherited from the file node |
-| `summary` | String? | 1–3 sentence description; `missing` if not found |
+| `summary` | String? | 1–3 sentence documentation-derived description populated during indexing; `missing` if no docstring, comment, or README summary is found. Higher-level tooling may replace this value in memory with a session-scoped summary override. |
 | `source` | String? | Full source text; populated only for leaf nodes (`n_children = 0`). `missing` for all non-leaf nodes; callers use `get_source(db, id)` to retrieve source text for any node. |
 | `signature` | String? | Declaration line only; `missing` for non-declarative nodes |
 | `file` | String? | Relative file path from codebase root |
@@ -86,8 +88,13 @@ Node kinds: `codebase`, `module`, `file`, `class`, `function`, `loop`,
 **R3** — All DataFrames.jl read and query operations (filtering, grouping,
 joining, `@subset`, etc.) work on `db.code` and `db.symbols`.
 
-**R4** — Any attempt to directly mutate `db.code` or `db.symbols` raises an
-informative error directing the caller to use `update_source`.
+**R4** — Any attempt to directly mutate `db.symbols`, or any column of
+`db.code` other than `summary`, raises an informative error directing the
+caller to use `update_source` for code edits.
+
+**R4a** — Direct writes to `db.code.summary` are allowed. They update the
+current in-memory `CodeTreeDB` in place, record a session-scoped summary
+override keyed by node id, and do not write through to the SQLite cache.
 
 ---
 
@@ -201,7 +208,7 @@ other files), `sibling_order` is determined by ascending `name`
 
 ---
 
-### Summaries
+### Documentation-Derived Summaries
 
 Throughout R17–R20a, **"summary lines"** means lines that contain at least
 one alphanumeric character (`[A-Za-z0-9]`), after stripping leading comment
@@ -222,13 +229,20 @@ block comment (same summary-lines rule as R17). Directory-level summary
 comes from the first paragraph of `README.md` (all lines up to the first
 blank line) if present, using the summary-lines rule.
 
-**R20** — Summaries are never mechanically generated from structure. If no
+**R20** — During `load`, `reload`, and `update_source`, summaries are never
+mechanically generated from structure or requested from an external LLM. If no
 documentation is found, `summary` is `missing`.
 
 **R20a** — For `kind=comment` nodes, the summary is derived directly from the
 node's own source using the summary-lines rule: the first three lines of the
 comment text (after stripping comment markers) that contain at least one
 alphanumeric character, joined with a single space.
+
+**R20b** — `CodeTree.jl` itself performs no network or agent calls as part of
+summary extraction. Any explicit, LLM-backed summary generation for already
+loaded rows is layered above the package rather than built into the indexing
+API. The Julia-side API for such generated summaries is specified separately in
+`repl-api-requirements.md`.
 
 ---
 
@@ -364,6 +378,11 @@ leaf nodes that previously belonged to the changed file are removed, and
 fresh symbol rows are inserted for the new leaf nodes produced by re-parsing.
 No cross-file re-resolution is needed since `db.symbols` records names only,
 not target node ids.
+
+**R33b** — When `update_source` re-indexes a file, any in-memory summary
+overrides previously attached to rows in that file are re-applied to the new
+rows whose ids are unchanged. Overrides for rows whose ids disappear are
+dropped.
 
 **R34** — After the DataFrames are updated, the new buffer content is written
 to disk and the cache is updated. Disk is never written before the DataFrames
