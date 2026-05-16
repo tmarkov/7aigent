@@ -18,89 +18,30 @@ The `CodeTree` package parses the code as a tree, and then adds a row to the dat
 
 ## CodeTree API
 
-Query the database using standard Julia/DataFrame operations, but use the
-table as a tree: start from the root, inspect children to narrow the search,
-then read leaf `source` only where needed.
-
-Key habits:
-- Start with the tree shape. Listing
-  `filter(r -> !ismissing(r.parent) && r.parent == node.id, db.code)`
-  is often better than jumping straight to full-file source.
-- Use `file` for exact path searches, `name` for local identifiers/basenames,
-  and `summary`/`source` for text content.
-- `parent`, `file`, `summary`, and `source` may be `missing`. For exact matches
-  and substring checks, use `coalesce(...)` or add explicit `!ismissing(...)`
-  guards. In particular, avoid patterns like `r.parent == node.id && ...`
-  without a `!ismissing(r.parent)` guard first.
-- `source` is populated only on leaf nodes (`n_children == 0`). If a parent
-  node has no `source`, inspect
-  `filter(r -> !ismissing(r.parent) && r.parent == node.id, db.code)`.
-- DataFrame display in this REPL is already tuned for LLM use: long cell values
-  are truncated and table width is widened, so printing narrowed tables is
-  usually safe.
-
-Use task-oriented patterns like these:
+`CodeTree` loads the code into a struct as follows:
 
 ```julia
-# Task: start with the tree root and inspect the main subtrees/files.
-root = only(filter(r -> ismissing(r.parent), db.code))
-top_level = sort(
-    filter(r -> !ismissing(r.parent) && r.parent == root.id, db.code),
-    [:kind, :name],
-)
-
-# Task: progressively disclose a subtree before reading source.
-agent_node = only(filter(r ->
-    !ismissing(r.parent) && r.parent == root.id && r.name == "agent",
-    db.code,
-))
-agent_children = sort(
-    filter(r -> !ismissing(r.parent) && r.parent == agent_node.id, db.code),
-    [:kind, :name],
-)
-
-# Task: once you know the exact file row, inspect its children.
-session_file = only(filter(r ->
-    r.kind == "file" &&
-    coalesce(r.file, "") == "agent/src/Agent/Runner/Session.purs",
-    db.code,
-))
-session_children = sort(
-    filter(r -> !ismissing(r.parent) && r.parent == session_file.id, db.code),
-    [:line_start],
-)
-
-# Task: search content safely inside a narrowed subtree.
-token_leaves = filter(r ->
-    !ismissing(r.parent) &&
-    r.parent == session_file.id &&
-    occursin("estimatetokens", lowercase(coalesce(r.source, ""))),
-    db.code,
-)
-
-# Task: find callers once you know a symbol name.
-call_sites = filter(r ->
-    r.symbol == "estimateTokens" && r.kind == "call",
-    db.symbols,
-)
-join(
-    call_sites,
-    select(db.code, :id, :file, :line_start, :line_end),
-    on = :node_id => :id,
-)
-
-# Task: inspect unsupported-language files through fallback chunks.
-config_file = only(filter(r ->
-    r.kind == "file" && coalesce(r.file, "") == "data/config.toml",
-    db.code,
-))
-config_chunks = sort(
-    filter(r -> !ismissing(r.parent) && r.parent == config_file.id, db.code),
-    [:line_start],
-)
+"""
+Fields:
+- `code::CodeTree`       — the code tree (`db.code`)
+- `symbols::CodeSymbols` — the symbols table (`db.symbols`)
+- `root::String`         — absolute path to the codebase root
+- `config::LanguageConfig` — language configuration used for indexing
+"""
+mutable struct CodeTreeDB
+    code::CodeTree
+    symbols::CodeSymbols
+    root::String
+end
 ```
 
-### db.code columns
+We initialize the CodeTree into a global `db` variable as `global db = load(...)`.
+
+### DataFrame Schemas
+
+The two dataframes in `db` have the following schema:
+
+#### db.code columns
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -118,13 +59,44 @@ config_chunks = sort(
 | `summary` | String? | Docstring/comment summary (may be missing) |
 | `source` | String? | Full source text (leaf nodes only; missing on parents) |
 
-### db.symbols columns
+#### db.symbols columns
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `node_id` | String | References `db.code.id` |
 | `symbol` | String | Symbol name |
 | `kind` | String | `"call"` or `"var_ref"` |
+
+### Using the `CodeTree` database
+
+```julia
+# Show the tree root + basic information on the top nodes
+db.code[1:20, [:id, :name, :parent, :summary]]
+
+# Show the children of `src/main`
+filter(r -> r.parent == "src/main", db.code)
+
+# Filter by multiple columns
+# `&&` doesn't natively handle `Missing` values, so we need to be explicit
+filter(r -> 
+  coalesce(r.file == "src/main/main.py", false) &&
+  coalesce(r.kind == "function", false), db.code)
+
+# Get the gist of README.md
+filter(r -> coalesce(r.file == "README.md", false) && !ismissing(r.source),
+  db.code)[:, [:source]]
+
+# Task: find callers of `print`.
+call_sites = filter(r ->
+    r.symbol == "print" && r.kind == "call",
+    db.symbols,
+)
+join(
+    call_sites,
+    select(db.code, :id, :file, :line_start, :line_end),
+    on = :node_id => :id,
+)
+```
 
 ### Editing code
 
@@ -157,6 +129,41 @@ update_source(db, id, new_source)
 ```
 
 It replaces the source of node `id` with `new_source`. The new source must cover the full span of the node (`line_start` to `line_end`). The in-memory database (`db.code`, `db.symbols`) and the on-disk file are updated atomically; if the file was modified externally since the last `load`, the call throws an error and refreshes `db` first.
+
+## LLM-generated Summaries
+
+`CodeTree` tries to provide summaries for some tree nodes in the `summary` column, by looking at docstrings, or nearby comments. However, many nodes are left with a `Missing` summary. To fill in the gap, you can request an LLM-generated summary from them, using the `summarize!` function:
+
+```julia
+function summarize!(ids; keywords = String[])::DataFrame
+function summarize!(frame::AbstractDataFrame; keywords = String[])::DataFrame
+```
+
+### Arguments
+
+* `ids`: List of node `id`s for nodes to summarize
+* `frame`: A DataFrame with an `:id` column. It will extract the `id` from it, and delegate to the `ids` version
+* `keywords`: A optional list of keywords to help identify relevant snippets
+
+### Return value and side effects
+
+`summarize!` will update the `:summary` column of `db.code` for rows it generated a summary for, that didn't already have one.
+`summarize!` will return a DataFrame containing `:id`, `:name`, and `:summary` columns for all rows that were updated.
+
+### Process
+
+When summarizing a node, `summarize!` will collect information about the node and its children. It will also select some code snippets, relevant to the node. All collected information will be given to an LLM, which will generate a summary.
+
+All nodes given to `summarize!` will be split in batches based on proximity in the tree, and each batch will be summarized together with a single LLM call.
+
+### Usage
+
+```julia
+# Get some data
+filter(r -> r.parent == "src/main")
+# REPL prints a DF with important summaries missing
+summarize!(ans)
+```
 
 # REPL Initialization
 
