@@ -88,10 +88,16 @@ end
     @test :name ∈ propertynames(joined)
 end
 
-@testset "R4: setindex! on CodeTree raises an error mentioning update_source" begin
+@testset "R4: setindex! on non-summary CodeTree columns raises an error mentioning update_source" begin
     ct = CodeTree.CodeTree(minimal_code_df())
     err = @test_throws Exception (ct[1, :name] = "changed")
     @test occursin("update_source", lowercase(sprint(showerror, err.value)))
+end
+
+@testset "R4a: setindex! on CodeTree.summary succeeds in place" begin
+    ct = CodeTree.CodeTree(minimal_code_df())
+    ct[4, :summary] = "Session summary."
+    @test ct[4, :summary] == "Session summary."
 end
 
 @testset "R4: setindex! on CodeSymbols raises an informative error" begin
@@ -1219,6 +1225,29 @@ end
         if new_node.id != node.id
             @test nrow(filter(r -> isequal(r.node_id, node.id), db.symbols)) == 0
         end
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R4a + R33b: summary overrides survive update_source when node ids stay stable" begin
+    tmp = _tmp_codebase()
+    try
+        db = load(tmp, TEST_CONFIG)
+        node = only(filter(r -> isequal(r.name, "noop") && isequal(r.kind, "function"), db.code))
+
+        row_idx = findfirst(==(node.id), db.code.id)
+        @test !isnothing(row_idx)
+        db.code[row_idx, :summary] = "Session override for noop."
+
+        update_source(
+            db,
+            node.id,
+            "function noop(x)\n    y = x + 1\n    return y - 1\nend\n",
+        )
+
+        updated = only(filter(r -> isequal(r.id, node.id), db.code))
+        @test updated.summary == "Session override for noop."
     finally
         rm(tmp; recursive=true)
     end

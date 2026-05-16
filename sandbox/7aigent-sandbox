@@ -133,7 +133,7 @@ write_config_json() {
     "env": [
       "JULIA_DEPOT_PATH=/tmp/julia-depot:@sandbox_out@/julia-depot",
       "JULIA_PROJECT=@codeTree@/project",
-      "JULIA_LOAD_PATH=@:@v#.#:@stdlib",
+      "JULIA_LOAD_PATH=@sandbox_out@/share/sandbox:@:@v#.#:@stdlib",
       "HOME=/home/julia",
       "JULIA_PKG_SERVER=",
       "PATH=@sandbox_path@"
@@ -304,7 +304,7 @@ run_bwrap() {
         --setenv HOME /home/julia \
         --setenv JULIA_DEPOT_PATH "/tmp/julia-depot:@sandbox_out@/julia-depot" \
         --setenv JULIA_PROJECT "@codeTree@/project" \
-        --setenv JULIA_LOAD_PATH "@:@v#.#:@stdlib" \
+        --setenv JULIA_LOAD_PATH "@sandbox_out@/share/sandbox:@:@v#.#:@stdlib" \
         --setenv JULIA_PKG_SERVER "" \
         --setenv PATH "@sandbox_path@"
 

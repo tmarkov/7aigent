@@ -218,6 +218,11 @@ data LogEvent
   | EvtSystemPrompt { timestamp :: Timestamp, content :: String }
   | EvtUserMessage { timestamp :: Timestamp, content :: String }
   | EvtLlmResponse { timestamp :: Timestamp, content :: String }
+  | EvtLlmQuery
+      { timestamp :: Timestamp
+      , purpose :: String
+      , input :: String
+      }
   | EvtToolCall
       { timestamp :: Timestamp
       , toolName :: ToolName
@@ -262,6 +267,7 @@ instance Show LogEvent where
   show (EvtSystemPrompt r) = "(SystemPrompt " <> show r.content <> ")"
   show (EvtUserMessage r) = "(UserMessage " <> show r.content <> ")"
   show (EvtLlmResponse r) = "(LlmResponse " <> show r.content <> ")"
+  show (EvtLlmQuery r) = "(LlmQuery " <> show r.purpose <> ")"
   show (EvtToolCall r) = "(ToolCall " <> renderToolName r.toolName <> ")"
   show (ToolResult r) = "(ToolResult " <> show r.toolCallId <> ")"
   show (TokenUsage _) = "(TokenUsage)"

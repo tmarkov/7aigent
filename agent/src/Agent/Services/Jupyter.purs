@@ -16,6 +16,12 @@ import Effect (Effect)
 import Effect.Aff (Aff, makeAff, nonCanceler)
 import Agent.Types (RawJulia(..), AppError(..))
 
+type SummaryServiceConfig =
+    { apiEndpoint :: String
+    , apiKey :: String
+    , model :: String
+    }
+
 type ExecutionResult =
     { output :: String
     , hadError :: Boolean
@@ -30,14 +36,20 @@ type KernelHandle =
 
 foreign import connectKernelImpl
     :: String
+    -> SummaryServiceConfig
+    -> (String -> String -> Effect Unit)
     -> (String -> Effect Unit)
     -> (KernelHandle -> Effect Unit)
     -> Effect Unit
 
 -- | Connect to the Jupyter kernel described by kernel.json.
-connectKernel :: String -> Aff (Either AppError KernelHandle)
-connectKernel kernelJsonPath = makeAff \resolve -> do
-    connectKernelImpl kernelJsonPath
+connectKernel
+    :: String
+    -> SummaryServiceConfig
+    -> (String -> String -> Effect Unit)
+    -> Aff (Either AppError KernelHandle)
+connectKernel kernelJsonPath summaryConfig onLlmQuery = makeAff \resolve -> do
+    connectKernelImpl kernelJsonPath summaryConfig onLlmQuery
         (\msg -> resolve (Right (Left (KernelError msg))))
         (\h   -> resolve (Right (Right h)))
     pure nonCanceler

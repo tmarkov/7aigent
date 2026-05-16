@@ -1,7 +1,7 @@
 """
     MutationError
 
-Raised when a direct mutation of a read-only `CodeTree` or `CodeSymbols`
+Raised when a direct mutation of a protected `CodeTree` or `CodeSymbols`
 DataFrame is attempted.
 """
 struct MutationError <: Exception
@@ -12,7 +12,8 @@ Base.showerror(io::IO, e::MutationError) = print(io, "MutationError: ", e.msg)
 
 const MUTATION_MSG =
     "direct mutation is not supported; " *
-    "use update_source(db, id, new_source) to modify codebase content."
+    "use update_source(db, id, new_source) to modify codebase content. " *
+    "Only db.code.summary may be written directly."
 
 # ---------------------------------------------------------------------------
 # CodeTree — read-only wrapper for db.code
@@ -21,13 +22,23 @@ const MUTATION_MSG =
 """
     CodeTree <: AbstractDataFrame
 
-Read-only DataFrame holding the code tree (`db.code`). All DataFrames.jl
-read, filter, groupby, and join operations are supported. Any attempt to
-mutate it directly raises a `MutationError` directing the caller to use
-`update_source`.
+DataFrame holding the code tree (`db.code`). All DataFrames.jl read, filter,
+groupby, and join operations are supported. Direct mutation is forbidden
+except for the `summary` column, which may be updated in place as a
+session-scoped override.
 """
 struct CodeTree <: AbstractDataFrame
     _df::DataFrame
+    _summary_baseline::Dict{String,Union{String,Missing}}
+    _summary_overrides::Dict{String,Union{String,Missing}}
+end
+
+function CodeTree(df::DataFrame)
+    return CodeTree(
+        df,
+        _summary_baseline_from_df(df),
+        Dict{String,Union{String,Missing}}(),
+    )
 end
 
 DataFrames.nrow(ct::CodeTree)::Int     = nrow(getfield(ct, :_df))
@@ -50,7 +61,12 @@ function Base.getindex(ct::CodeTree, row::Integer, col)
     getindex(getfield(ct, :_df), row, col)
 end
 
-Base.setindex!(::CodeTree, args...)    = throw(MutationError(MUTATION_MSG))
+function Base.setindex!(ct::CodeTree, value, inds...)
+    _summary_write_target(getfield(ct, :_df), inds...) || throw(MutationError(MUTATION_MSG))
+    result = setindex!(getfield(ct, :_df), value, inds...)
+    _recompute_summary_overrides!(ct)
+    return result
+end
 
 # DataFrames internal operations and metadata functions only have concrete
 # implementations for DataFrame/SubDataFrame. Delegate them to the inner df so
@@ -127,9 +143,10 @@ DataFrames.colmetadata(cs::CodeSymbols, col, k; kw...)         = colmetadata(get
 """
     CodeTreeDB
 
-Container returned by `load`. Holds the two read-only DataFrames together
+Container returned by `load`. Holds the code and symbol DataFrames together
 with the codebase root path, the language config, and the in-memory file
-buffer (R29).
+buffer (R29). `db.code` is queryable like a DataFrame and permits direct
+in-memory writes only to the `summary` column.
 
 Fields:
 - `code::CodeTree`       — the code tree (`db.code`)
@@ -148,4 +165,38 @@ mutable struct CodeTreeDB
     detail_threshold::Int
     _buffer::Dict{String,String}
     _hashes::Dict{String,String}
+end
+
+function _summary_baseline_from_df(
+    df::DataFrame,
+)::Dict{String,Union{String,Missing}}
+    baseline = Dict{String,Union{String,Missing}}()
+    for row in eachrow(df)
+        baseline[string(row.id)] = row.summary
+    end
+    return baseline
+end
+
+function _summary_write_target(df::DataFrame, inds...)::Bool
+    isempty(inds) && return false
+    try
+        return Symbol.(names(df, last(inds))) == [:summary]
+    catch
+        return false
+    end
+end
+
+function _recompute_summary_overrides!(ct::CodeTree)::Nothing
+    df = getfield(ct, :_df)
+    baseline = getfield(ct, :_summary_baseline)
+    overrides = getfield(ct, :_summary_overrides)
+    empty!(overrides)
+    for row in eachrow(df)
+        id = string(row.id)
+        current_summary = row.summary
+        baseline_summary = get(baseline, id, missing)
+        isequal(current_summary, baseline_summary) && continue
+        overrides[id] = current_summary
+    end
+    return nothing
 end

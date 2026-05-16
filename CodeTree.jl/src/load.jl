@@ -5,7 +5,7 @@
 
 Index the codebase rooted at `root_path` using `config` (defaults to
 `DEFAULT_CONFIG`, which covers C/C++, Julia, and Markdown) and return a
-read-only `CodeTreeDB` containing `db.code` and `db.symbols`.
+`CodeTreeDB` containing `db.code` and `db.symbols`.
 
 `detail_threshold` (default 30): compound nodes whose parent spans fewer lines
 than this threshold are suppressed from `db.code` (R11, R12).

@@ -18,6 +18,7 @@ import Test.Helpers.LogEvent
   , systemPromptEvent
   , userMessageEvent
   , llmResponseEvent
+  , llmQueryEvent
   , sessionEndEvent
   , toolCallEvent
   , toolResultEvent
@@ -134,6 +135,7 @@ sessionLogSpec = do
             , systemPromptEvent "t" "system text"
             , userMessageEvent "t" "content"
             , llmResponseEvent "t" "response"
+            , llmQueryEvent "t" "summary" "{\"target_ids\":[\"x\"]}"
             , sessionEndEvent "t" "eof"
             ]
       let jsons = map encodeLogEvent events
@@ -142,7 +144,8 @@ sessionLogSpec = do
       Array.index jsons 1 `shouldSatisfy` \j -> containsPattern "system_prompt" j
       Array.index jsons 2 `shouldSatisfy` \j -> containsPattern "user_message" j
       Array.index jsons 3 `shouldSatisfy` \j -> containsPattern "llm_response" j
-      Array.index jsons 4 `shouldSatisfy` \j -> containsPattern "session_end" j
+      Array.index jsons 4 `shouldSatisfy` \j -> containsPattern "llm_query" j
+      Array.index jsons 5 `shouldSatisfy` \j -> containsPattern "session_end" j
 
   ---------------------------------------------------------------------------
   -- A26: encode/decode round-trip for all event types
@@ -158,6 +161,16 @@ sessionLogSpec = do
           r.toolCallId `shouldEqual` ToolCallId "tc1"
           r.input `shouldEqual` "1+1"
         Right _ -> fail "Expected ToolCall event"
+        Left err -> fail ("Decode failed: " <> show err)
+
+    it "A26: llm_query event round-trips correctly" do
+      let event = llmQueryEvent "t1" "summary" "{\"target_ids\":[\"swap\"]}"
+      case decodeLogEvent (encodeLogEvent event) of
+        Right (EvtLlmQuery r) -> do
+          r.timestamp `shouldEqual` Timestamp "t1"
+          r.purpose `shouldEqual` "summary"
+          r.input `shouldEqual` "{\"target_ids\":[\"swap\"]}"
+        Right _ -> fail "Expected LlmQuery event"
         Left err -> fail ("Decode failed: " <> show err)
 
     it "A26: system_prompt event round-trips correctly" do

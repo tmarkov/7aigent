@@ -83,9 +83,11 @@ function update_source(
     old_syms_df  = copy(syms_df)
     old_buf      = db._buffer[file_rel]
     old_hash     = db._hashes[file_rel]
+    old_summary_baseline = copy(getfield(db.code, :_summary_baseline))
+    old_summary_overrides = copy(getfield(db.code, :_summary_overrides))
 
     # --- R33 + R33a: replace this file's code and symbol rows in memory ---
-    _replace_file_rows!(code_df, syms_df, file_rel_typed, new_code_rows, new_sym_rows)
+    _replace_file_rows_preserving_summaries!(db, file_rel_typed, new_code_rows, new_sym_rows)
 
     # --- R34: write to disk and update cache ---
     new_hash = bytes2hex(SHA.sha256(new_file_src))
@@ -100,6 +102,10 @@ function update_source(
         empty!(syms_df); append!(syms_df, old_syms_df)
         db._buffer[file_rel] = old_buf
         db._hashes[file_rel] = old_hash
+        empty!(getfield(db.code, :_summary_baseline))
+        merge!(getfield(db.code, :_summary_baseline), old_summary_baseline)
+        empty!(getfield(db.code, :_summary_overrides))
+        merge!(getfield(db.code, :_summary_overrides), old_summary_overrides)
         rethrow(e)
     end
 
@@ -251,6 +257,57 @@ function _replace_file_rows!(
     return nothing
 end
 
+function _replace_file_rows_preserving_summaries!(
+    db::CodeTreeDB,
+    file_rel::FilePath,
+    new_code_rows::Vector{CodeRow},
+    new_sym_rows::Vector{SymbolRow},
+)::Nothing
+    code_df = getfield(db.code, :_df)
+    syms_df = getfield(db.symbols, :_df)
+    old_file_node_ids = _file_node_ids(code_df, file_rel)
+    preserved_overrides = Dict{String,Union{String,Missing}}()
+    for id in old_file_node_ids
+        overrides = getfield(db.code, :_summary_overrides)
+        haskey(overrides, id) || continue
+        preserved_overrides[id] = overrides[id]
+    end
+
+    _replace_file_rows!(code_df, syms_df, file_rel, new_code_rows, new_sym_rows)
+    _restore_file_summary_overrides!(db.code, old_file_node_ids, new_code_rows, preserved_overrides)
+    return nothing
+end
+
+function _file_node_ids(code_df::DataFrame, file_rel::FilePath)::Set{String}
+    file_mask = [isequal(f, file_rel.val) for f in code_df.file]
+    return Set(string.(code_df.id[file_mask]))
+end
+
+function _restore_file_summary_overrides!(
+    code_tree::CodeTree,
+    old_file_node_ids::Set{String},
+    new_code_rows::Vector{CodeRow},
+    preserved_overrides::Dict{String,Union{String,Missing}},
+)::Nothing
+    baseline = getfield(code_tree, :_summary_baseline)
+    overrides = getfield(code_tree, :_summary_overrides)
+    for id in old_file_node_ids
+        delete!(baseline, id)
+        delete!(overrides, id)
+    end
+    for row in new_code_rows
+        baseline[row.id] = row.summary
+    end
+
+    code_df = getfield(code_tree, :_df)
+    for row in eachrow(code_df)
+        haskey(preserved_overrides, row.id) || continue
+        row.summary = preserved_overrides[row.id]
+    end
+    _recompute_summary_overrides!(code_tree)
+    return nothing
+end
+
 function _replace_file_in_db!(db::CodeTreeDB, file_rel::FilePath, new_src::String)::Nothing
     code_df = getfield(db.code,    :_df)
     syms_df = getfield(db.symbols, :_df)
@@ -258,7 +315,7 @@ function _replace_file_in_db!(db::CodeTreeDB, file_rel::FilePath, new_src::Strin
     new_code_rows = _build_file_rows_for_update(db, file_rel, new_src)
     new_sym_rows  = _extract_symbols_for_file(db, file_rel, new_src, new_code_rows)
 
-    _replace_file_rows!(code_df, syms_df, file_rel, new_code_rows, new_sym_rows)
+    _replace_file_rows_preserving_summaries!(db, file_rel, new_code_rows, new_sym_rows)
 
     new_hash = bytes2hex(SHA.sha256(new_src))
     db._buffer[file_rel.val] = new_src

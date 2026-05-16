@@ -175,6 +175,14 @@ class TestBasicExecution:
         assert err == "", f"CodeTree not available: {err}"
         assert "true" in result.lower()
 
+    def test_repl_api_module_available(self, running_kernel):
+        """RA2/S13: the sandbox REPL API module is on Julia's load path."""
+        result, err = execute_and_collect(
+            running_kernel.client, "using SevenAigentREPL; true"
+        )
+        assert err == "", f"SevenAigentREPL not available: {err}"
+        assert "true" in result.lower()
+
     def test_git_metadata_is_readonly(self, running_kernel):
         """S11: writes to .git fail from inside the sandbox."""
         result, err = execute_and_collect(

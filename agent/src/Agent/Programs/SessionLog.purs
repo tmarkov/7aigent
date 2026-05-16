@@ -123,6 +123,13 @@ encodeLogEventJson (EvtLlmResponse r) =
         , Tuple "timestamp" (J.fromString (renderTimestamp r.timestamp))
         , Tuple "content" (J.fromString r.content)
         ]
+encodeLogEventJson (EvtLlmQuery r) =
+    mkObj
+        [ Tuple "type" (J.fromString "llm_query")
+        , Tuple "timestamp" (J.fromString (renderTimestamp r.timestamp))
+        , Tuple "purpose" (J.fromString r.purpose)
+        , Tuple "input" (J.fromString r.input)
+        ]
 encodeLogEventJson (EvtToolCall r) =
     mkObj
         [ Tuple "type" (J.fromString "tool_call")
@@ -237,6 +244,15 @@ decodeLogEventObj obj = do
             ts <- getStr obj "timestamp"
             content <- getStr obj "content"
             Right $ EvtLlmResponse { timestamp: Timestamp ts, content }
+        "llm_query" -> do
+            ts <- getStr obj "timestamp"
+            purpose <- getStr obj "purpose"
+            inp <- getStr obj "input"
+            Right $ EvtLlmQuery
+                { timestamp: Timestamp ts
+                , purpose
+                , input: inp
+                }
         "tool_call" -> do
             ts <- getStr obj "timestamp"
             tool <- getStr obj "tool"
@@ -399,6 +415,7 @@ processEvent acc (EvtUserMessage r) =
     acc { msgs = acc.msgs <> [mkMsg (UserMessage { content: r.content })] }
 processEvent acc (EvtLlmResponse r) =
     acc { msgs = acc.msgs <> [mkMsg (AssistantMessage { content: r.content, toolCalls: [] })] }
+processEvent acc (EvtLlmQuery _) = acc
 processEvent acc (EvtToolCall r) =
     acc { msgs = acc.msgs <> [mkMsg (AssistantMessage
         { content: ""

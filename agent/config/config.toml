@@ -12,3 +12,10 @@ max_tokens_per_turn    = 200000
 compaction_threshold   = 150000
 preserve_initial       = 20000
 preserve_final         = 40000
+
+[summaries]
+max_targets_per_batch = 16
+max_prompt_chars = 12000
+max_children_per_target = 24
+max_witness_chars = 400
+max_readme_chars = 3000

@@ -329,6 +329,7 @@ concurrently.
 | `session_start`    | `id`, `timestamp`, `workspace`, `model`, `resumed_from` (id or null)                      |
 | `user_message`     | `timestamp`, `content`                                                                     |
 | `llm_response`     | `timestamp`, `content`                                                                     |
+| `llm_query`        | `timestamp`, `purpose`, `input`                                                            |
 | `tool_call`        | `timestamp`, `tool`, `tool_call_id`, `input`                                               |
 | `tool_result`      | `timestamp`, `tool_call_id`, `output`, `truncated` (bool)                                  |
 | `token_usage`      | `timestamp`, `input_tokens`, `cached_input_tokens`, `output_tokens`, `total_session_input_tokens`, `total_session_cached_input_tokens`, `total_session_output_tokens` |
@@ -344,6 +345,11 @@ counts — including the main conversation, compaction calls, timeout-check
 calls, and REPL-summary calls. The session totals accumulate across all such
 calls. After each turn, the runner also displays the cumulative session token
 counts on the terminal.
+
+A `llm_query` event is written whenever the runner issues an internal LLM query
+on behalf of the Julia REPL rather than the main conversation loop. The event's
+`purpose` describes the query kind (currently `summary`), and `input` stores the
+serialized REPL-to-runner request payload that triggered the query.
 
 **A27** — The session description used in listings (A40) is the content of
 the first `user_message` event, truncated to 120 characters.

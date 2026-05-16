@@ -4,6 +4,7 @@ module Test.Helpers.LogEvent
   , systemPromptEvent
   , userMessageEvent
   , llmResponseEvent
+  , llmQueryEvent
   , toolCallEvent
   , toolResultEvent
   , tokenUsageEvent
@@ -54,6 +55,10 @@ userMessageEvent timestamp content =
 llmResponseEvent :: String -> String -> LogEvent
 llmResponseEvent timestamp content =
   EvtLlmResponse { timestamp: Timestamp timestamp, content }
+
+llmQueryEvent :: String -> String -> String -> LogEvent
+llmQueryEvent timestamp purpose input =
+  EvtLlmQuery { timestamp: Timestamp timestamp, purpose, input }
 
 toolCallEvent :: String -> String -> ToolCallId -> String -> LogEvent
 toolCallEvent timestamp toolName toolCallId input =

@@ -1,4 +1,4 @@
-{ stdenv, julia, lib, gvisor, codeTree, juliaEnv, cacert, bubblewrap, coreutils, bash, iputils, closureInfo }:
+{ stdenv, julia, lib, gvisor, codeTree, juliaEnv, cacert, bubblewrap, coreutils, bash, iputils, closureInfo, git }:
 
 let
   # juliaEnv is the single shared environment defined in flake.nix,
@@ -28,7 +28,7 @@ stdenv.mkDerivation {
 
   src = ./.;
 
-  nativeBuildInputs = [ juliaRaw ];
+  nativeBuildInputs = [ juliaRaw git ];
 
   buildPhase = ''
     export HOME=$TMPDIR
@@ -61,9 +61,18 @@ stdenv.mkDerivation {
     JULIA_CPU_TARGET="x86-64-v3" \
       JULIA_DEPOT_PATH=$out/julia-depot \
       JULIA_PROJECT=${codeTree}/project \
+      JULIA_LOAD_PATH=$PWD:@:@v#.#:@stdlib \
       JULIA_SSL_CA_ROOTS_PATH="${cacert}/etc/ssl/certs/ca-bundle.crt" \
       JULIA_PKG_SERVER="" \
-      ${juliaRaw}/bin/julia --startup-file=no -e 'using CodeTree; using IJulia'
+      ${juliaRaw}/bin/julia --startup-file=no test/runtests.jl
+
+    JULIA_CPU_TARGET="x86-64-v3" \
+      JULIA_DEPOT_PATH=$out/julia-depot \
+      JULIA_PROJECT=${codeTree}/project \
+      JULIA_LOAD_PATH=$PWD:@:@v#.#:@stdlib \
+      JULIA_SSL_CA_ROOTS_PATH="${cacert}/etc/ssl/certs/ca-bundle.crt" \
+      JULIA_PKG_SERVER="" \
+      ${juliaRaw}/bin/julia --startup-file=no -e 'using CodeTree; using IJulia; using SevenAigentREPL'
   '';
 
   installPhase = ''
@@ -71,6 +80,7 @@ stdenv.mkDerivation {
 
     # ── startup script ────────────────────────────────────────────────────
     cp startup.jl $out/share/sandbox/startup.jl
+    cp SevenAigentREPL.jl $out/share/sandbox/SevenAigentREPL.jl
     cat ${runtimeClosure}/store-paths > $out/share/sandbox/runtime-store-paths
     echo $out >> $out/share/sandbox/runtime-store-paths
 

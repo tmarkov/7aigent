@@ -21,7 +21,7 @@ import Data.String as String
 import Data.Traversable (traverse)
 import Data.Tuple (Tuple(..))
 import Effect (Effect)
-import Effect.Aff (Aff, attempt)
+import Effect.Aff (Aff, attempt, launchAff_)
 import Effect.Class (liftEffect)
 import Node.Encoding (Encoding(..))
 import Node.FS.Aff as FS
@@ -29,6 +29,7 @@ import Node.Process as Process
 
 import Agent.Types
     ( WorkspacePath(..)
+    , ApiEndpoint(..)
     , Timestamp(..)
     , SessionId(..)
     , SessionEndReason(..)
@@ -255,6 +256,9 @@ startSession ws@(WorkspacePath wp) resumedFrom existingHistory resumeState promp
             exit1
         Right k -> pure k
 
+    let (ApiEndpoint summaryApiEndpoint) = config.apiEndpoint
+    let (ModelName summaryModel) = config.model
+
     preflight <- runSandboxPreflight ws promptSandboxPreflight
     case preflight of
         HaltStartup -> do
@@ -279,6 +283,17 @@ startSession ws@(WorkspacePath wp) resumedFrom existingHistory resumeState promp
 
     -- Connect to Jupyter kernel
     kernelR <- connectKernel sandbox.kernelJsonPath
+        { apiEndpoint: summaryApiEndpoint
+        , apiKey
+        , model: summaryModel
+        }
+        (\purpose input -> launchAff_ do
+            ts' <- getTs
+            writeLogEvent ws sessionId (EvtLlmQuery
+                { timestamp: ts'
+                , purpose
+                , input
+                }))
     kernel <- case kernelR of
         Left err -> do
             liftEffect $ sandbox.kill
