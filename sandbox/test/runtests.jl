@@ -137,12 +137,24 @@ function _node_id(
     return only(matches).id
 end
 
-@testset "RA3 + RA3.2: explicit DataFrame display helpers are available for startup delegation" begin
+@testset "RA3 + RA3.2: explicit DataFrame display helpers render compact markdown tables for startup delegation" begin
     df = DataFrame(alpha = ["value"], beta = [2])
     explicit_render = sprint(io -> SevenAigentREPL.llm_show_dataframe(io, df))
+    wide_df = DataFrame((Symbol("col$(i)") => [i] for i in 1:22)...)
+    wide_render = sprint(io -> SevenAigentREPL.llm_show_dataframe(io, wide_df))
+    tall_df = DataFrame(alpha = 1:8)
+    tall_buffer = IOBuffer()
+    tall_io = IOContext(tall_buffer, :displaysize => (8, 80))
+    SevenAigentREPL.llm_show_dataframe(tall_io, tall_df)
+    tall_render = String(take!(tall_buffer))
 
-    @test occursin("alpha", explicit_render)
-    @test occursin("beta", explicit_render)
+    @test occursin("1 rows x 2 columns DataFrame", explicit_render)
+    @test occursin("| Row | alpha :: String | beta :: Int64 |", explicit_render)
+    @test occursin("| --- | --- | --- |", explicit_render)
+    @test occursin("| 1 | value | 2 |", explicit_render)
+    @test !occursin("│", explicit_render)
+    @test occursin("2 more columns omitted", wide_render)
+    @test occursin("4 more rows omitted", tall_render)
     @test SevenAigentREPL.llm_show_dataframe(df) === nothing
 end
 

@@ -54,6 +54,12 @@ which can import the REPL API module, bind its `CodeTreeDB`, and/or install
 `Base.show` overrides for DataFrame-like types by delegating to the display
 helpers.
 
+**RA3.2** — The LLM-focused dataframe display helpers render visible rows and
+columns as a compact markdown table rather than as a whitespace-aligned terminal
+grid. They preserve row/column structure, may include a compact summary line,
+and surface omitted-row or omitted-column counts explicitly instead of spending
+tokens on visual alignment padding.
+
 ### Session Summary State
 
 **RA4** — Generated summaries are reflected into the in-memory
