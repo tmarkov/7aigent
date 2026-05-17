@@ -158,6 +158,34 @@ end
     @test SevenAigentREPL.llm_show_dataframe(df) === nothing
 end
 
+@testset "RA3.1 + RA3.2: startup-style text/markdown show delegation works for CodeTree tables" begin
+    Base.show(io::IO, ::MIME"text/plain", df::DataFrame) =
+        SevenAigentREPL.llm_show_dataframe(io, df)
+    Base.show(io::IO, ::MIME"text/markdown", df::DataFrame) =
+        SevenAigentREPL.llm_show_dataframe(io, df)
+    Base.show(io::IO, ::MIME"text/plain", df::SubDataFrame) =
+        SevenAigentREPL.llm_show_dataframe(io, df)
+    Base.show(io::IO, ::MIME"text/markdown", df::SubDataFrame) =
+        SevenAigentREPL.llm_show_dataframe(io, df)
+    Base.show(io::IO, ::MIME"text/plain", df::CodeTree.CodeTree) =
+        SevenAigentREPL.llm_show_dataframe(io, df)
+    Base.show(io::IO, ::MIME"text/markdown", df::CodeTree.CodeTree) =
+        SevenAigentREPL.llm_show_dataframe(io, df)
+    Base.show(io::IO, ::MIME"text/plain", df::CodeTree.CodeSymbols) =
+        SevenAigentREPL.llm_show_dataframe(io, df)
+    Base.show(io::IO, ::MIME"text/markdown", df::CodeTree.CodeSymbols) =
+        SevenAigentREPL.llm_show_dataframe(io, df)
+
+    workspace = _workspace_from_fixture()
+    db = _bind_repl_session(workspace)
+
+    markdown_render = repr(MIME("text/markdown"), db.code)
+
+    @test occursin("rows x 16 columns DataFrame", markdown_render)
+    @test occursin("| Row | id :: String |", markdown_render)
+    @test !occursin("MethodError", markdown_render)
+end
+
 @testset "RA3.1 + RA25 + RA27: bind! uses caller-provided db and bundled summary defaults" begin
     workspace = _workspace_from_fixture()
     db = CodeTree.load(workspace)
