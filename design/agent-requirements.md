@@ -437,9 +437,11 @@ with all remaining globals intact.
 ### Context Compaction
 
 **A33** — Compaction is triggered as described in A1 steps 3 and 4: after
-each tool round-trip or after a no-tool-call LLM response, if the total input
-tokens for the current turn exceed `compaction_threshold`. Compaction is never
-triggered after a user message.
+each tool round-trip or after a no-tool-call LLM response, if the input token
+count of the **actual current LLM request** exceeds `compaction_threshold`.
+This is the size of the request that just completed, not a cumulative sum of
+all prior request sizes earlier in the same turn. Compaction is never triggered
+after a user message.
 
 **A34** — Compaction proceeds as follows:
 

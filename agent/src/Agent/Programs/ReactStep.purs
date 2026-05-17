@@ -40,7 +40,7 @@ reactStep
     -> ConversationHistory
     -> LlmResponse
     -> NextStep
-reactStep config (TokenCount accumulated) _history
+reactStep config (TokenCount accumulatedTurnTokens) _history
     (LlmResponse resp) =
     let TokenCount compactThresh =
             config.compactionThreshold
@@ -50,19 +50,21 @@ reactStep config (TokenCount accumulated) _history
             config.preserveInitial
         TokenCount preserveFin =
             config.preserveFinal
+        TokenCount currentRequestTokens =
+            resp.inputTokens
         -- Can only compact if there are enough tokens beyond the
         -- preserved initial and final blocks
         canCompact =
-            accumulated > preserveInit + preserveFin
+            currentRequestTokens > preserveInit + preserveFin
     in  case Array.head resp.toolCalls of
             Just tc ->
-                if accumulated > compactThresh
+                if currentRequestTokens > compactThresh
                 then ExecuteToolThenCompact tc
-                else if accumulated > maxPerTurn
+                else if accumulatedTurnTokens > maxPerTurn
                 then ExecuteToolThenEndTurn tc
                 else ExecuteTool tc
             Nothing ->
-                if accumulated > compactThresh
+                if currentRequestTokens > compactThresh
                     && canCompact
                 then CompactThenPromptUser
                 else PromptUser

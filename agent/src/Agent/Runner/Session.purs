@@ -106,10 +106,6 @@ unwrapTc (TokenCount n) = n
 addTc :: TokenCount -> TokenCount -> TokenCount
 addTc (TokenCount a) (TokenCount b) = TokenCount (a + b)
 
-totalTokens :: ConversationHistory -> TokenCount
-totalTokens (ConversationHistory h) =
-    foldl addTc (TokenCount 0) (map _.tokens h.messages)
-
 zeroLlmUsage :: LlmUsage
 zeroLlmUsage =
     { inputTokens: TokenCount 0
@@ -574,7 +570,14 @@ runReactLoop ws sessionId config apiKey kernel history accumulated knownHunks us
                             }
 
                     CompactThenPromptUser -> do
-                        compactR <- doCompact ws sessionId config apiKey history' usageTotals'
+                        compactR <- doCompact
+                            ws
+                            sessionId
+                            config
+                            apiKey
+                            r.inputTokens
+                            history'
+                            usageTotals'
                         pure
                             { history: compactR.history
                             , knownHunks
@@ -591,7 +594,14 @@ runReactLoop ws sessionId config apiKey kernel history accumulated knownHunks us
                     ExecuteToolThenCompact tc -> do
                         Tuple history'' hunks' <-
                             doTool getTs ws sessionId config kernel history' tc knownHunks
-                        compactR <- doCompact ws sessionId config apiKey history'' usageTotals'
+                        compactR <- doCompact
+                            ws
+                            sessionId
+                            config
+                            apiKey
+                            r.inputTokens
+                            history''
+                            usageTotals'
                         runReactLoop ws sessionId config apiKey kernel compactR.history
                             (TokenCount 0) hunks' compactR.usageTotals
 
@@ -615,10 +625,11 @@ doCompact
     -> SessionId
     -> Config
     -> String
+    -> TokenCount
     -> ConversationHistory
     -> LlmUsage
     -> Aff { history :: ConversationHistory, usageTotals :: LlmUsage }
-doCompact ws@(WorkspacePath wp) sessionId config apiKey history usageTotals = do
+doCompact ws@(WorkspacePath wp) sessionId config apiKey requestTokensBefore history usageTotals = do
     compactTmplR <- attempt (FS.readTextFile UTF8 (wp <> "/.7aigent/compaction_prompt.md"))
     summaryTmplR <- attempt (FS.readTextFile UTF8 (wp <> "/.7aigent/summary_message.md"))
     let compactTmpl = case compactTmplR of
@@ -674,7 +685,7 @@ doCompact ws@(WorkspacePath wp) sessionId config apiKey history usageTotals = do
                     , initialMessageCount:  Array.length plan.initialBlock
                     , compactedMessageCount: Array.length plan.compactedBlock
                     , finalMessageCount:    Array.length plan.finalBlock
-                    , totalTokensBefore:    unwrapTc (totalTokens history)
+                    , totalTokensBefore:    unwrapTc requestTokensBefore
                     })
 
                 let newMsgs =

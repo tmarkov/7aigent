@@ -90,6 +90,36 @@ reactStepSpec = do
         PromptUser -> pure unit
         _ -> fail "Expected PromptUser (threshold is 'exceed', not 'meet')"
 
+    it "A33: accumulated turn tokens above threshold do not compact when the \
+       \current request is below threshold" do
+      let config = testConfig
+            { compactionThreshold = TokenCount 1000
+            , preserveInitial = TokenCount 100
+            , preserveFinal = TokenCount 100
+            }
+      let history = mkHistory [ systemMsg "sys", userMsg "hello" ]
+      let response = toolCallResponse "julia_repl" "x" (ToolCallId "tc1") (TokenCount 900)
+      -- The turn has already accumulated > 1000 input tokens from earlier LLM
+      -- requests, but the actual request that just completed was only 900.
+      let step = reactStep config (TokenCount 1200) history response
+      case step of
+        ExecuteTool _ -> pure unit
+        _ -> fail "Expected ExecuteTool (compaction should use the current request size)"
+
+    it "A33: text-only response likewise does not compact on cumulative \
+       \turn tokens alone" do
+      let config = testConfig
+            { compactionThreshold = TokenCount 1000
+            , preserveInitial = TokenCount 100
+            , preserveFinal = TokenCount 100
+            }
+      let history = mkHistory [ systemMsg "sys", userMsg "hello" ]
+      let response = textResponse "answer" (TokenCount 900)
+      let step = reactStep config (TokenCount 1200) history response
+      case step of
+        PromptUser -> pure unit
+        _ -> fail "Expected PromptUser (no compaction from cumulative turn tokens)"
+
   ---------------------------------------------------------------------------
   -- A7: streaming contract
   ---------------------------------------------------------------------------
