@@ -122,6 +122,55 @@ def running_kernel(workspace):
     assert not runtime_dir.exists(), f"runtime directory leaked: {runtime_dir}"
 
 
+@pytest.fixture(scope="module")
+def raw_running_kernel(workspace):
+    """
+    Start the sandbox and connect channels without wait_for_ready().
+    This is useful for regressions where kernel_info handling itself may be
+    impacted by the bug under test, but execute_request still works.
+    """
+    launcher = get_launcher()
+
+    proc = subprocess.Popen(
+        [str(launcher), str(workspace)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    kernel_json_path = Path(proc.stdout.readline().strip())
+    assert kernel_json_path.exists(), (
+        f"kernel.json not found: {kernel_json_path}\nstderr: {proc.stderr.read()}"
+    )
+
+    time.sleep(1.0)
+    if proc.poll() is not None:
+        stderr = proc.stderr.read().strip()
+        pytest.skip(
+            "Sandbox launcher exited before the kernel became usable: "
+            f"{stderr or 'runner unsupported in this environment'}"
+        )
+
+    runtime_dir = kernel_json_path.parent.parent
+    conn = json.loads(kernel_json_path.read_text())
+    host_sockets_dir = kernel_json_path.parent
+
+    conn["ip"] = str(host_sockets_dir / "kernel")
+    tmp_conn = host_sockets_dir / "kernel-host.json"
+    tmp_conn.write_text(json.dumps(conn))
+
+    km = jupyter_client.BlockingKernelClient(connection_file=str(tmp_conn))
+    km.load_connection_file()
+    km.start_channels()
+
+    yield RunningKernel(client=km, process=proc, runtime_dir=runtime_dir)
+
+    km.stop_channels()
+    proc.terminate()
+    proc.wait(timeout=10)
+    assert not runtime_dir.exists(), f"runtime directory leaked: {runtime_dir}"
+
+
 def execute_and_collect(km, code, timeout=30):
     """Send an execute_request and return (result_text, error_text)."""
     msg_id = km.execute(code)
@@ -182,6 +231,18 @@ class TestBasicExecution:
         )
         assert err == "", f"SevenAigentREPL not available: {err}"
         assert "true" in result.lower()
+
+    def test_exception_is_rendered_informatively(self, raw_running_kernel):
+        """The live IJulia kernel should surface the actual exception text."""
+        result, err = execute_and_collect(
+            raw_running_kernel.client,
+            'startswith(missing, "design/")',
+        )
+        assert result == ""
+        assert (
+            "MethodError: no method matching startswith(::Missing, ::String)" in err
+        ), f"Unexpected error rendering:\n{err}"
+        assert "SYSTEM: show(lasterr) caused an error" not in err
 
     def test_git_metadata_is_readonly(self, running_kernel):
         """S11: writes to .git fail from inside the sandbox."""

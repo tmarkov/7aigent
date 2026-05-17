@@ -5,4 +5,5 @@
 using CodeTree
 using IJulia
 
+Core.eval(Base, :(have_color = false))
 IJulia.run_kernel()
