@@ -36,21 +36,23 @@ servicing summary requests by calling the external LLM.
 
 ### Module Placement and Bootstrap
 
-**RA1** — The REPL API is implemented in a dedicated Julia module that is
-**outside** `.7aigent/startup.jl`. The default startup file may configure the
-module, but it must not contain the substantive implementation of summary
-generation, evidence selection, batching, or DataFrame display helpers.
+**RA1** — The REPL API is implemented in a dedicated Julia module and
+distributed with the sandbox. The substantive implementation of summary
+generation, evidence selection, batching, display helpers, configuration
+loading, and Jupyter summary RPC lives in that module.
 
 **RA2** — The REPL API module is available inside the sandbox on Julia's load
 path without relying on files in the workspace. It is therefore testable as
 ordinary repository code and remains available even when the workspace contains
 only the bootstrap files placed by the runner.
 
-**RA3** — The default `.7aigent/startup.jl` is a thin bootstrap. It imports the
-REPL API module, initializes it for `/workspace`, and binds the loaded
-`CodeTreeDB` to a well-known variable in `Main`. It may install convenience
-aliases or `Base.show` overrides by delegating to functions defined in the REPL
-API module.
+**RA3** — The REPL API provides session summary functions and explicit
+LLM-focused dataframe display helpers.
+
+**RA3.1** — The REPL API is intended to be bootstrapped by `.7aigent/startup.jl`,
+which can import the REPL API module, bind its `CodeTreeDB`, and/or install
+`Base.show` overrides for DataFrame-like types by delegating to the display
+helpers.
 
 ### Session Summary State
 

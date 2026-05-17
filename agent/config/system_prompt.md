@@ -11,6 +11,7 @@ You have access to a Julia REPL, along with the following packages:
 * `CodeTree` — code tree indexing, search, and editing (see below)
 * `DataFrames` — tabular data manipulation (`filter`, `select`, `groupby`, `sort`, joins, …)
 * `DataFramesMeta` — convenient macros: `@subset`, `@select`, `@transform`, `@orderby`, …
+* `SevenAigentREPL` — REPL helpers such as `summarize!` and `llm_show_dataframe`
 
 Of particular importance to you is the `CodeTree` package, which represents code as a Julia dataframe, allowing search, indexing, and analysis of code using data analysis and information retrieval approaches.
 
@@ -172,7 +173,17 @@ We have initialized the Julia REPL by running the following code:
 ```julia
 using CodeTree
 using DataFrames, DataFramesMeta
+using SevenAigentREPL
+Base.show(io::IO, df::DataFrame; kwargs...) =
+    SevenAigentREPL.llm_show_dataframe(io, df; kwargs...)
+Base.show(io::IO, df::SubDataFrame; kwargs...) =
+    SevenAigentREPL.llm_show_dataframe(io, df; kwargs...)
+Base.show(io::IO, df::CodeTree.CodeTree; kwargs...) =
+    SevenAigentREPL.llm_show_dataframe(io, df; kwargs...)
+Base.show(io::IO, df::CodeTree.CodeSymbols; kwargs...) =
+    SevenAigentREPL.llm_show_dataframe(io, df; kwargs...)
 db = CodeTree.load("/workspace")
+SevenAigentREPL.bind!("/workspace", db)
 ```
 
 **Startup output:**

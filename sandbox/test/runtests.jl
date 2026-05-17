@@ -115,6 +115,12 @@ function _code_df(db::CodeTreeDB)::DataFrame
     return getfield(db.code, :_df)
 end
 
+function _bind_repl_session(workspace::String)::CodeTreeDB
+    db = CodeTree.load(workspace)
+    SevenAigentREPL.bind!(workspace, db)
+    return db
+end
+
 function _node_id(
     db::CodeTreeDB;
     kind::AbstractString,
@@ -131,9 +137,20 @@ function _node_id(
     return only(matches).id
 end
 
-@testset "RA25 + RA27: init! uses bundled summary defaults when config has no summaries section" begin
+@testset "RA3 + RA3.2: explicit DataFrame display helpers are available for startup delegation" begin
+    df = DataFrame(alpha = ["value"], beta = [2])
+    explicit_render = sprint(io -> SevenAigentREPL.llm_show_dataframe(io, df))
+
+    @test occursin("alpha", explicit_render)
+    @test occursin("beta", explicit_render)
+    @test SevenAigentREPL.llm_show_dataframe(df) === nothing
+end
+
+@testset "RA3.1 + RA25 + RA27: bind! uses caller-provided db and bundled summary defaults" begin
     workspace = _workspace_from_fixture()
-    db = SevenAigentREPL.init!(workspace)
+    db = CodeTree.load(workspace)
+    @test_throws MethodError SevenAigentREPL.bind!(workspace)
+    @test SevenAigentREPL.bind!(workspace, db) === nothing
     cfg = SevenAigentREPL.summary_config()
 
     @test isa(db, CodeTreeDB)
@@ -156,7 +173,7 @@ end
         """,
     )
 
-    SevenAigentREPL.init!(workspace)
+    SevenAigentREPL.bind!(workspace, CodeTree.load(workspace))
     cfg = SevenAigentREPL.summary_config()
 
     @test cfg.max_targets_per_batch == 3
@@ -166,9 +183,9 @@ end
     @test cfg.max_readme_chars == 3000
 end
 
-@testset "RA4 + RA5: init! returns a CodeTreeDB and starts with an empty generated-summary store" begin
+@testset "RA4 + RA5: bind! keeps the caller's db and starts with an empty generated-summary store" begin
     workspace = _workspace_from_fixture()
-    db = SevenAigentREPL.init!(workspace)
+    db = _bind_repl_session(workspace)
 
     @test isa(db, CodeTreeDB)
     @test nrow(SevenAigentREPL.generated_summaries()) == 0
@@ -177,7 +194,7 @@ end
 
 @testset "RA4 + RA5 + RA6 + RA7a: summarize! updates session db.code summaries in place and does not persist them" begin
     workspace = _workspace_from_fixture()
-    db = SevenAigentREPL.init!(workspace)
+    db = _bind_repl_session(workspace)
 
     search_sorted_id = _node_id(db; kind = "function", name = "search_sorted", file = "julia/core.jl")
     compute_stats_id = _node_id(db; kind = "function", name = "compute_stats", file = "julia/core.jl")
@@ -210,7 +227,7 @@ end
 
 @testset "RA5: generated summaries survive update_source when the node id is unchanged" begin
     workspace = _workspace_from_fixture()
-    db = SevenAigentREPL.init!(workspace)
+    db = _bind_repl_session(workspace)
 
     noop_id = _node_id(db; kind = "function", name = "noop", file = "julia/core.jl")
     SevenAigentREPL.set_summary_transport!(request ->
@@ -234,7 +251,7 @@ end
 
 @testset "RA7: DataFrame-based summarize! updates a mutable summary column" begin
     workspace = _workspace_from_fixture()
-    db = SevenAigentREPL.init!(workspace)
+    db = _bind_repl_session(workspace)
 
     search_sorted_id = _node_id(db; kind = "function", name = "search_sorted", file = "julia/core.jl")
     compute_stats_id = _node_id(db; kind = "function", name = "compute_stats", file = "julia/core.jl")
@@ -258,7 +275,7 @@ end
 
 @testset "RA8 + RA12: summarize! requests only explicit targets and deduplicates evidence payloads" begin
     workspace = _workspace_from_fixture()
-    db = SevenAigentREPL.init!(workspace)
+    db = _bind_repl_session(workspace)
 
     file_id = _node_id(db; kind = "file", name = "core.jl", file = "julia/core.jl")
     captured_request = Ref{Any}(nothing)
@@ -279,7 +296,7 @@ end
 @testset "RA9 + RA10 + RA11: summarize! batches by tree locality rather than raw input order" begin
     workspace = _workspace_from_fixture()
     _write_summary_config!(workspace; max_targets_per_batch = 2)
-    db = SevenAigentREPL.init!(workspace)
+    db = _bind_repl_session(workspace)
 
     docs_id = _node_id(db; kind = "file", name = "api.md", file = "docs/api.md")
     search_sorted_id = _node_id(db; kind = "function", name = "search_sorted", file = "julia/core.jl")
@@ -302,7 +319,7 @@ end
 @testset "RA13-RA18 + RA20 + RA21: root evidence promotes README and records overflow metadata" begin
     workspace = _workspace_from_fixture()
     _write_summary_config!(workspace; max_children_per_target = 2)
-    db = SevenAigentREPL.init!(workspace)
+    db = _bind_repl_session(workspace)
 
     root_id = only(filter(r -> ismissing(r.parent), eachrow(_code_df(db)))).id
     captured_request = Ref{Any}(nothing)
@@ -322,7 +339,7 @@ end
 
 @testset "RA14: non-leaf targets use the leftmost leaf descendant as the primary witness" begin
     workspace = _workspace_from_fixture()
-    db = SevenAigentREPL.init!(workspace)
+    db = _bind_repl_session(workspace)
 
     file_id = _node_id(db; kind = "file", name = "core.jl", file = "julia/core.jl")
     captured_request = Ref{Any}(nothing)

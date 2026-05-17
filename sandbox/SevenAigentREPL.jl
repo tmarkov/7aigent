@@ -8,10 +8,7 @@ using TOML
 using UUIDs
 using CodeTree: CodeTreeDB
 
-export SummaryConfig
-export init!, patch_ioproperties!, llm_show_dataframe
-export summary_config, generated_summaries
-export summarize!, set_summary_transport!, clear_summary_transport!
+export llm_show_dataframe, summarize!
 
 const SUMMARY_COMM_TARGET = "7aigent.summary"
 const SUMMARY_INPUT_PROMPT_PREFIX = "7aigent.summary.reply:"
@@ -63,15 +60,6 @@ end
 const _session_ref = Ref{Union{Nothing,ReplSession}}(nothing)
 const _summary_transport_ref = Ref{Any}(nothing)
 
-function patch_ioproperties!()::Nothing
-    try
-        Base.eval(:(ioproperties(io::$(typeof(stdout))) = ImmutableDict{Symbol,Any}()))
-    catch e
-        @warn "ioproperties patch failed" exception = e
-    end
-    return nothing
-end
-
 function _llm_dataframe_io(io::IO, df::AbstractDataFrame)::IO
     rows, cols = displaysize(io)
     width = max(cols, LLM_DF_TRUNCATE * min(ncol(df), LLM_DF_MAX_DISPLAY_COLUMNS))
@@ -109,13 +97,15 @@ function llm_show_dataframe(
     )
 end
 
-function init!(workspace::AbstractString)::CodeTreeDB
-    workspace_path = abspath(String(workspace))
-    db = CodeTree.load(workspace_path)
-    return init!(workspace_path, db)
+function llm_show_dataframe(
+    df::AbstractDataFrame;
+    kwargs...,
+)::Nothing
+    llm_show_dataframe(stdout, df; kwargs...)
+    return nothing
 end
 
-function init!(workspace::AbstractString, db::CodeTreeDB)::CodeTreeDB
+function bind!(workspace::AbstractString, db::CodeTreeDB)::Nothing
     workspace_path = abspath(String(workspace))
     cfg = _load_summary_config(workspace_path)
     _session_ref[] = ReplSession(
@@ -124,7 +114,7 @@ function init!(workspace::AbstractString, db::CodeTreeDB)::CodeTreeDB
         cfg,
     )
     _summary_transport_ref[] = nothing
-    return db
+    return nothing
 end
 
 function summary_config()::SummaryConfig
@@ -192,7 +182,7 @@ function summarize!(frame::AbstractDataFrame; keywords = String[])::DataFrame
 end
 
 function _require_session()::ReplSession
-    isnothing(_session_ref[]) && throw(ErrorException("SevenAigentREPL.init!(workspace) has not been called"))
+    isnothing(_session_ref[]) && throw(ErrorException("SevenAigentREPL.bind!(workspace, db) has not been called"))
     return _session_ref[]::ReplSession
 end
 
