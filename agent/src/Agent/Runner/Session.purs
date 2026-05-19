@@ -440,6 +440,11 @@ buildSystemPrompt (WorkspacePath wp) config startupOutput = do
             Left _  -> ""
             Right t -> t
 
+    startupJlR <- attempt (FS.readTextFile UTF8 (wp <> "/.7aigent/startup.jl"))
+    let startupJl = case startupJlR of
+            Left _  -> ""
+            Right t -> t
+
     agentsMdR <- attempt (FS.readTextFile UTF8 (wp <> "/AGENTS.md"))
     let agentsMd = case agentsMdR of
             Left _  -> ""
@@ -449,7 +454,8 @@ buildSystemPrompt (WorkspacePath wp) config startupOutput = do
     let (ModelName model) = config.model
     let vars = Map.fromFoldable
             [ Tuple "initial_repl_output" startupOutput
-            , Tuple "agents-md" agentsMd
+            , Tuple "agents_md" agentsMd
+            , Tuple "startup_jl" startupJl
             , Tuple "datetime" (renderTimestamp ts)
             , Tuple "model" model
             ]

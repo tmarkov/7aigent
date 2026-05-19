@@ -45,11 +45,22 @@ templateSpec = do
             `shouldEqual` true
         Left err -> fail (show err)
 
-    it "A22: replaces {{agents-md}} with file content or empty string" do
-      let subs = Map.singleton "agents-md" ""
-      let template = "Guide: {{agents-md}}"
+    it "A22: replaces {{agents_md}} with file content or empty string" do
+      let subs = Map.singleton "agents_md" ""
+      let template = "Guide: {{agents_md}}"
       case substituteTemplate subs template of
         Right result -> result `shouldEqual` "Guide: "
+        Left err -> fail (show err)
+
+    it "A22: replaces {{startup_jl}} with startup file contents" do
+      let subs = Map.singleton "startup_jl" "using CodeTree\nglobal db = CodeTree.load(\"/workspace\")"
+      let template = "Startup:\n```julia\n{{startup_jl}}\n```"
+      case substituteTemplate subs template of
+        Right result ->
+          String.contains
+            (String.Pattern "global db = CodeTree.load(\"/workspace\")")
+            result
+            `shouldEqual` true
         Left err -> fail (show err)
 
     it "A21: preserves single { and } literally" do
@@ -66,11 +77,14 @@ templateSpec = do
             [ Tuple "datetime" "2026-01-15"
             , Tuple "model" "test-model"
             , Tuple "initial_repl_output" "ok"
-            , Tuple "agents-md" "# Guide"
+            , Tuple "agents_md" "# Guide"
+            , Tuple "startup_jl" "using CodeTree"
             ]
-      let template = "{{datetime}} {{model}} {{initial_repl_output}} {{agents-md}}"
+      let template = "{{datetime}} {{model}} {{initial_repl_output}} {{agents_md}} {{startup_jl}}"
       case substituteTemplate subs template of
-        Right result -> result `shouldEqual` "2026-01-15 test-model ok # Guide"
+        Right result ->
+          result `shouldEqual`
+            "2026-01-15 test-model ok # Guide using CodeTree"
         Left err -> fail (show err)
 
   ---------------------------------------------------------------------------

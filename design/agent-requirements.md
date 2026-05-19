@@ -295,7 +295,8 @@ literal `{` or `}` may appear freely in the template without escaping; only
 | Keyword                    | Replaced with                                                                 |
 |----------------------------|-------------------------------------------------------------------------------|
 | `{{initial_repl_output}}`  | Output of the Julia startup sequence (A19)                                    |
-| `{{agents-md}}`            | Full contents of `AGENTS.md` in the workspace root; empty string if absent    |
+| `{{agents_md}}`            | Full contents of `AGENTS.md` in the workspace root; empty string if absent    |
+| `{{startup_jl}}`           | Full contents of `.7aigent/startup.jl`                                        |
 | `{{datetime}}`             | Current date and time in ISO 8601 format                                      |
 | `{{model}}`                | The model name from config (A37)                                              |
 
