@@ -166,6 +166,53 @@ filter(r -> r.parent == "src/main")
 summarize!(ans)
 ```
 
+## Task Tracking
+
+A global `todo` variable (a `DataFrame`) is available in `Main` for tracking tasks across a session.
+It is initialised empty by `SevenAigentREPL.bind!` and persists for the lifetime of the session.
+
+### Schema
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | Int | Auto-assigned integer id (1, 2, 3, …) |
+| `description` | String | Short description of the task |
+| `status` | TodoStatus | `pending`, `in_progress`, or `done` |
+
+`TodoStatus` is an enum exported by `SevenAigentREPL`; its values `pending`, `in_progress`, and `done` are available directly.
+
+### API
+
+```julia
+# Add a new pending task; returns its id.
+id = todo_add!("Read the relevant source files")
+
+# Mark a task as in_progress (throws if another task is already in_progress).
+todo_start!(id)
+
+# Mark a task as done.
+todo_done!(id)
+
+# Print a compact status summary to stdout.
+status()
+
+# Inspect or filter the table directly — it's a plain DataFrame.
+filter(r -> r.status == pending, todo)
+```
+
+### Usage pattern
+
+Before starting multi-step work, populate `todo` with all planned tasks, then
+keep it up to date as you work through them:
+
+```julia
+todo_add!("Explore the module structure")
+todo_add!("Identify the bug location")
+todo_add!("Apply the fix")
+todo_add!("Verify with tests")
+todo_start!(1)
+```
+
 # REPL Initialization
 
 We have initialized the Julia REPL by running `.7aigent/startup.jl`, whose
