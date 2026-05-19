@@ -121,6 +121,16 @@ function _bind_repl_session(workspace::String)::CodeTreeDB
     return db
 end
 
+function _capture_stdout(f::Function)::Tuple{String,Any}
+    pipe = Pipe()
+    result = redirect_stdout(pipe) do
+        f()
+    end
+    close(pipe.in)
+    output = String(read(pipe.out))
+    return output, result
+end
+
 function _node_id(
     db::CodeTreeDB;
     kind::AbstractString,
@@ -375,6 +385,140 @@ end
     @test first(target.child_ids) == target.promoted_readme_id
     @test !ismissing(target.overflow)
     @test target.overflow.n_children_omitted > 0
+end
+
+@testset "RA29: TodoStatus enum is defined and all three values are exported" begin
+    @test isdefined(SevenAigentREPL, :TodoStatus)
+    @test SevenAigentREPL.pending isa SevenAigentREPL.TodoStatus
+    @test SevenAigentREPL.in_progress isa SevenAigentREPL.TodoStatus
+    @test SevenAigentREPL.done isa SevenAigentREPL.TodoStatus
+    @test SevenAigentREPL.pending != SevenAigentREPL.in_progress
+    @test SevenAigentREPL.in_progress != SevenAigentREPL.done
+    @test SevenAigentREPL.pending != SevenAigentREPL.done
+end
+
+@testset "RA30: bind! initialises Main.todo as an empty DataFrame with the correct schema" begin
+    workspace = _workspace_from_fixture()
+    db = CodeTree.load(workspace)
+    SevenAigentREPL.bind!(workspace, db)
+
+    @test isdefined(Main, :todo)
+    @test Main.todo isa DataFrame
+    @test nrow(Main.todo) == 0
+    @test eltype(Main.todo.id) == Int
+    @test eltype(Main.todo.description) == String
+    @test eltype(Main.todo.status) == SevenAigentREPL.TodoStatus
+end
+
+@testset "RA30: bind! overwrites any existing Main.todo" begin
+    workspace = _workspace_from_fixture()
+    db = CodeTree.load(workspace)
+    SevenAigentREPL.bind!(workspace, db)
+    push!(Main.todo, (id=1, description="old task", status=SevenAigentREPL.pending))
+    @test nrow(Main.todo) == 1
+    SevenAigentREPL.bind!(workspace, db)
+    @test nrow(Main.todo) == 0
+end
+
+@testset "RA31: todo_add! appends pending rows with auto-incrementing ids" begin
+    workspace = _workspace_from_fixture()
+    _bind_repl_session(workspace)
+
+    id1 = SevenAigentREPL.todo_add!("First task")
+    id2 = SevenAigentREPL.todo_add!("Second task")
+    id3 = SevenAigentREPL.todo_add!("Third task")
+
+    @test id1 == 1
+    @test id2 == 2
+    @test id3 == 3
+    @test nrow(Main.todo) == 3
+    @test all(==(SevenAigentREPL.pending), Main.todo.status)
+    @test Main.todo[1, :description] == "First task"
+    @test Main.todo[2, :description] == "Second task"
+end
+
+@testset "RA31: todo_add! continues from the current max id" begin
+    workspace = _workspace_from_fixture()
+    _bind_repl_session(workspace)
+    push!(Main.todo, (id=5, description="existing", status=SevenAigentREPL.pending))
+    new_id = SevenAigentREPL.todo_add!("new task")
+    @test new_id == 6
+end
+
+@testset "RA31: todo_start! sets the item to in_progress" begin
+    workspace = _workspace_from_fixture()
+    _bind_repl_session(workspace)
+    id = SevenAigentREPL.todo_add!("Task to start")
+    SevenAigentREPL.todo_start!(id)
+    @test Main.todo[1, :status] == SevenAigentREPL.in_progress
+end
+
+@testset "RA31: todo_start! throws if another item is already in_progress" begin
+    workspace = _workspace_from_fixture()
+    _bind_repl_session(workspace)
+    id1 = SevenAigentREPL.todo_add!("First")
+    id2 = SevenAigentREPL.todo_add!("Second")
+    SevenAigentREPL.todo_start!(id1)
+    @test_throws ErrorException SevenAigentREPL.todo_start!(id2)
+    @test Main.todo[1, :status] == SevenAigentREPL.in_progress
+    @test Main.todo[2, :status] == SevenAigentREPL.pending
+end
+
+@testset "RA31: todo_start! throws if id does not exist" begin
+    workspace = _workspace_from_fixture()
+    _bind_repl_session(workspace)
+    @test_throws ErrorException SevenAigentREPL.todo_start!(99)
+end
+
+@testset "RA31: todo_done! marks the item as done" begin
+    workspace = _workspace_from_fixture()
+    _bind_repl_session(workspace)
+    id = SevenAigentREPL.todo_add!("Task to complete")
+    SevenAigentREPL.todo_start!(id)
+    SevenAigentREPL.todo_done!(id)
+    @test Main.todo[1, :status] == SevenAigentREPL.done
+end
+
+@testset "RA31: todo_done! throws if id does not exist" begin
+    workspace = _workspace_from_fixture()
+    _bind_repl_session(workspace)
+    @test_throws ErrorException SevenAigentREPL.todo_done!(99)
+end
+
+@testset "RA32: status() returns nothing and prints task summary" begin
+    workspace = _workspace_from_fixture()
+    _bind_repl_session(workspace)
+    id1 = SevenAigentREPL.todo_add!("Explore codebase")
+    id2 = SevenAigentREPL.todo_add!("Fix the bug")
+    SevenAigentREPL.todo_start!(id1)
+
+    output, result = _capture_stdout(() -> SevenAigentREPL.status())
+
+    @test result === nothing
+    @test occursin("in progress", output)
+    @test occursin("Explore codebase", output)
+    @test occursin("Fix the bug", output)
+end
+
+@testset "RA32: status() does not throw when Main.todo is not a DataFrame" begin
+    Core.eval(Main, :(todo = "not a dataframe"))
+    output, result = _capture_stdout(() -> SevenAigentREPL.status())
+    @test result === nothing
+    @test isempty(output)
+end
+
+@testset "RA32: status() does not modify Main.todo" begin
+    workspace = _workspace_from_fixture()
+    _bind_repl_session(workspace)
+    SevenAigentREPL.todo_add!("Task A")
+    SevenAigentREPL.todo_add!("Task B")
+    SevenAigentREPL.todo_start!(1)
+    snapshot = copy(Main.todo.status)
+
+    _capture_stdout(() -> SevenAigentREPL.status())
+
+    @test Main.todo.status == snapshot
+    @test nrow(Main.todo) == 2
 end
 
 @testset "RA14: non-leaf targets use the leftmost leaf descendant as the primary witness" begin

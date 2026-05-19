@@ -24,6 +24,7 @@ import Test.SessionListingSpec (sessionListingSpec)
 import Test.SessionLogSpec (sessionLogSpec)
 import Test.SessionResumeSpec (sessionResumeSpec)
 import Test.StartupSpec (startupSpec)
+import Test.SteeringSpec (steeringSpec)
 import Test.TemplateSpec (templateSpec)
 import Test.TimeoutSpec (timeoutSpec)
 import Test.ToolDefsSpec (toolDefsSpec)
@@ -48,6 +49,7 @@ main = launchAff_ $ runSpec [ consoleReporter ] do
   sessionLogSpec
   sessionResumeSpec
   startupSpec
+  steeringSpec
   templateSpec
   timeoutSpec
   toolDefsSpec

@@ -70,6 +70,7 @@ printed to the terminal for each file or directory created (e.g.
 | `.7aigent/system_prompt.md` | `config/system_prompt.md` |
 | `.7aigent/compaction_prompt.md` | `config/compaction_prompt.md` |
 | `.7aigent/summary_message.md` | `config/summary_message.md` |
+| `.7aigent/steering_message.md` | `config/steering_message.md` |
 | `.7aigent/startup.jl` | `config/startup.jl` |
 
 After placing any missing files, the runner proceeds to validate `config.toml`
@@ -482,9 +483,9 @@ after a user message.
 `.7aigent/`. Both use the same `{{keyword}}` substitution syntax as A21. The
 **compaction prompt template** is the prompt sent to the LLM requesting a
 summary; its supported keywords are `{{initial_messages}}`,
-`{{compacted_messages}}`, and `{{final_messages}}`. The **summary message
-template** produces the synthetic user message inserted at the compaction
-boundary; its only supported keyword is `{{summary}}`. An unrecognised
+`{{compacted_messages}}`, `{{final_messages}}`, and `{{julia_state}}`. The
+**summary message template** produces the synthetic user message inserted at the
+compaction boundary; its only supported keyword is `{{summary}}`. An unrecognised
 `{{keyword}}` in either template causes the runner to exit with an informative
 error (same rule as A23).
 
@@ -601,3 +602,50 @@ remaining arguments are then parsed as the command in the normal way (A40–A43)
 
 If no path argument is present the workspace defaults to the current working
 directory (preserving the existing behaviour described in A40–A43).
+
+---
+
+### Turn Steering
+
+**A45** — The workspace contains a steering message template at
+`.7aigent/steering_message.md`, placed by A2a if absent. The file uses the same
+`{{keyword}}` substitution syntax as A21. At session start, the runner reads and
+validates this template; any unrecognised `{{keyword}}` causes the runner to exit
+with an informative error (same rule as A23). The supported keywords are:
+
+| Keyword | Replaced with |
+|---|---|
+| `{{julia_state}}` | Formatted task-list status, resolved as in A47 |
+| `{{turn_tokens}}` | Total input tokens accumulated across all LLM calls in the current turn so far |
+| `{{turn_token_limit}}` | The `max_tokens_per_turn` value from config |
+| `{{compaction_threshold}}` | The `compaction_threshold` value from config |
+
+**A46** — In the ReACT loop, after executing a tool call and appending its result
+to the conversation history, if the accumulated input tokens for the current turn
+are greater than zero (i.e. at least one LLM call has already completed this
+turn), the runner:
+
+1. Resolves `{{julia_state}}` as described in A47.
+2. Substitutes all keywords from A45 into the steering message template.
+3. Appends the resulting text as a user-role message to the conversation passed
+   to the next LLM call only.
+
+The steering message is **not** added to the persistent `ConversationHistory` and
+is **not** written to the session log. It is regenerated fresh before each
+subsequent LLM call within the turn.
+
+**A47** — The `{{julia_state}}` substitution value — used in both the steering
+message (A45) and the compaction prompt (A35) — is obtained by executing the
+following Julia expression in the Jupyter kernel:
+
+```julia
+begin; local _ans = isdefined(Main, :ans) ? Main.ans : nothing; SevenAigentREPL.status(); _ans end
+```
+
+The runner captures the concatenated stdout output (iopub `stream` messages)
+produced during this execution as the substitution text. The expression is
+structured to restore `Main.ans` to its prior value after the call, so that the
+kernel's interactive state is unaffected. If the execution fails, produces no
+output, or does not complete within a short timeout, the substitution value is
+the empty string. This kernel call is not logged as a `tool_call` event and does
+not affect the conversation history.

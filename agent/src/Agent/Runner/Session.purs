@@ -55,6 +55,7 @@ import Agent.Programs.SessionListing (formatSessionListing, SessionMeta)
 import Agent.Programs.SessionResume (loadSessionForResume, ResumeResult(..))
 import Agent.Programs.Template (substituteTemplate)
 import Agent.Programs.ReactStep (reactStep, NextStep(..))
+import Agent.Programs.Steering (buildSteeringMessage)
 import Agent.Programs.Compaction (buildCompactionPlan)
 import Agent.Programs.Startup (interpretStartupExecution)
 import Agent.Programs.JuliaDefs (extractDefs)
@@ -349,8 +350,10 @@ startSession ws@(WorkspacePath wp) resumedFrom existingHistory resumeState promp
                 existingHistory
 
     -- Enter the main user ↔ LLM loop
+    steeringTmpl <- loadSteeringTemplate ws cleanupSandbox
+
     exitCode <- runUserLoop
-        ws sessionId config apiKey kernel initHistory Set.empty zeroLlmUsage prompt
+        ws sessionId config apiKey kernel steeringTmpl initHistory Set.empty zeroLlmUsage prompt
 
     -- Cleanup
     cleanupSandbox
@@ -475,12 +478,13 @@ runUserLoop
     -> Config
     -> String
     -> KernelHandle
+    -> String
     -> ConversationHistory
     -> Set HunkId
     -> LlmUsage
     -> Maybe String
     -> Aff Int
-runUserLoop ws sessionId config apiKey kernel history knownHunks usageTotals maybePrompt = do
+runUserLoop ws sessionId config apiKey kernel steeringTemplate history knownHunks usageTotals maybePrompt = do
     line <- case maybePrompt of
         Just p -> do
             liftEffect $ printLn ("\n> " <> p)
@@ -501,7 +505,7 @@ runUserLoop ws sessionId config apiKey kernel history knownHunks usageTotals may
 
         let history' = addMsg history (UserMessage { content: line })
         loopResult <-
-            runReactLoop ws sessionId config apiKey kernel history'
+            runReactLoop ws sessionId config apiKey kernel steeringTemplate history'
                 (TokenCount 0) knownHunks usageTotals
         liftEffect $ printLn (renderSessionTokenUsage loopResult.usageTotals)
 
@@ -510,13 +514,13 @@ runUserLoop ws sessionId config apiKey kernel history knownHunks usageTotals may
                 finishSession ws sessionId kernel loopResult.history SessionEndedError
                 pure 1
             Just _, Nothing ->
-                runUserLoop ws sessionId config apiKey kernel loopResult.history
+                runUserLoop ws sessionId config apiKey kernel steeringTemplate loopResult.history
                     loopResult.knownHunks loopResult.usageTotals Nothing
             Nothing, Just _ -> do
                 finishSession ws sessionId kernel loopResult.history SessionEndedPrompt
                 pure 0
             Nothing, Nothing ->
-                runUserLoop ws sessionId config apiKey kernel loopResult.history
+                runUserLoop ws sessionId config apiKey kernel steeringTemplate loopResult.history
                     loopResult.knownHunks loopResult.usageTotals Nothing
 
 -- ---------------------------------------------------------------------------
@@ -529,14 +533,25 @@ runReactLoop
     -> Config
     -> String
     -> KernelHandle
+    -> String
     -> ConversationHistory
     -> TokenCount
     -> Set HunkId
     -> LlmUsage
     -> Aff ReactLoopResult
-runReactLoop ws sessionId config apiKey kernel history accumulated knownHunks usageTotals = do
+runReactLoop ws sessionId config apiKey kernel steeringTemplate history accumulated knownHunks usageTotals = do
+    -- A46: inject ephemeral steering message after the first tool call
+    historyForLlm <-
+        if accumulated == TokenCount 0
+        then pure history
+        else do
+            juliaState <- getJuliaState kernel
+            let maybeSteer = buildSteeringMessage steeringTemplate accumulated config juliaState
+            pure $ case maybeSteer of
+                Nothing  -> history
+                Just msg -> addMsg history (UserMessage { content: msg })
     liftEffect $ printLn ""
-    llmR <- callLlm config apiKey history (liftEffect <<< printStr)
+    llmR <- callLlm config apiKey historyForLlm (liftEffect <<< printStr)
     liftEffect $ printLn ""
 
     case llmR of
@@ -581,6 +596,7 @@ runReactLoop ws sessionId config apiKey kernel history accumulated knownHunks us
                             sessionId
                             config
                             apiKey
+                            kernel
                             r.inputTokens
                             history'
                             usageTotals'
@@ -594,7 +610,7 @@ runReactLoop ws sessionId config apiKey kernel history accumulated knownHunks us
                     ExecuteTool tc -> do
                         Tuple history'' hunks' <-
                             doTool getTs ws sessionId config kernel history' tc knownHunks
-                        runReactLoop ws sessionId config apiKey kernel history''
+                        runReactLoop ws sessionId config apiKey kernel steeringTemplate history''
                             newAcc hunks' usageTotals'
 
                     ExecuteToolThenCompact tc -> do
@@ -605,10 +621,11 @@ runReactLoop ws sessionId config apiKey kernel history accumulated knownHunks us
                             sessionId
                             config
                             apiKey
+                            kernel
                             r.inputTokens
                             history''
                             usageTotals'
-                        runReactLoop ws sessionId config apiKey kernel compactR.history
+                        runReactLoop ws sessionId config apiKey kernel steeringTemplate compactR.history
                             (TokenCount 0) hunks' compactR.usageTotals
 
                     ExecuteToolThenEndTurn tc -> do
@@ -623,6 +640,53 @@ runReactLoop ws sessionId config apiKey kernel history accumulated knownHunks us
                             }
 
 -- ---------------------------------------------------------------------------
+-- A47: Julia state for steering and compaction
+-- ---------------------------------------------------------------------------
+
+-- | Execute `SevenAigentREPL.status()` in an ans-preserving wrapper and return
+-- | its stdout output. Returns empty string on any error.
+getJuliaState :: KernelHandle -> Aff String
+getJuliaState kernel = do
+    let code = String.joinWith "\n"
+            [ "begin"
+            , "  local _ans = isdefined(Main, :ans) ? Main.ans : nothing"
+            , "  SevenAigentREPL.status()"
+            , "  _ans"
+            , "end"
+            ]
+    result <- attempt $ executeCode kernel (RawJulia code) (const (pure unit))
+    pure $ case result of
+        Left  _      -> ""
+        Right output -> String.trim output
+
+-- | Load and validate the steering_message.md template.
+-- | Falls back to a built-in default if the file is absent.
+-- | Calls `cleanup` then exits if the template contains unknown keywords.
+loadSteeringTemplate :: WorkspacePath -> Aff Unit -> Aff String
+loadSteeringTemplate (WorkspacePath wp) cleanup = do
+    let defaultTmpl = String.joinWith "\n"
+            [ "**Turn status:** {{turn_tokens}}/{{turn_token_limit}} tokens"
+            , "(compaction threshold: {{compaction_threshold}})"
+            , "{{julia_state}}"
+            ]
+    tmplR <- attempt (FS.readTextFile UTF8 (wp <> "/.7aigent/steering_message.md"))
+    let tmpl = case tmplR of
+            Left  _ -> defaultTmpl
+            Right t -> t
+    let validateVars = Map.fromFoldable
+            [ Tuple "julia_state"          ""
+            , Tuple "turn_tokens"          ""
+            , Tuple "turn_token_limit"     ""
+            , Tuple "compaction_threshold" ""
+            ]
+    case substituteTemplate validateVars tmpl of
+        Left err -> do
+            liftEffect $ printErr ("Error in steering_message.md: " <> show err)
+            cleanup
+            exit1
+        Right _ -> pure tmpl
+
+-- ---------------------------------------------------------------------------
 -- Compaction (A33-A36)
 -- ---------------------------------------------------------------------------
 
@@ -631,11 +695,12 @@ doCompact
     -> SessionId
     -> Config
     -> String
+    -> KernelHandle
     -> TokenCount
     -> ConversationHistory
     -> LlmUsage
     -> Aff { history :: ConversationHistory, usageTotals :: LlmUsage }
-doCompact ws@(WorkspacePath wp) sessionId config apiKey requestTokensBefore history usageTotals = do
+doCompact ws@(WorkspacePath wp) sessionId config apiKey kernel requestTokensBefore history usageTotals = do
     compactTmplR <- attempt (FS.readTextFile UTF8 (wp <> "/.7aigent/compaction_prompt.md"))
     summaryTmplR <- attempt (FS.readTextFile UTF8 (wp <> "/.7aigent/summary_message.md"))
     let compactTmpl = case compactTmplR of
@@ -647,10 +712,12 @@ doCompact ws@(WorkspacePath wp) sessionId config apiKey requestTokensBefore hist
 
     let plan = buildCompactionPlan config.preserveInitial config.preserveFinal history
     let render msgs = String.joinWith "\n---\n" (map showMsg msgs)
+    juliaState <- getJuliaState kernel
     let promptVars = Map.fromFoldable
-            [ Tuple "initial_messages"  (render plan.initialBlock)
+            [ Tuple "initial_messages"   (render plan.initialBlock)
             , Tuple "compacted_messages" (render plan.compactedBlock)
-            , Tuple "final_messages"    (render plan.finalBlock)
+            , Tuple "final_messages"     (render plan.finalBlock)
+            , Tuple "julia_state"        juliaState
             ]
     let promptText = case substituteTemplate promptVars compactTmpl of
             Left _ -> render plan.compactedBlock

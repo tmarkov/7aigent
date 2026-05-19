@@ -1,5 +1,5 @@
 -- | Tests for template substitution: A21 (system prompt), A22 (placeholders),
--- | A23 (unknown keyword), A35 (compaction templates).
+-- | A23 (unknown keyword), A35 (compaction templates), A45 (steering keywords).
 module Test.TemplateSpec where
 
 import Prelude
@@ -151,6 +151,37 @@ templateSpec = do
       let subs = Map.singleton "summary" "text"
       let template = "{{summary}} and {{bad_keyword}}"
       substituteTemplate subs template `shouldSatisfy` isLeft
+
+  ---------------------------------------------------------------------------
+  -- A35: {{julia_state}} keyword in compaction templates
+  ---------------------------------------------------------------------------
+
+  describe "A35: {{julia_state}} in compaction prompt template" do
+
+    it "A35: {{julia_state}} substitutes task-state text in compaction prompt" do
+      let subs = Map.fromFoldable
+            [ Tuple "initial_messages" "[sys]"
+            , Tuple "compacted_messages" "[msgs]"
+            , Tuple "final_messages" "[last]"
+            , Tuple "julia_state" "[Tasks: 1 done · 1 in progress · 0 pending]"
+            ]
+      let template = "{{compacted_messages}}\n{{julia_state}}"
+      case substituteTemplate subs template of
+        Right result ->
+          String.contains (String.Pattern "[Tasks: 1 done") result `shouldEqual` true
+        Left err -> fail (show err)
+
+    it "A35: {{julia_state}} as empty string is valid" do
+      let subs = Map.fromFoldable
+            [ Tuple "initial_messages" ""
+            , Tuple "compacted_messages" ""
+            , Tuple "final_messages" ""
+            , Tuple "julia_state" ""
+            ]
+      let template = "{{compacted_messages}}{{julia_state}}"
+      case substituteTemplate subs template of
+        Right result -> result `shouldEqual` ""
+        Left err -> fail (show err)
 
   ---------------------------------------------------------------------------
   -- A21: malformed template syntax

@@ -53,11 +53,12 @@ stdenv.mkDerivation {
     #   packages/  - symlink to juliaDepot packages (source for compilation + @depot)
     #   artifacts/ - symlink to juliaDepot artifacts (JLL shared libraries)
     #   registries/- symlink to juliaDepot registries
-    mkdir -p $out/julia-depot
+    mkdir -p $out/julia-depot $out/share/sandbox
     ln -s ${juliaDepot}/depot/packages   $out/julia-depot/packages
     ln -s ${juliaDepot}/depot/artifacts  $out/julia-depot/artifacts
     ln -s ${juliaDepot}/depot/registries $out/julia-depot/registries
 
+    # Run the test suite against the source tree (uses $PWD for LOAD_PATH).
     JULIA_CPU_TARGET="x86-64-v3" \
       JULIA_DEPOT_PATH=$out/julia-depot \
       JULIA_PROJECT=${codeTree}/project \
@@ -66,21 +67,30 @@ stdenv.mkDerivation {
       JULIA_PKG_SERVER="" \
       ${juliaRaw}/bin/julia --startup-file=no test/runtests.jl
 
+    # Copy SevenAigentREPL to its final install location BEFORE the precompile
+    # step below.  The precompile cache embeds the absolute paths of every
+    # source file it touches; we must use $out paths here so that the cache
+    # remains valid at runtime (where the same $out path is on JULIA_LOAD_PATH).
+    cp startup.jl $out/share/sandbox/startup.jl
+    cp SevenAigentREPL.jl $out/share/sandbox/SevenAigentREPL.jl
+    cp -r SevenAigentREPL $out/share/sandbox/SevenAigentREPL
+
+    # Precompile SevenAigentREPL using the stable $out paths.
     JULIA_CPU_TARGET="x86-64-v3" \
       JULIA_DEPOT_PATH=$out/julia-depot \
       JULIA_PROJECT=${codeTree}/project \
-      JULIA_LOAD_PATH=$PWD:@:@v#.#:@stdlib \
+      JULIA_LOAD_PATH=$out/share/sandbox:@:@v#.#:@stdlib \
       JULIA_SSL_CA_ROOTS_PATH="${cacert}/etc/ssl/certs/ca-bundle.crt" \
       JULIA_PKG_SERVER="" \
       ${juliaRaw}/bin/julia --startup-file=no -e 'using CodeTree; using IJulia; using SevenAigentREPL'
   '';
 
   installPhase = ''
-    mkdir -p $out/bin $out/share/sandbox
+    mkdir -p $out/bin
 
-    # ── startup script ────────────────────────────────────────────────────
-    cp startup.jl $out/share/sandbox/startup.jl
-    cp SevenAigentREPL.jl $out/share/sandbox/SevenAigentREPL.jl
+    # startup.jl, SevenAigentREPL.jl, and SevenAigentREPL/ were already
+    # copied to $out/share/sandbox/ during buildPhase (before precompilation)
+    # so that the precompile cache records stable $out paths.
     cat ${runtimeClosure}/store-paths > $out/share/sandbox/runtime-store-paths
     echo $out >> $out/share/sandbox/runtime-store-paths
 

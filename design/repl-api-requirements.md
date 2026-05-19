@@ -243,3 +243,49 @@ max_readme_chars = 3000
 **RA27** — The `[summaries]` section is optional. When absent, the REPL API
 module uses bundled defaults for all fields in RA26. When present, any omitted
 field falls back to its bundled default.
+
+---
+
+### Module Structure
+
+**RA28** — The REPL API module source is organised as a directory of files
+included by a main module entry file. The display helpers, summarize
+functionality, and todo/status functionality each reside in a separate included
+file.
+
+---
+
+### Todo State
+
+**RA29** — The REPL API module defines the enumeration type `TodoStatus` with
+three values: `pending`, `in_progress`, and `done`. The type and all three values
+are exported from the module.
+
+**RA30** — `bind!(workspace, db)` unconditionally initialises a variable named
+`todo` in the `Main` module as an empty `DataFrame` with three columns: `id` of
+element type `Int`, `description` of element type `String`, and `status` of
+element type `TodoStatus`. Any existing value of `Main.todo` is overwritten. On
+session resumption, the persisted value of `todo` is subsequently restored by the
+deserialization step (A31 step 4) after `startup.jl` has run.
+
+**RA31** — The REPL API module exports the following helper functions for
+managing the todo list:
+
+- `todo_add!(description::String)::Int` — appends a new row to `Main.todo` with
+  the given description, status `pending`, and an `id` equal to one more than the
+  current maximum `id` in the table (or `1` if the table is empty). Returns the
+  new id.
+- `todo_start!(id::Int)::Nothing` — finds the row with the given `id` and sets
+  its `status` to `in_progress`. Throws an `ErrorException` if no row with that
+  `id` exists, or if any other row already has status `in_progress`.
+- `todo_done!(id::Int)::Nothing` — finds the row with the given `id` and sets
+  its `status` to `done`. Throws an `ErrorException` if no row with that `id`
+  exists.
+
+**RA32** — The REPL API module exports a `status()::Nothing` function. When
+called, it reads the current value of `Main.todo` and prints a concise summary of
+the task list state to stdout, then returns `nothing`. If `Main.todo` is not
+defined or is not a `DataFrame`, `status()` prints nothing and returns normally.
+`status()` must not throw under any circumstances and must not modify any state.
+The specific output format is at the discretion of the implementation; it is
+consumed as the `{{julia_state}}` substitution value by the runner (A47).

@@ -28,24 +28,26 @@ configSpec = do
 
   describe "A2a: config file placement" do
 
-    it "A2a: places all 5 default files and the state dir into an empty workspace" do
+    it "A2a: places all 6 default files and the state dir into an empty workspace" do
       withWorkspace \ws -> do
         notices <- placeDefaultConfigs ws
-        -- All five workspace config files should now exist
+        -- All six workspace config files should now exist
         configExists    <- workspaceFileExists ws ".7aigent/config.toml"
         sysPromptExists <- workspaceFileExists ws ".7aigent/system_prompt.md"
         compPromptExists <- workspaceFileExists ws ".7aigent/compaction_prompt.md"
         summaryExists   <- workspaceFileExists ws ".7aigent/summary_message.md"
         startupExists   <- workspaceFileExists ws ".7aigent/startup.jl"
+        steeringExists  <- workspaceFileExists ws ".7aigent/steering_message.md"
         stateExists     <- workspaceFileExists ws ".7aigent/state/"
         configExists `shouldEqual` true
         sysPromptExists `shouldEqual` true
         compPromptExists `shouldEqual` true
         summaryExists `shouldEqual` true
         startupExists `shouldEqual` true
+        steeringExists `shouldEqual` true
         stateExists `shouldEqual` true
-        -- Should have 6 notices (five files plus the state dir)
-        (length notices) `shouldEqual` 6
+        -- Should have 7 notices (six files plus the state dir)
+        (length notices) `shouldEqual` 7
         configContent <- readWorkspaceFile ws ".7aigent/config.toml"
         systemPrompt <- readWorkspaceFile ws ".7aigent/system_prompt.md"
         startupContent <- readWorkspaceFile ws ".7aigent/startup.jl"
@@ -62,8 +64,8 @@ configSpec = do
         -- config.toml should keep custom content
         content <- readWorkspaceFile ws ".7aigent/config.toml"
         content `shouldEqual` "custom = true"
-        -- Only 5 items were placed (config.toml was skipped, state was created)
-        (length notices) `shouldEqual` 5
+        -- Only 6 items were placed (config.toml was skipped, state was created)
+        (length notices) `shouldEqual` 6
 
     it "A2a: each notice names the placed file" do
       withWorkspace \ws -> do

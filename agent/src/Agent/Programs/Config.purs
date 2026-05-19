@@ -116,7 +116,7 @@ placeDefaultConfigs (WorkspacePath wp) = do
             FS.mkdir' stateDir { recursive: true, mode: permsAll }
             pure (Just "Created .7aigent/state")
     let fileNames = [ "config.toml", "system_prompt.md", "compaction_prompt.md"
-                    , "summary_message.md", "startup.jl" ]
+                    , "summary_message.md", "startup.jl", "steering_message.md" ]
     let mSrcDir = toMaybe (lookupEnvSync "AGENT_CONFIG_DIR")
     results <- traverse
         (\name -> do
