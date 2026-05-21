@@ -62,6 +62,47 @@ _raw(x::LineNumber) = x.val
 _raw(::Missing)     = missing
 _raw(x)             = x  # passthrough for values already raw
 
+# ---------------------------------------------------------------------------
+# SourceText — the return type of get_source().
+#
+# SourceText <: AbstractString so it is transparent to all string operations
+# (comparisons, slicing, join, etc.).  Its only difference from a plain String
+# is the show method: instead of Julia's silent "⋯ N bytes ⋯" ellipsis, a
+# long SourceText displays an explicit "…(N more chars)" suffix so the model
+# always knows whether it has seen the full content.
+# ---------------------------------------------------------------------------
+
+const SOURCE_TEXT_DISPLAY_CHARS = 200
+
+struct SourceText <: AbstractString
+    _text::String
+end
+
+# AbstractString interface — delegate everything to the wrapped string.
+Base.ncodeunits(s::SourceText)          = ncodeunits(s._text)
+Base.codeunit(::SourceText)             = UInt8
+Base.codeunit(s::SourceText, i::Int)    = codeunit(s._text, i)
+Base.isvalid(s::SourceText, i::Int)     = isvalid(s._text, i)
+Base.iterate(s::SourceText)             = iterate(s._text)
+Base.iterate(s::SourceText, i::Int)     = iterate(s._text, i)
+
+# Explicit String conversion.
+Base.String(s::SourceText) = s._text
+
+# Custom display: show the first SOURCE_TEXT_DISPLAY_CHARS characters quoted,
+# followed by an explicit count of omitted characters.  Short strings use the
+# normal string repr.
+function Base.show(io::IO, s::SourceText)
+    n = length(s._text)
+    if n <= SOURCE_TEXT_DISPLAY_CHARS
+        show(io, s._text)
+    else
+        omitted = n - SOURCE_TEXT_DISPLAY_CHARS
+        print(io, repr(first(s._text, SOURCE_TEXT_DISPLAY_CHARS)))
+        print(io, " … (", omitted, " more chars)")
+    end
+end
+
 """Build a child node id by appending `:suffix` to `parent`."""
 function child_node_id(parent::NodeId, suffix::AbstractString)::NodeId
     return NodeId(parent.val * ":" * String(suffix))

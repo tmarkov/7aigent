@@ -24,7 +24,7 @@ include("load.jl")
 include("update_source.jl")
 
 # Public API exports
-export CodeTreeDB, load, reload, get_source, update_source
+export CodeTreeDB, load, reload, get_source, update_source, SourceText
 export LanguageConfig, LanguageEntry, NodeMapping, DEFAULT_CONFIG, merge_config
 export classify_node, language_for_file
 export discover_files

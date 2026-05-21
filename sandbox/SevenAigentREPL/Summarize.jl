@@ -450,7 +450,7 @@ function _leaf_descendants(tree_index::TreeIndex, node_id::String)::Vector{Strin
     return leaves
 end
 
-function _truncate_text(text::String, max_chars::Int)::String
+function _truncate_text(text::AbstractString, max_chars::Int)::String
     length(text) <= max_chars && return text
     return text[1:max_chars] * "..."
 end
