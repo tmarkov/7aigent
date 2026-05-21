@@ -112,18 +112,18 @@ export const connectKernelImpl = (kernelJsonPath) => (summaryServiceConfig) => (
     try {
       requestJson = JSON.stringify(content.data || {});
     } catch (err) {
-      pendingSummaryReplies.set(commId, Promise.resolve({ error: "Summary request payload was not serializable: " + err.message }));
+      _resolvePendingSummary(commId, Promise.resolve({ error: "Summary request payload was not serializable: " + err.message }));
       return true;
     }
 
     onLlmQuery("summary")(requestJson)();
 
     if (!summaryServiceConfig?.apiEndpoint || !summaryServiceConfig?.apiKey || !summaryServiceConfig?.model) {
-      pendingSummaryReplies.set(commId, Promise.resolve({ error: "Summary service is not configured." }));
+      _resolvePendingSummary(commId, Promise.resolve({ error: "Summary service is not configured." }));
       return true;
     }
 
-    pendingSummaryReplies.set(
+    _resolvePendingSummary(
       commId,
       new Promise((resolve) => {
         summarizeEvidence(
@@ -139,6 +139,19 @@ export const connectKernelImpl = (kernelJsonPath) => (summaryServiceConfig) => (
     return true;
   }
 
+  // Resolve the deferred entry for commId with a settled promise.
+  // If handleInputRequest registered a deferred resolver first (race: stdin
+  // before iopub), call it.  Otherwise write the settled promise directly so
+  // handleInputRequest can pick it up with a simple Map lookup.
+  function _resolvePendingSummary(commId, settledPromise) {
+    const existing = pendingSummaryReplies.get(commId);
+    if (existing?._deferred) {
+      existing._deferred(settledPromise);
+    } else {
+      pendingSummaryReplies.set(commId, settledPromise);
+    }
+  }
+
   function encodeSummaryReplyValue(result) {
     if (result?.error != null) {
       return "error\t" + Buffer.from(String(result.error), "utf8").toString("base64");
@@ -152,14 +165,20 @@ export const connectKernelImpl = (kernelJsonPath) => (summaryServiceConfig) => (
     return lines.join("\n");
   }
 
-  async function waitForPendingSummary(commId) {
-    const deadline = Date.now() + 1000;
-    while (Date.now() < deadline) {
-      const pendingReply = pendingSummaryReplies.get(commId);
-      if (pendingReply) return pendingReply;
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    return null;
+  // Return a Promise that resolves to the pending summary reply for commId.
+  // If comm_open has already been processed, the map holds a settled Promise
+  // and we return it directly.  If comm_open has not yet arrived (stdin raced
+  // ahead of iopub), we register a deferred placeholder so _resolvePendingSummary
+  // can call our resolver when it does arrive.
+  function _awaitPendingSummary(commId) {
+    const existing = pendingSummaryReplies.get(commId);
+    if (existing && !existing._deferred) return existing;
+
+    // Not yet present (or only a deferred shell): create a deferred promise.
+    return new Promise((resolveOuter) => {
+      const placeholder = { _deferred: (settledPromise) => resolveOuter(settledPromise) };
+      pendingSummaryReplies.set(commId, placeholder);
+    });
   }
 
   async function handleInputRequest(parsed) {
@@ -170,15 +189,16 @@ export const connectKernelImpl = (kernelJsonPath) => (summaryServiceConfig) => (
 
     if (prompt.startsWith(SUMMARY_INPUT_PROMPT_PREFIX)) {
       const commId = prompt.slice(SUMMARY_INPUT_PROMPT_PREFIX.length);
-      const pendingReply = await waitForPendingSummary(commId);
-      if (pendingReply == null) {
-        value = encodeSummaryReplyValue({ error: "Summary request state was missing for comm '" + commId + "'." });
-      } else {
-        try {
-          value = encodeSummaryReplyValue(await pendingReply);
-        } finally {
-          pendingSummaryReplies.delete(commId);
-        }
+      const timeoutMs = 30000;
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Summary LLM call timed out after 30s")), timeoutMs));
+      try {
+        const pendingReply = await Promise.race([_awaitPendingSummary(commId), timeoutPromise]);
+        value = encodeSummaryReplyValue(await Promise.race([pendingReply, timeoutPromise]));
+      } catch (err) {
+        value = encodeSummaryReplyValue({ error: String(err.message || err) });
+      } finally {
+        pendingSummaryReplies.delete(commId);
       }
     }
 
