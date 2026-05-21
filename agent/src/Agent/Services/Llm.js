@@ -289,26 +289,37 @@ export function summarizeEvidence(endpoint, apiKey, model, requestJson, onError,
     },
   ];
 
-  streamChatCompletion(
-    endpoint,
-    apiKey,
-    {
-      model,
-      messages,
-      stream: true,
-      stream_options: { include_usage: true },
-    },
-    () => {},
-    (error) => onError(error.message),
-    (result) => {
-      try {
-        const payload = extractJsonValue(result.content);
-        onComplete(normalizeSummaryPayload(payload, targetIds));
-      } catch (e) {
-        onError(e.message);
-      }
-    },
-  );
+  const MAX_ATTEMPTS = 3;
+
+  function attempt(attemptsLeft) {
+    streamChatCompletion(
+      endpoint,
+      apiKey,
+      {
+        model,
+        messages,
+        stream: true,
+        stream_options: { include_usage: true },
+        response_format: { type: "json_object" },
+      },
+      () => {},
+      (error) => onError(error.message),
+      (result) => {
+        try {
+          const payload = extractJsonValue(result.content);
+          onComplete(normalizeSummaryPayload(payload, targetIds));
+        } catch (e) {
+          if (attemptsLeft > 1) {
+            attempt(attemptsLeft - 1);
+          } else {
+            onError(e.message);
+          }
+        }
+      },
+    );
+  }
+
+  attempt(MAX_ATTEMPTS);
 }
 
 // ---------------------------------------------------------------------------
