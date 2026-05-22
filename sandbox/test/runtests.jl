@@ -500,25 +500,40 @@ end
     @test occursin("Fix the bug", output)
 end
 
-@testset "RA32: status() does not throw when Main.todo is not a DataFrame" begin
+@testset "RA32: status() does not throw when Main.todo is overwritten with non-DataFrame" begin
+    workspace = _workspace_from_fixture()
+    _bind_repl_session(workspace)
+    id1 = SevenAigentREPL.todo_add!("Task to track")
+    # Simulate the model accidentally overwriting Main.todo with a non-DataFrame
     Core.eval(Main, :(todo = "not a dataframe"))
+    # status() should still work because it reads from the session, not Main.todo
+    output, result = _capture_stdout(() -> SevenAigentREPL.status())
+    @test result === nothing
+    @test occursin("Task to track", output)
+end
+
+@testset "RA32: status() is silent when no session is active" begin
+    SevenAigentREPL._session_ref[] = nothing
     output, result = _capture_stdout(() -> SevenAigentREPL.status())
     @test result === nothing
     @test isempty(output)
 end
 
-@testset "RA32: status() does not modify Main.todo" begin
+@testset "RA32: todo mutations sync Main.todo for display; status() reads session state" begin
     workspace = _workspace_from_fixture()
     _bind_repl_session(workspace)
     SevenAigentREPL.todo_add!("Task A")
     SevenAigentREPL.todo_add!("Task B")
     SevenAigentREPL.todo_start!(1)
-    snapshot = copy(Main.todo.status)
 
-    _capture_stdout(() -> SevenAigentREPL.status())
-
-    @test Main.todo.status == snapshot
+    # After mutations, Main.todo should reflect the current state (for REPL display)
+    @test Main.todo isa DataFrame
     @test nrow(Main.todo) == 2
+
+    # Even if Main.todo is overwritten, status() still reads from the session
+    Core.eval(Main, :(todo = nothing))
+    output, _ = _capture_stdout(() -> SevenAigentREPL.status())
+    @test occursin("Task A", output)
 end
 
 @testset "RA14: non-leaf targets use the leftmost leaf descendant as the primary witness" begin

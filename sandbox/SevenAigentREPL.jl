@@ -49,6 +49,7 @@ mutable struct ReplSession
     workspace::String
     db::CodeTreeDB
     summary_config::SummaryConfig
+    todo_df::DataFrame
 end
 
 struct TreeIndex
@@ -68,20 +69,20 @@ include("SevenAigentREPL/Todo.jl")
     bind!(workspace, db) -> Nothing
 
 Initialise the REPL session for the given `workspace` and `db`.
-Resets `Main.todo` to an empty DataFrame and clears any custom summary transport.
+Resets the todo list and clears any custom summary transport.
 """
 function bind!(workspace::AbstractString, db::CodeTreeDB)::Nothing
     workspace_path = abspath(String(workspace))
     cfg = _load_summary_config(workspace_path)
+    df = DataFrame(id=Int[], description=String[], status=TodoStatus[])
     _session_ref[] = ReplSession(
         workspace_path,
         db,
         cfg,
+        df,
     )
     _summary_transport_ref[] = nothing
-    let df = DataFrame(id=Int[], description=String[], status=TodoStatus[])
-        Core.eval(Main, :(todo = $df))
-    end
+    Core.eval(Main, :(todo = $df))
     return nothing
 end
 

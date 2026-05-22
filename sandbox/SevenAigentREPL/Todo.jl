@@ -8,13 +8,14 @@ Represents the lifecycle status of a todo item.
 """
     todo_add!(description) -> Int
 
-Append a new `pending` item to `Main.todo` and return its id.
+Append a new `pending` item to the session todo list and return its id.
 The id is `max(existing ids) + 1`, or `1` if the table is empty.
 """
 function todo_add!(description::String)::Int
-    df = Main.todo::DataFrame
+    df = _require_session().todo_df
     next_id = isempty(df.id) ? 1 : maximum(df.id) + 1
     push!(df, (id = next_id, description = description, status = pending))
+    Core.eval(Main, :(todo = $df))
     return next_id
 end
 
@@ -26,7 +27,7 @@ Throws `ErrorException` if another item is already `in_progress`, or if `id`
 is not found.
 """
 function todo_start!(id::Int)::Nothing
-    df = Main.todo::DataFrame
+    df = _require_session().todo_df
     idx = findfirst(==(id), df.id)
     isnothing(idx) && throw(ErrorException("Todo id $id not found."))
     conflict = findfirst(==(in_progress), df.status)
@@ -35,6 +36,7 @@ function todo_start!(id::Int)::Nothing
         throw(ErrorException("Cannot start todo $id: item $(df[conflict,:id]) (\"$name\") is already in progress."))
     end
     df[idx, :status] = in_progress
+    Core.eval(Main, :(todo = $df))
     return nothing
 end
 
@@ -45,10 +47,11 @@ Mark the item with the given `id` as `done`.
 Throws `ErrorException` if `id` is not found.
 """
 function todo_done!(id::Int)::Nothing
-    df = Main.todo::DataFrame
+    df = _require_session().todo_df
     idx = findfirst(==(id), df.id)
     isnothing(idx) && throw(ErrorException("Todo id $id not found."))
     df[idx, :status] = done
+    Core.eval(Main, :(todo = $df))
     return nothing
 end
 
@@ -56,16 +59,17 @@ end
     status() -> Nothing
 
 Print a brief summary of the current todo state to stdout.
-Never throws; no-ops silently if `Main.todo` is not a valid DataFrame.
+Never throws; no-ops silently if no session is active.
 """
 function status()::Nothing
-    if !isdefined(Main, :todo) || !(Main.todo isa DataFrame)
+    session = _session_ref[]
+    if isnothing(session)
         return nothing
     end
-    df = Main.todo
-    n_done       = count(==(done),        df.status)
+    df = session.todo_df
+    n_done        = count(==(done),        df.status)
     n_in_progress = count(==(in_progress), df.status)
-    n_pending    = count(==(pending),     df.status)
+    n_pending     = count(==(pending),     df.status)
     println("[Tasks: $n_done done · $n_in_progress in progress · $n_pending pending]")
     for row in eachrow(df)
         row.status == in_progress && println("→ In progress: \"$(row.description)\"")
