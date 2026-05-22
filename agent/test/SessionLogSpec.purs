@@ -17,6 +17,8 @@ import Test.Helpers.LogEvent
   ( sessionStartEvent
   , systemPromptEvent
   , userMessageEvent
+  , reflectionUserMessageEvent
+  , reflectionEvent
   , llmResponseEvent
   , llmQueryEvent
   , sessionEndEvent
@@ -281,6 +283,90 @@ sessionLogSpec = do
     it "A27: exactly 120 chars → returned verbatim" do
       let msg = String.joinWith "" (Array.replicate 120 "a")
       sessionDescription msg `shouldEqual` msg
+
+  ---------------------------------------------------------------------------
+  -- A26 + A48: reflection event encode/decode
+  ---------------------------------------------------------------------------
+
+  describe "A26 + A48: reflection event round-trip" do
+
+    it "A48: reflection event encodes with type = reflection" do
+      let event = reflectionEvent
+            { timestamp: "t1"
+            , turnIndex: 2
+            , autoTurnsTaken: 1
+            , complete: false
+            , feedback: Just "Try a different approach."
+            }
+      let json = encodeLogEvent event
+      String.contains (String.Pattern "\"reflection\"") json `shouldEqual` true
+
+    it "A48: reflection event round-trips correctly (complete=true, no feedback)" do
+      let event = reflectionEvent
+            { timestamp: "t1"
+            , turnIndex: 3
+            , autoTurnsTaken: 2
+            , complete: true
+            , feedback: Nothing
+            }
+      case decodeLogEvent (encodeLogEvent event) of
+        Right (EvtReflection r) -> do
+          r.turnIndex `shouldEqual` 3
+          r.autoTurnsTaken `shouldEqual` 2
+          r.complete `shouldEqual` true
+          r.feedback `shouldEqual` Nothing
+        Right _ -> fail "Expected EvtReflection event"
+        Left err -> fail ("Decode failed: " <> show err)
+
+    it "A48: reflection event round-trips correctly (complete=false, with feedback)" do
+      let event = reflectionEvent
+            { timestamp: "t1"
+            , turnIndex: 1
+            , autoTurnsTaken: 0
+            , complete: false
+            , feedback: Just "Run the failing tests."
+            }
+      case decodeLogEvent (encodeLogEvent event) of
+        Right (EvtReflection r) -> do
+          r.complete `shouldEqual` false
+          r.feedback `shouldEqual` Just "Run the failing tests."
+        Right _ -> fail "Expected EvtReflection event"
+        Left err -> fail ("Decode failed: " <> show err)
+
+  ---------------------------------------------------------------------------
+  -- A26 + A50: user_message source field encode/decode
+  ---------------------------------------------------------------------------
+
+  describe "A26 + A50: user_message source field" do
+
+    it "A50: user_message from human omits source field in encoded JSON" do
+      let event = userMessageEvent "t1" "hello from user"
+      let json = encodeLogEvent event
+      String.contains (String.Pattern "\"source\"") json `shouldEqual` false
+
+    it "A50: user_message with source=reflection includes source field in JSON" do
+      let event = reflectionUserMessageEvent "t1" "feedback text"
+      let json = encodeLogEvent event
+      String.contains (String.Pattern "\"source\"") json `shouldEqual` true
+      String.contains (String.Pattern "\"reflection\"") json `shouldEqual` true
+
+    it "A50: user_message with source round-trips correctly" do
+      let event = reflectionUserMessageEvent "t1" "feedback text"
+      case decodeLogEvent (encodeLogEvent event) of
+        Right (EvtUserMessage r) -> do
+          r.content `shouldEqual` "feedback text"
+          r.source `shouldEqual` Just "reflection"
+        Right _ -> fail "Expected EvtUserMessage event"
+        Left err -> fail ("Decode failed: " <> show err)
+
+    it "A50: decoding old user_message JSON without source field → source is Nothing" do
+      let oldJson = "{\"type\":\"user_message\",\"timestamp\":\"t1\",\"content\":\"legacy\"}"
+      case decodeLogEvent oldJson of
+        Right (EvtUserMessage r) -> do
+          r.content `shouldEqual` "legacy"
+          r.source `shouldEqual` Nothing
+        Right _ -> fail "Expected EvtUserMessage event"
+        Left err -> fail ("Decode failed: " <> show err)
 
   where
   containsPattern :: String -> Maybe String -> Boolean

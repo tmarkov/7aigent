@@ -147,6 +147,7 @@ type Config =
   , compactionThreshold :: TokenCount
   , preserveInitial :: TokenCount
   , preserveFinal :: TokenCount
+  , maxTurnsPerRound :: Int
   }
 
 -- | A tool call issued by the LLM within a conversation turn.
@@ -216,7 +217,7 @@ data LogEvent
       , resumedFrom :: Maybe SessionId
       }
   | EvtSystemPrompt { timestamp :: Timestamp, content :: String }
-  | EvtUserMessage { timestamp :: Timestamp, content :: String }
+  | EvtUserMessage { timestamp :: Timestamp, content :: String, source :: Maybe String }
   | EvtLlmResponse { timestamp :: Timestamp, content :: String }
   | EvtLlmQuery
       { timestamp :: Timestamp
@@ -261,6 +262,13 @@ data LogEvent
       , partialOutput :: String
       }
   | TimeoutResponse { timestamp :: Timestamp, interrupt :: Boolean }
+  | EvtReflection
+      { timestamp :: Timestamp
+      , turnIndex :: Int
+      , autoTurnsTaken :: Int
+      , complete :: Boolean
+      , feedback :: Maybe String
+      }
 
 instance Show LogEvent where
   show (SessionStart r) = "(SessionStart " <> show r.id <> ")"
@@ -279,6 +287,8 @@ instance Show LogEvent where
     "(TimeoutCheck " <> show r.elapsedSeconds <> ")"
   show (TimeoutResponse r) =
     "(TimeoutResponse " <> show r.interrupt <> ")"
+  show (EvtReflection r) =
+    "(EvtReflection turn=" <> show r.turnIndex <> " complete=" <> show r.complete <> ")"
 
 -- | Errors that can occur during runner operation.
 data AppError

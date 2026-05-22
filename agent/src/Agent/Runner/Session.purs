@@ -501,7 +501,7 @@ runUserLoop ws sessionId config apiKey kernel steeringTemplate history knownHunk
     else do
 
         ts <- getTs
-        writeLogEvent ws sessionId (EvtUserMessage { timestamp: ts, content: line })
+        writeLogEvent ws sessionId (EvtUserMessage { timestamp: ts, content: line, source: Nothing })
 
         let history' = addMsg history (UserMessage { content: line })
         loopResult <-
@@ -546,7 +546,7 @@ runReactLoop ws sessionId config apiKey kernel steeringTemplate history accumula
         then pure history
         else do
             juliaState <- getJuliaState kernel
-            let maybeSteer = buildSteeringMessage steeringTemplate accumulated config juliaState
+            let maybeSteer = buildSteeringMessage steeringTemplate accumulated config juliaState 1 0
             pure $ case maybeSteer of
                 Nothing  -> history
                 Just msg -> addMsg history (UserMessage { content: msg })

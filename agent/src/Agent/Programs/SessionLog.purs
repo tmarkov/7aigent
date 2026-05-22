@@ -112,11 +112,15 @@ encodeLogEventJson (EvtSystemPrompt r) =
         , Tuple "content" (J.fromString r.content)
         ]
 encodeLogEventJson (EvtUserMessage r) =
-    mkObj
-        [ Tuple "type" (J.fromString "user_message")
-        , Tuple "timestamp" (J.fromString (renderTimestamp r.timestamp))
-        , Tuple "content" (J.fromString r.content)
-        ]
+    let base =
+            [ Tuple "type" (J.fromString "user_message")
+            , Tuple "timestamp" (J.fromString (renderTimestamp r.timestamp))
+            , Tuple "content" (J.fromString r.content)
+            ]
+        withSource = case r.source of
+            Nothing  -> base
+            Just src -> base <> [ Tuple "source" (J.fromString src) ]
+    in mkObj withSource
 encodeLogEventJson (EvtLlmResponse r) =
     mkObj
         [ Tuple "type" (J.fromString "llm_response")
@@ -196,6 +200,18 @@ encodeLogEventJson (TimeoutResponse r) =
         , Tuple "timestamp" (J.fromString (renderTimestamp r.timestamp))
         , Tuple "interrupt" (J.fromBoolean r.interrupt)
         ]
+encodeLogEventJson (EvtReflection r) =
+    let base =
+            [ Tuple "type" (J.fromString "reflection")
+            , Tuple "timestamp" (J.fromString (renderTimestamp r.timestamp))
+            , Tuple "turn_index" (J.fromNumber (Int.toNumber r.turnIndex))
+            , Tuple "auto_turns_taken" (J.fromNumber (Int.toNumber r.autoTurnsTaken))
+            , Tuple "complete" (J.fromBoolean r.complete)
+            ]
+        withFeedback = case r.feedback of
+            Nothing -> base
+            Just fb -> base <> [ Tuple "feedback" (J.fromString fb) ]
+    in mkObj withFeedback
 
 mkObj :: Array (Tuple String J.Json) -> J.Json
 mkObj = J.fromObject <<< FO.fromFoldable
@@ -239,7 +255,10 @@ decodeLogEventObj obj = do
         "user_message" -> do
             ts <- getStr obj "timestamp"
             content <- getStr obj "content"
-            Right $ EvtUserMessage { timestamp: Timestamp ts, content }
+            let src = case FO.lookup "source" obj of
+                    Just v -> J.toString v
+                    Nothing -> Nothing
+            Right $ EvtUserMessage { timestamp: Timestamp ts, content, source: src }
         "llm_response" -> do
             ts <- getStr obj "timestamp"
             content <- getStr obj "content"
@@ -333,6 +352,21 @@ decodeLogEventObj obj = do
             ts <- getStr obj "timestamp"
             interrupt <- getBool obj "interrupt"
             Right $ TimeoutResponse { timestamp: Timestamp ts, interrupt }
+        "reflection" -> do
+            ts <- getStr obj "timestamp"
+            turnIdx <- getNum obj "turn_index"
+            autoTurns <- getNum obj "auto_turns_taken"
+            complete <- getBool obj "complete"
+            let fb = case FO.lookup "feedback" obj of
+                    Just v -> J.toString v
+                    Nothing -> Nothing
+            Right $ EvtReflection
+                { timestamp: Timestamp ts
+                , turnIndex: numToInt turnIdx
+                , autoTurnsTaken: numToInt autoTurns
+                , complete
+                , feedback: fb
+                }
         other ->
             Left (JsonDecodeError ("Unknown event type: " <> other))
 

@@ -28,16 +28,17 @@ configSpec = do
 
   describe "A2a: config file placement" do
 
-    it "A2a: places all 6 default files and the state dir into an empty workspace" do
+    it "A2a: places all 7 default files and the state dir into an empty workspace" do
       withWorkspace \ws -> do
         notices <- placeDefaultConfigs ws
-        -- All six workspace config files should now exist
+        -- All seven workspace config files should now exist
         configExists    <- workspaceFileExists ws ".7aigent/config.toml"
         sysPromptExists <- workspaceFileExists ws ".7aigent/system_prompt.md"
         compPromptExists <- workspaceFileExists ws ".7aigent/compaction_prompt.md"
         summaryExists   <- workspaceFileExists ws ".7aigent/summary_message.md"
         startupExists   <- workspaceFileExists ws ".7aigent/startup.jl"
         steeringExists  <- workspaceFileExists ws ".7aigent/steering_message.md"
+        reflectionExists <- workspaceFileExists ws ".7aigent/reflection_prompt.md"
         stateExists     <- workspaceFileExists ws ".7aigent/state/"
         configExists `shouldEqual` true
         sysPromptExists `shouldEqual` true
@@ -45,9 +46,10 @@ configSpec = do
         summaryExists `shouldEqual` true
         startupExists `shouldEqual` true
         steeringExists `shouldEqual` true
+        reflectionExists `shouldEqual` true
         stateExists `shouldEqual` true
-        -- Should have 7 notices (six files plus the state dir)
-        (length notices) `shouldEqual` 7
+        -- Should have 8 notices (seven files plus the state dir)
+        (length notices) `shouldEqual` 8
         configContent <- readWorkspaceFile ws ".7aigent/config.toml"
         systemPrompt <- readWorkspaceFile ws ".7aigent/system_prompt.md"
         startupContent <- readWorkspaceFile ws ".7aigent/startup.jl"
@@ -64,8 +66,8 @@ configSpec = do
         -- config.toml should keep custom content
         content <- readWorkspaceFile ws ".7aigent/config.toml"
         content `shouldEqual` "custom = true"
-        -- Only 6 items were placed (config.toml was skipped, state was created)
-        (length notices) `shouldEqual` 6
+        -- Only 7 items were placed (config.toml was skipped, state was created)
+        (length notices) `shouldEqual` 7
 
     it "A2a: each notice names the placed file" do
       withWorkspace \ws -> do
@@ -93,6 +95,7 @@ configSpec = do
             , "compaction_threshold   = 150000"
             , "preserve_initial       = 20000"
             , "preserve_final         = 40000"
+            , "max_turns_per_round    = 5"
             ]
       case parseConfig toml of
         Right config -> do
@@ -114,6 +117,7 @@ configSpec = do
             , "compaction_threshold   = 80000"
             , "preserve_initial       = 10000"
             , "preserve_final         = 30000"
+            , "max_turns_per_round    = 3"
             ]
       case parseConfig toml of
         Right config -> do
@@ -121,6 +125,23 @@ configSpec = do
           config.outputThresholdChars `shouldEqual` 15000
         Left err ->
           fail ("Expected successful parse, got error: " <> show err)
+
+    it "A37: parses max_turns_per_round into maxTurnsPerRound" do
+      let toml = String.joinWith "\n"
+            [ "api_endpoint           = \"https://api.example.com/v1\""
+            , "model                  = \"test-model\""
+            , "api_key_env            = \"TEST_API_KEY\""
+            , "output_threshold_chars = 20000"
+            , "max_api_retries        = 3"
+            , "max_tokens_per_turn    = 200000"
+            , "compaction_threshold   = 150000"
+            , "preserve_initial       = 20000"
+            , "preserve_final         = 40000"
+            , "max_turns_per_round    = 7"
+            ]
+      case parseConfig toml of
+        Right config -> config.maxTurnsPerRound `shouldEqual` 7
+        Left err -> fail ("Expected successful parse, got error: " <> show err)
 
   ---------------------------------------------------------------------------
   -- A38: API key from environment
@@ -163,6 +184,7 @@ configSpec = do
             , "compaction_threshold   = 150000"
             , "preserve_initial       = 20000"
             , "preserve_final         = 40000"
+            , "max_turns_per_round    = 5"
             ]
       parseConfig toml `shouldSatisfy` isLeft
 
@@ -176,6 +198,7 @@ configSpec = do
             , "compaction_threshold   = 150000"
             , "preserve_initial       = 20000"
             , "preserve_final         = 40000"
+            , "max_turns_per_round    = 5"
             ]
       parseConfig toml `shouldSatisfy` isLeft
 
@@ -192,6 +215,20 @@ configSpec = do
 
     it "A39: error when config is completely empty" do
       parseConfig "" `shouldSatisfy` isLeft
+
+    it "A39: error when max_turns_per_round is missing" do
+      let toml = String.joinWith "\n"
+            [ "api_endpoint           = \"https://api.example.com/v1\""
+            , "model                  = \"test-model\""
+            , "api_key_env            = \"TEST_API_KEY\""
+            , "output_threshold_chars = 20000"
+            , "max_api_retries        = 3"
+            , "max_tokens_per_turn    = 200000"
+            , "compaction_threshold   = 150000"
+            , "preserve_initial       = 20000"
+            , "preserve_final         = 40000"
+            ]
+      parseConfig toml `shouldSatisfy` isLeft
 
   ---------------------------------------------------------------------------
   -- A2a: placeholder value rejection
@@ -210,6 +247,7 @@ configSpec = do
             , "compaction_threshold   = 150000"
             , "preserve_initial       = 20000"
             , "preserve_final         = 40000"
+            , "max_turns_per_round    = 5"
             ]
       parseConfig toml `shouldSatisfy` isLeft
 
@@ -224,6 +262,7 @@ configSpec = do
             , "compaction_threshold   = 150000"
             , "preserve_initial       = 20000"
             , "preserve_final         = 40000"
+            , "max_turns_per_round    = 5"
             ]
       parseConfig toml `shouldSatisfy` isLeft
 
@@ -238,6 +277,7 @@ configSpec = do
             , "compaction_threshold   = 150000"
             , "preserve_initial       = 20000"
             , "preserve_final         = 40000"
+            , "max_turns_per_round    = 5"
             ]
       case parseConfig toml of
         Left err ->

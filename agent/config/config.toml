@@ -12,6 +12,7 @@ max_tokens_per_turn    = 200000
 compaction_threshold   = 150000
 preserve_initial       = 20000
 preserve_final         = 40000
+max_turns_per_round    = 5
 
 [summaries]
 max_targets_per_batch = 16

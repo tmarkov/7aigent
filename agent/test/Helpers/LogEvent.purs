@@ -3,6 +3,8 @@ module Test.Helpers.LogEvent
   ( sessionStartEvent
   , systemPromptEvent
   , userMessageEvent
+  , reflectionUserMessageEvent
+  , reflectionEvent
   , llmResponseEvent
   , llmQueryEvent
   , toolCallEvent
@@ -20,7 +22,7 @@ module Test.Helpers.LogEvent
 import Prelude
 
 import Data.Array as Array
-import Data.Maybe (Maybe)
+import Data.Maybe (Maybe(..))
 import Data.String as String
 import Agent.Types
   ( LogEvent(..)
@@ -50,7 +52,29 @@ systemPromptEvent timestamp content =
 
 userMessageEvent :: String -> String -> LogEvent
 userMessageEvent timestamp content =
-  EvtUserMessage { timestamp: Timestamp timestamp, content }
+  EvtUserMessage { timestamp: Timestamp timestamp, content, source: Nothing }
+
+-- | Build a user message injected by the reflection mechanism.
+reflectionUserMessageEvent :: String -> String -> LogEvent
+reflectionUserMessageEvent timestamp content =
+  EvtUserMessage { timestamp: Timestamp timestamp, content, source: Just "reflection" }
+
+-- | Build a reflection log event (A48–A50).
+reflectionEvent
+  :: { timestamp :: String
+     , turnIndex :: Int
+     , autoTurnsTaken :: Int
+     , complete :: Boolean
+     , feedback :: Maybe String
+     }
+  -> LogEvent
+reflectionEvent r = EvtReflection
+  { timestamp: Timestamp r.timestamp
+  , turnIndex: r.turnIndex
+  , autoTurnsTaken: r.autoTurnsTaken
+  , complete: r.complete
+  , feedback: r.feedback
+  }
 
 llmResponseEvent :: String -> String -> LogEvent
 llmResponseEvent timestamp content =

@@ -46,6 +46,7 @@ foreign import parseTomlPure
        , compaction_threshold :: Number
        , preserve_initial :: Number
        , preserve_final :: Number
+       , max_turns_per_round :: Number
        }
 
 foreign import lookupEnvImpl :: String -> Effect (Nullable String)
@@ -82,6 +83,7 @@ parseConfig input
                     , compactionThreshold: TokenCount (Int.round r.compaction_threshold)
                     , preserveInitial: TokenCount (Int.round r.preserve_initial)
                     , preserveFinal: TokenCount (Int.round r.preserve_final)
+                    , maxTurnsPerRound: Int.round r.max_turns_per_round
                     }
 
 ----------------------------------------------------------------------------
@@ -116,7 +118,8 @@ placeDefaultConfigs (WorkspacePath wp) = do
             FS.mkdir' stateDir { recursive: true, mode: permsAll }
             pure (Just "Created .7aigent/state")
     let fileNames = [ "config.toml", "system_prompt.md", "compaction_prompt.md"
-                    , "summary_message.md", "startup.jl", "steering_message.md" ]
+                    , "summary_message.md", "startup.jl", "steering_message.md"
+                    , "reflection_prompt.md" ]
     let mSrcDir = toMaybe (lookupEnvSync "AGENT_CONFIG_DIR")
     results <- traverse
         (\name -> do

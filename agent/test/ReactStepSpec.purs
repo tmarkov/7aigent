@@ -34,6 +34,7 @@ testConfig =
   , compactionThreshold: TokenCount 150000
   , preserveInitial: TokenCount 20000
   , preserveFinal: TokenCount 40000
+  , maxTurnsPerRound: 5
   }
 
 reactStepSpec :: Spec Unit

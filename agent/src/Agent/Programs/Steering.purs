@@ -21,8 +21,10 @@ buildSteeringMessage
     -> TokenCount               -- accumulated input tokens this turn
     -> Config
     -> String                   -- output of SevenAigentREPL.status()
+    -> Int                      -- current turn index (1-based) within the round
+    -> Int                      -- number of auto turns taken so far in the round
     -> Maybe String
-buildSteeringMessage template (TokenCount acc) config juliaState =
+buildSteeringMessage template (TokenCount acc) config juliaState turnIndex autoTurnsTaken =
     if acc == 0
     then Nothing
     else
@@ -33,6 +35,9 @@ buildSteeringMessage template (TokenCount acc) config juliaState =
                 , Tuple "turn_tokens"          (show acc)
                 , Tuple "turn_token_limit"     (show limit)
                 , Tuple "compaction_threshold" (show compact)
+                , Tuple "turn_index"           (show turnIndex)
+                , Tuple "max_turns_per_round"  (show config.maxTurnsPerRound)
+                , Tuple "auto_turns_taken"     (show autoTurnsTaken)
                 ]
         in case substituteTemplate vars template of
             Left  _   -> Nothing

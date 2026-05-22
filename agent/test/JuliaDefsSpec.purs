@@ -3,6 +3,7 @@ module Test.JuliaDefsSpec where
 
 import Prelude
 
+import Data.Maybe (Maybe(..))
 import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (shouldEqual, shouldSatisfy)
 
@@ -135,7 +136,7 @@ juliaDefsSpec = do
 
     it "A29: ignores non-tool_call events" do
       let events =
-            [ EvtUserMessage { timestamp: Timestamp "t1", content: "hello" }
+            [ EvtUserMessage { timestamp: Timestamp "t1", content: "hello", source: Nothing }
             , EvtToolCall { timestamp: Timestamp "t2", toolName: JuliaRepl, toolCallId: ToolCallId "tc1", input: "struct S end" }
             , EvtLlmResponse { timestamp: Timestamp "t3", content: "done" }
             ]

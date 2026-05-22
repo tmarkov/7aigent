@@ -13,7 +13,8 @@ export const parseTomlPure = (input) => {
             "api_endpoint", "model", "api_key_env",
             "output_threshold_chars", "max_api_retries",
             "max_tokens_per_turn", "compaction_threshold",
-            "preserve_initial", "preserve_final"
+            "preserve_initial", "preserve_final",
+            "max_turns_per_round"
         ];
         // Check for missing required fields
         for (const f of fields) {
@@ -24,7 +25,8 @@ export const parseTomlPure = (input) => {
                     api_endpoint: "", model: "", api_key_env: "",
                     output_threshold_chars: 0, max_api_retries: 0,
                     max_tokens_per_turn: 0, compaction_threshold: 0,
-                    preserve_initial: 0, preserve_final: 0
+                    preserve_initial: 0, preserve_final: 0,
+                    max_turns_per_round: 0
                 };
             }
         }
@@ -39,7 +41,8 @@ export const parseTomlPure = (input) => {
             max_tokens_per_turn: Number(obj.max_tokens_per_turn),
             compaction_threshold: Number(obj.compaction_threshold),
             preserve_initial: Number(obj.preserve_initial),
-            preserve_final: Number(obj.preserve_final)
+            preserve_final: Number(obj.preserve_final),
+            max_turns_per_round: Number(obj.max_turns_per_round)
         };
     } catch (e) {
         return {
@@ -48,7 +51,8 @@ export const parseTomlPure = (input) => {
             api_endpoint: "", model: "", api_key_env: "",
             output_threshold_chars: 0, max_api_retries: 0,
             max_tokens_per_turn: 0, compaction_threshold: 0,
-            preserve_initial: 0, preserve_final: 0
+            preserve_initial: 0, preserve_final: 0,
+            max_turns_per_round: 0
         };
     }
 };
