@@ -8,6 +8,11 @@ available tools, executes tool calls, feeds results back, and repeats until
 the LLM produces a response with no tool call — at which point it prompts
 the user for new input.
 
+Work is organised into **rounds**, each consisting of one or more **turns**.
+A turn is a single ReACT loop iteration (LLM call → tool calls → repeat until
+no tool call). A round ends when a reflection step (A48–A50) determines the
+task is complete, or when the per-round turn limit is reached.
+
 The runner is written in **PureScript** (compiled to Node.js).
 
 ---
@@ -31,7 +36,8 @@ The runner connects to the sandbox over the Jupyter messaging protocol
 
 ### ReACT Loop
 
-**A1** — The runner starts with a user message, then enters a ReACT loop:
+**A1** — The runner starts with a user message, then begins a round (A48).
+Within a round, it executes turns. Each turn proceeds as follows:
 
 1. Send the current conversation history to the LLM.
 2. Stream the LLM response to the terminal.
@@ -39,10 +45,12 @@ The runner connects to the sandbox over the Jupyter messaging protocol
    conversation history. Then check if the total input tokens for this turn
    exceed `compaction_threshold`; if so, compact the conversation (A33–A36).
    Then go to step 1.
-4. If the response contains no tool call, check if the total input tokens for
-   this turn exceed `compaction_threshold`; if so, compact the conversation
-   (A33–A36). Then prompt the user for new input and go to step 1 with the
-   new message appended.
+4. If the response contains no tool call, the turn ends. Proceed to the
+   reflection step (A48).
+
+`max_tokens_per_turn` exhaustion (A37a) is a second turn-end condition;
+after the current step completes cleanly, the turn ends and the reflection
+step (A48) is triggered in the same way as step 4.
 
 **A2** — On startup, before the first user prompt, the runner:
 
@@ -71,6 +79,7 @@ printed to the terminal for each file or directory created (e.g.
 | `.7aigent/compaction_prompt.md` | `config/compaction_prompt.md` |
 | `.7aigent/summary_message.md` | `config/summary_message.md` |
 | `.7aigent/steering_message.md` | `config/steering_message.md` |
+| `.7aigent/reflection_prompt.md` | `config/reflection_prompt.md` |
 | `.7aigent/startup.jl` | `config/startup.jl` |
 
 After placing any missing files, the runner proceeds to validate `config.toml`
@@ -329,13 +338,14 @@ concurrently.
 | Event type         | Fields                                                                                     |
 |--------------------|--------------------------------------------------------------------------------------------|
 | `session_start`    | `id`, `timestamp`, `workspace`, `model`, `resumed_from` (id or null)                      |
-| `user_message`     | `timestamp`, `content`                                                                     |
+| `user_message`     | `timestamp`, `content`, `source` (`"user"` or `"reflection"`; omitted for human input)    |
 | `llm_response`     | `timestamp`, `content`                                                                     |
 | `llm_query`        | `timestamp`, `purpose`, `input`                                                            |
 | `tool_call`        | `timestamp`, `tool`, `tool_call_id`, `input`                                               |
 | `tool_result`      | `timestamp`, `tool_call_id`, `output`, `truncated` (bool)                                  |
 | `token_usage`      | `timestamp`, `input_tokens`, `cached_input_tokens`, `output_tokens`, `total_session_input_tokens`, `total_session_cached_input_tokens`, `total_session_output_tokens` |
 | `compaction`       | `timestamp`, `summary`, `initial_message_count`, `compacted_message_count`, `final_message_count`, `total_tokens_before` |
+| `reflection`       | `timestamp`, `turn_index` (1-based turn number within current round), `auto_turns_taken` (rounds auto-continued so far this session), `complete` (bool), `feedback` (string or null) |
 | `timeout_check`    | `timestamp`, `elapsed_seconds`, `partial_output`                                           |
 | `timeout_response` | `timestamp`, `interrupt` (bool)                                                            |
 | `escape`           | `timestamp`                                                                                |
@@ -344,9 +354,9 @@ concurrently.
 
 A `token_usage` event is written after every LLM API call that includes token
 counts — including the main conversation, compaction calls, timeout-check
-calls, and REPL-summary calls. The session totals accumulate across all such
-calls. After each turn, the runner also displays the cumulative session token
-counts on the terminal.
+calls, reflection calls, and REPL-summary calls. The session totals accumulate
+across all such calls. After each turn, the runner also displays the cumulative
+session token counts on the terminal.
 
 A `llm_query` event is written whenever the runner issues an internal LLM query
 on behalf of the Julia REPL rather than the main conversation loop. The event's
@@ -507,15 +517,19 @@ api_key_env            = "OPENROUTER_API_KEY"
 output_threshold_chars = 20000
 max_api_retries        = 3
 max_tokens_per_turn    = 200000
+max_turns_per_round    = 5
 compaction_threshold   = 150000
 preserve_initial       = 20000
 preserve_final         = 40000
 ```
 
 `compaction_threshold`, `preserve_initial`, and `preserve_final` are token
-counts governing context compaction (A33–A36). Additional sections may be
-present for other layers, including the REPL API; runner configuration parsing
-must ignore unknown sections and keys that it does not own.
+counts governing context compaction (A33–A36). `max_turns_per_round` is the
+maximum number of turns the runner will auto-continue within a single round
+before surfacing to the user regardless of reflection result (A48). Additional
+sections may be present for other layers, including the REPL API; runner
+configuration parsing must ignore unknown sections and keys that it does not
+own.
 
 **A37a** — `max_tokens_per_turn` is the maximum total input tokens the runner
 may consume across all LLM calls within a single turn (the ReACT loop between
@@ -524,8 +538,8 @@ the API after each LLM call in the turn. When the accumulated total exceeds
 `max_tokens_per_turn`, the runner completes the current step normally — the
 LLM response is added to conversation history and any tool calls it contains
 are executed — and then ends the turn after that step completes. The runner
-notifies the user that the token limit was reached and re-prompts for new
-input. The next turn begins from the updated conversation history.
+notifies the user that the token limit was reached and proceeds to the
+reflection step (A48) as if the turn had ended normally.
 
 **A38** — `api_key_env` names an environment variable that holds the API
 key. The runner reads the key from the environment at startup and exits with
@@ -576,15 +590,16 @@ transport on the specified port. The server exposes a single tool:
 }
 ```
 
-Each invocation of `run` starts a complete, independent ReACT loop in its
-own sandbox. The invocation is logged as a full session (A24–A26). While the
-ReACT loop is running, the server sends MCP progress notifications at regular
-intervals (every 15 seconds) so that MCP clients with idle-connection timeouts
-can detect that the session is still active. The tool returns the text of the
-final LLM message — the first response in that loop that contains no tool
-call. If the ReACT loop fails (sandbox crash, API errors exhausted, context
-too large, etc.), the tool returns an error string describing the failure
-instead of an LLM message.
+Each invocation of `run` starts a complete, independent round (up to
+`max_turns_per_round` turns, A48) in its own sandbox. The invocation is logged
+as a full session (A24–A26). While the round is running, the server sends MCP
+progress notifications at regular intervals (every 15 seconds) so that MCP
+clients with idle-connection timeouts can detect that the session is still
+active. The tool returns the text of the final LLM message of the last turn —
+the turn whose reflection reports `complete: true`, or the final turn if
+`max_turns_per_round` is reached. If the round fails (sandbox crash, API
+errors exhausted, context too large, etc.), the tool returns an error string
+describing the failure instead of an LLM message.
 
 ### Workspace Directory Override
 
@@ -619,6 +634,9 @@ with an informative error (same rule as A23). The supported keywords are:
 | `{{turn_tokens}}` | Total input tokens accumulated across all LLM calls in the current turn so far |
 | `{{turn_token_limit}}` | The `max_tokens_per_turn` value from config |
 | `{{compaction_threshold}}` | The `compaction_threshold` value from config |
+| `{{turn_index}}` | 1-based index of the current turn within the current round |
+| `{{max_turns_per_round}}` | The `max_turns_per_round` value from config |
+| `{{auto_turns_taken}}` | Number of turns started from reflection feedback (rather than direct user input) so far this session |
 
 **A46** — In the ReACT loop, after executing a tool call and appending its result
 to the conversation history, if the accumulated input tokens for the current turn
@@ -649,3 +667,67 @@ kernel's interactive state is unaffected. If the execution fails, produces no
 output, or does not complete within a short timeout, the substitution value is
 the empty string. This kernel call is not logged as a `tool_call` event and does
 not affect the conversation history.
+
+---
+
+### Rounds and Reflection
+
+**A48 — Round lifecycle**
+
+A round begins when the runner receives a user message (or when a reflection
+feedback message is injected per A50). The round consists of successive turns
+executed as described in A1. After each turn ends, the runner performs a
+reflection call (A49). The round ends when either:
+
+- the reflection returns `complete: true`, or
+- the number of turns completed in the round equals `max_turns_per_round`.
+
+On round end the runner prompts the user for new input (interactive mode) or
+exits (non-interactive mode and MCP).
+
+**A49 — Reflection call**
+
+At the end of each turn the runner issues a reflection LLM call. The call is
+constructed as follows:
+
+1. The current full `ConversationHistory` is used as context.
+2. The reflection prompt template (`.7aigent/reflection_prompt.md`) is
+   substituted and appended as a user-role message to the call only — it is
+   **not** persisted to `ConversationHistory` and is **not** written to the
+   session log as a `user_message`.
+
+The template uses the same `{{keyword}}` substitution syntax as A21. The
+runner reads and validates this template at session start; any unrecognised
+`{{keyword}}` causes the runner to exit with an informative error (same rule
+as A23). The supported keywords are:
+
+| Keyword | Replaced with |
+|---|---|
+| `{{turn_index}}` | 1-based turn number within the current round |
+| `{{auto_turns_taken}}` | Number of turns started from reflection feedback so far this session |
+| `{{julia_state}}` | Resolved as in A47 |
+
+The call uses JSON response mode; streaming is not required. A `reflection`
+event is written to the session log (A26). A `token_usage` event is written
+for the call. Reflection token counts are included in session totals but do
+**not** accumulate toward the current turn's `max_tokens_per_turn` counter.
+
+**A50 — Reflection result handling**
+
+The reflection response must be a JSON object with a boolean field `complete`
+and an optional string field `feedback`. Any response that cannot be parsed as
+valid JSON, or that lacks the `complete` field, is treated as:
+
+```json
+{"complete": false, "feedback": "Reflection call failed to return valid JSON."}
+```
+
+Based on the parsed result:
+
+- If `complete` is `true`: the round ends (A48).
+- If `complete` is `false` and the number of turns completed in this round is
+  less than `max_turns_per_round`: `feedback` is injected into
+  `ConversationHistory` as a user-role message with `source: "reflection"` and
+  written to the log as a `user_message` event. A new turn begins.
+- If `complete` is `false` and `max_turns_per_round` turns have been used: the
+  round ends (A48) regardless of feedback.
