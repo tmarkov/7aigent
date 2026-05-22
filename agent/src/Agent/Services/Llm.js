@@ -94,6 +94,10 @@ function looksLikeTimeout(err) {
     /timeout|timed out/i.test(err?.message || "");
 }
 
+// Hard wall-clock timeout for LLM requests, regardless of socket activity.
+// This catches hung streaming responses that keep the socket "active" indefinitely.
+const LLM_WALL_CLOCK_TIMEOUT_MS = 90000;
+
 function streamChatCompletion(endpoint, apiKey, body, onToken, onError, onComplete) {
   let url;
   try {
@@ -125,11 +129,13 @@ function streamChatCompletion(endpoint, apiKey, body, onToken, onError, onComple
     const fail = (error) => {
       if (settled) return;
       settled = true;
+      clearTimeout(wallClockTimer);
       onError(error);
     };
     const succeed = (result) => {
       if (settled) return;
       settled = true;
+      clearTimeout(wallClockTimer);
       onComplete(result);
     };
 
@@ -195,14 +201,25 @@ function streamChatCompletion(endpoint, apiKey, body, onToken, onError, onComple
 
     res.on("error", (err) =>
       fail(mkError(err.message, null, looksLikeTimeout(err))));
+
+    // Handles the case where req.destroy() is called after the response has started
+    // streaming — Node.js emits 'close' on the response stream, not 'error'.
+    res.on("close", () =>
+      fail(mkError("Response stream closed before completion", null, false)));
   });
 
   req.setTimeout(30000, () => {
     req.destroy(new Error("Network timeout"));
   });
 
-  req.on("error", (err) =>
-    onError(mkError(err.message, null, looksLikeTimeout(err))));
+  const wallClockTimer = setTimeout(() => {
+    req.destroy(new Error("LLM request timed out (wall clock)"));
+  }, LLM_WALL_CLOCK_TIMEOUT_MS);
+
+  req.on("error", (err) => {
+    clearTimeout(wallClockTimer);
+    onError(mkError(err.message, null, looksLikeTimeout(err)));
+  });
   req.write(payload);
   req.end();
 }
