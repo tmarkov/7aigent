@@ -1,4 +1,19 @@
-{ lib, stdenv, buildNpmPackage, nodejs, purescript, spago, zeromq, pkg-config, makeWrapper, git, esbuild, julia, cacert, sandbox }:
+{
+  lib,
+  stdenv,
+  buildNpmPackage,
+  nodejs,
+  purescript,
+  spago,
+  zeromq,
+  pkg-config,
+  makeWrapper,
+  git,
+  esbuild,
+  julia,
+  cacert,
+  sandbox,
+}:
 
 let
   # Fixed-output derivation: runs `spago install` to populate the spago
@@ -11,13 +26,19 @@ let
   #   3. Paste the "got:" hash here
   spagoDeps = stdenv.mkDerivation {
     name = "7aigent-spago-deps";
-    src  = ./.;
+    src = ./.;
 
-    nativeBuildInputs = [ spago purescript git nodejs cacert ];
+    nativeBuildInputs = [
+      spago
+      purescript
+      git
+      nodejs
+      cacert
+    ];
 
     outputHashAlgo = "sha256";
     outputHashMode = "recursive";
-    outputHash     = "sha256-c1ubex6Wdv+G0rWsTrJgT5dGBT2sbm+mPug7GIuJsq4=";
+    outputHash = "sha256-DpVGUCx6U1lCLAhHDZVZCvBGNbSbyx/ECSs4KA1zmP8=";
 
     buildPhase = ''
       export HOME=$TMPDIR
@@ -36,9 +57,9 @@ let
 
 in
 buildNpmPackage {
-  pname   = "7aigent";
+  pname = "7aigent";
   version = "0.0.1";
-  src     = ./.;
+  src = ./.;
 
   # Update with: nix run nixpkgs#prefetch-npm-deps agent/package-lock.json
   npmDepsHash = "sha256-ITLCHv0KOcnLIn79HpXuhvDfo2pc9kskIrfasM08y08=";
@@ -47,8 +68,17 @@ buildNpmPackage {
   # purescript + spago: compile PureScript source and run tests.
   # makeWrapper: wrap the installed Node.js entry point.
   # julia: needed at test time for A29/A30 (isPureDefinitionImpl spawns julia).
-  nativeBuildInputs = [ purescript spago nodejs pkg-config makeWrapper git esbuild julia ];
-  buildInputs       = [ zeromq ];
+  nativeBuildInputs = [
+    purescript
+    spago
+    nodejs
+    pkg-config
+    makeWrapper
+    git
+    esbuild
+    julia
+  ];
+  buildInputs = [ zeromq ];
 
   buildPhase = ''
     runHook preBuild

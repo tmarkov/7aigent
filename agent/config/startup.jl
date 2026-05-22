@@ -1,3 +1,6 @@
+# Custom startup for 7aigent self-test workspace.
+# Adds codebase-specific hints on top of default behaviour.
+
 using CodeTree
 using DataFrames, DataFramesMeta
 using SevenAigentREPL
@@ -29,4 +32,13 @@ Base.show(io::IO, ::MIME"text/markdown", df::CodeTree.CodeSymbols) =
 
 global db = CodeTree.load("/workspace")
 SevenAigentREPL.bind!("/workspace", db)
-db.code
+
+println("db ready: $(nrow(db.code)) nodes. Do not call load() — db persists across all tool calls.")
+println()
+
+if isfile("AGENTS.md")
+    println("AGENTS.md present — read it first (system prompt step 1).")
+    println()
+end
+
+@subset(db.code, :depth .== 1)[!, [:id, :name, :n_children, :summary]]
