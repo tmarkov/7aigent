@@ -11,7 +11,7 @@ import Node.Process as Process
 import Data.Maybe (fromMaybe)
 import Agent.Types (WorkspacePath(..), SessionId(..))
 import Agent.Programs.CLI (parseCLIArgs, CLIMode(..))
-import Agent.Runner.Session (runNewSession, runResumeSession, runListSessions)
+import Agent.Runner.Session (runNewSession, runResumeSession, runListSessions, runMcpServer)
 import Agent.Services.Terminal (printErr)
 
 main :: Effect Unit
@@ -29,8 +29,7 @@ main = launchAff_ do
             runListSessions ws
         ResumeSession sid ->
             runResumeSession ws sid parsed.prompt
-        McpServer _port -> do
-            liftEffect $ printErr "MCP server mode is not yet implemented."
-            liftEffect $ Process.exit' 1
+        McpServer port ->
+            runMcpServer ws port
         StartSession ->
             runNewSession ws parsed.prompt

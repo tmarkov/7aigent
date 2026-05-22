@@ -5,6 +5,7 @@ module Agent.Runner.Session
     ( runNewSession
     , runResumeSession
     , runListSessions
+    , runMcpServer
     ) where
 
 import Prelude
@@ -35,6 +36,7 @@ import Agent.Types
     , SessionEndReason(..)
     , ModelName(..)
     , TokenCount(..)
+    , Port(..)
     , HunkId(..)
     , RawJulia(..)
     , Config
@@ -60,6 +62,12 @@ import Agent.Programs.Compaction (buildCompactionPlan)
 import Agent.Programs.Startup (interpretStartupExecution)
 import Agent.Programs.JuliaDefs (extractDefs)
 import Agent.Programs.Reflection (ReflectionResult, parseReflectionResponse)
+import Agent.Programs.Mcp
+    ( McpRunResult(..)
+    , extractFinalMessage
+    , handleMcpResult
+    , startMcpServerImpl
+    )
 import Agent.Programs.ReplSerialize
     ( buildRestoreSnippet
     , buildSerializationSnippet
@@ -974,3 +982,151 @@ finishSession ws@(WorkspacePath wp) sessionId kernel _history reason = do
 
     ts <- getTs
     writeLogEvent ws sessionId (SessionEnd { timestamp: ts, reason })
+
+-- ---------------------------------------------------------------------------
+-- A43: MCP server
+-- ---------------------------------------------------------------------------
+
+-- | Run a single MCP session: spawn sandbox, run one full round, return result.
+-- | Used as the tool-call handler for the `run` tool (A43).
+runMcpSession
+    :: WorkspacePath
+    -> Config
+    -> String
+    -> String
+    -> Aff McpRunResult
+runMcpSession ws@(WorkspacePath wp) config apiKey message = do
+    let summaryApiEndpoint = let (ApiEndpoint e) = config.apiEndpoint in e
+    let summaryModel       = let (ModelName m)   = config.model       in m
+
+    sessionId <- allocateSessionId ws
+
+    sbxR <- spawnSandbox ws
+    sandbox <- case sbxR of
+        Left err ->
+            pure (Left (McpFailure ("Sandbox error: " <> show err)))
+        Right s -> pure (Right s)
+
+    case sandbox of
+        Left e -> pure e
+        Right s -> do
+            let cleanup = liftEffect s.kill
+
+            kernelR <- connectKernel s.kernelJsonPath
+                { apiEndpoint: summaryApiEndpoint
+                , apiKey
+                , model: summaryModel
+                }
+                (\purpose input -> launchAff_ do
+                    ts' <- getTs
+                    writeLogEvent ws sessionId (EvtLlmQuery
+                        { timestamp: ts'
+                        , purpose
+                        , input
+                        }))
+            case kernelR of
+                Left err -> do
+                    cleanup
+                    pure (McpFailure ("Kernel error: " <> show err))
+                Right kernel -> do
+                    let cleanupAll = do
+                            liftEffect $ closeKernel kernel
+                            liftEffect s.kill
+
+                    startupResult <- runStartupSequence ws kernel
+                    startupOutput <- case startupResult of
+                        Left _       -> do
+                            cleanupAll
+                            pure (Left (McpFailure "Startup failed"))
+                        Right output -> pure (Right output)
+
+                    case startupOutput of
+                        Left e -> pure e
+                        Right output -> do
+                            systemPromptR <- buildSystemPrompt ws config output
+                            case systemPromptR of
+                                Left _ -> do
+                                    cleanupAll
+                                    pure (McpFailure "Could not build system prompt")
+                                Right systemPrompt -> do
+                                    ts <- getTs
+                                    writeLogEvent ws sessionId (SessionStart
+                                        { id: sessionId
+                                        , timestamp: ts
+                                        , workspace: wp
+                                        , model: config.model
+                                        , resumedFrom: Nothing
+                                        })
+                                    writeLogEvent ws sessionId (EvtSystemPrompt
+                                        { timestamp: ts
+                                        , content: systemPrompt
+                                        })
+                                    writeLogEvent ws sessionId (EvtUserMessage
+                                        { timestamp: ts
+                                        , content: message
+                                        , source: Nothing
+                                        })
+
+                                    steeringTmpl   <- loadSteeringTemplate   ws cleanupAll
+                                    reflectionTmpl <- loadReflectionTemplate ws cleanupAll
+
+                                    let initHistory =
+                                            addMsg
+                                                (addMsg (ConversationHistory { messages: [] })
+                                                    (SystemMessage { content: systemPrompt }))
+                                                (UserMessage { content: message })
+
+                                    roundResult <- runRound ws sessionId config apiKey kernel
+                                        steeringTmpl reflectionTmpl initHistory
+                                        Set.empty zeroLlmUsage 0
+
+                                    finishSession ws sessionId kernel
+                                        roundResult.history SessionEndedPrompt
+                                    cleanupAll
+
+                                    pure $ case roundResult.error of
+                                        Just err ->
+                                            McpFailure ("Session error: " <> show err)
+                                        Nothing ->
+                                            case extractFinalMessage roundResult.history of
+                                                Nothing  ->
+                                                    McpFailure "Agent produced no response"
+                                                Just msg ->
+                                                    McpSuccess msg
+
+-- | Start the MCP HTTP server on the given port (A43).
+-- | Reads config once at startup; each tool invocation spawns its own sandbox.
+runMcpServer :: WorkspacePath -> Port -> Aff Unit
+runMcpServer ws (Port port) = do
+    let (WorkspacePath wp) = ws
+    placed <- placeDefaultConfigs ws
+    liftEffect $ for_ placed printLn
+
+    configR <- attempt (FS.readTextFile UTF8 (wp <> "/.7aigent/config.toml"))
+    config <- case configR of
+        Left _ -> do
+            liftEffect $ printErr "Error: .7aigent/config.toml not found."
+            exit1
+        Right text -> case parseConfig text of
+            Left (PlaceholderValue msg) -> do
+                liftEffect $ printErr ("Error: " <> msg)
+                exit1
+            Left err -> do
+                liftEffect $ printErr ("Config error: " <> show err)
+                exit1
+            Right c -> pure c
+
+    apiKeyR <- readApiKey config.apiKeyEnv
+    apiKey <- case apiKeyR of
+        Left err -> do
+            liftEffect $ printErr ("Error: " <> show err)
+            exit1
+        Right k -> pure k
+
+    liftEffect $ startMcpServerImpl port \message done ->
+        launchAff_ do
+            result <- attempt (runMcpSession ws config apiKey message)
+            let ffiResult = case result of
+                    Left err -> handleMcpResult (McpFailure ("Unexpected error: " <> show err))
+                    Right r  -> handleMcpResult r
+            liftEffect $ done ffiResult

@@ -3,17 +3,23 @@ module Test.McpSpec where
 
 import Prelude
 
+import Data.Maybe (Maybe(..))
 import Data.String as String
 import Test.Spec (Spec, describe, it)
-import Test.Spec.Assertions (shouldEqual, shouldSatisfy, fail)
+import Test.Spec.Assertions (shouldEqual, shouldSatisfy)
 
 import Agent.Programs.Mcp
   ( buildMcpRunConfig
   , handleMcpResult
   , isProgressDue
+  , extractFinalMessage
   , McpRunResult(..)
   )
-import Agent.Types (AppError(..))
+import Agent.Types
+  ( ConversationHistory(..)
+  , Message(..)
+  , TokenCount(..)
+  )
 
 mcpSpec :: Spec Unit
 mcpSpec = do
@@ -85,7 +91,56 @@ mcpSpec = do
       isProgressDue 60 `shouldEqual` true
       isProgressDue 44 `shouldEqual` false
 
+  ---------------------------------------------------------------------------
+  -- A43: extractFinalMessage (returns text of the last assistant turn)
+  ---------------------------------------------------------------------------
+
+  describe "A43: extractFinalMessage" do
+
+    it "A43: empty history → Nothing" do
+      extractFinalMessage emptyHistory `shouldEqual` Nothing
+
+    it "A43: only system message → Nothing" do
+      let h = mkHistory [ SystemMessage { content: "sys" } ]
+      extractFinalMessage h `shouldEqual` Nothing
+
+    it "A43: only user message → Nothing" do
+      let h = mkHistory [ UserMessage { content: "user msg" } ]
+      extractFinalMessage h `shouldEqual` Nothing
+
+    it "A43: one assistant message → its content" do
+      let h = mkHistory [ AssistantMessage { content: "answer", toolCalls: [] } ]
+      extractFinalMessage h `shouldEqual` Just "answer"
+
+    it "A43: multiple messages, last is assistant → last content" do
+      let h = mkHistory
+                [ SystemMessage   { content: "sys" }
+                , UserMessage     { content: "q" }
+                , AssistantMessage { content: "first", toolCalls: [] }
+                , UserMessage     { content: "follow-up" }
+                , AssistantMessage { content: "final answer", toolCalls: [] }
+                ]
+      extractFinalMessage h `shouldEqual` Just "final answer"
+
+    it "A43: conversation ends with user message → last assistant content" do
+      let h = mkHistory
+                [ AssistantMessage { content: "mid", toolCalls: [] }
+                , UserMessage     { content: "still going" }
+                ]
+      extractFinalMessage h `shouldEqual` Just "mid"
+
+    it "A43: empty content assistant message is still returned" do
+      let h = mkHistory [ AssistantMessage { content: "", toolCalls: [] } ]
+      extractFinalMessage h `shouldEqual` Just ""
+
   where
   contains :: String -> String -> Boolean
   contains needle haystack =
     String.contains (String.Pattern needle) haystack
+
+  emptyHistory :: ConversationHistory
+  emptyHistory = ConversationHistory { messages: [] }
+
+  mkHistory :: Array Message -> ConversationHistory
+  mkHistory msgs = ConversationHistory
+    { messages: map (\m -> { message: m, tokens: TokenCount 0 }) msgs }
