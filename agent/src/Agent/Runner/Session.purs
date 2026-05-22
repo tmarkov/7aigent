@@ -59,6 +59,7 @@ import Agent.Programs.Steering (buildSteeringMessage)
 import Agent.Programs.Compaction (buildCompactionPlan)
 import Agent.Programs.Startup (interpretStartupExecution)
 import Agent.Programs.JuliaDefs (extractDefs)
+import Agent.Programs.Reflection (ReflectionResult, parseReflectionResponse)
 import Agent.Programs.ReplSerialize
     ( buildRestoreSnippet
     , buildSerializationSnippet
@@ -73,7 +74,7 @@ import Agent.Services.Stdin (readLine, writePrompt)
 import Agent.Services.Sandbox (SandboxHandle, spawnSandbox)
 import Agent.Services.Jupyter
     ( KernelHandle, connectKernel, executeCode, executeCodeDetailed, interruptKernel, closeKernel )
-import Agent.Services.Llm (LlmUsage, callLlm)
+import Agent.Services.Llm (LlmUsage, callLlm, callLlmJson)
 
 -- ---------------------------------------------------------------------------
 -- FFI
@@ -118,6 +119,14 @@ type ReactLoopResult =
     { history :: ConversationHistory
     , knownHunks :: Set HunkId
     , usageTotals :: LlmUsage
+    , error :: Maybe AppError
+    }
+
+type RoundResult =
+    { history :: ConversationHistory
+    , knownHunks :: Set HunkId
+    , usageTotals :: LlmUsage
+    , autoTurnsTaken :: Int
     , error :: Maybe AppError
     }
 
@@ -350,10 +359,12 @@ startSession ws@(WorkspacePath wp) resumedFrom existingHistory resumeState promp
                 existingHistory
 
     -- Enter the main user ↔ LLM loop
-    steeringTmpl <- loadSteeringTemplate ws cleanupSandbox
+    steeringTmpl    <- loadSteeringTemplate ws cleanupSandbox
+    reflectionTmpl  <- loadReflectionTemplate ws cleanupSandbox
 
     exitCode <- runUserLoop
-        ws sessionId config apiKey kernel steeringTmpl initHistory Set.empty zeroLlmUsage prompt
+        ws sessionId config apiKey kernel steeringTmpl reflectionTmpl
+        initHistory Set.empty zeroLlmUsage 0 prompt
 
     -- Cleanup
     cleanupSandbox
@@ -479,12 +490,14 @@ runUserLoop
     -> String
     -> KernelHandle
     -> String
+    -> String
     -> ConversationHistory
     -> Set HunkId
     -> LlmUsage
+    -> Int
     -> Maybe String
     -> Aff Int
-runUserLoop ws sessionId config apiKey kernel steeringTemplate history knownHunks usageTotals maybePrompt = do
+runUserLoop ws sessionId config apiKey kernel steeringTemplate reflectionTemplate history knownHunks usageTotals autoTurnsTaken maybePrompt = do
     line <- case maybePrompt of
         Just p -> do
             liftEffect $ printLn ("\n> " <> p)
@@ -504,24 +517,26 @@ runUserLoop ws sessionId config apiKey kernel steeringTemplate history knownHunk
         writeLogEvent ws sessionId (EvtUserMessage { timestamp: ts, content: line, source: Nothing })
 
         let history' = addMsg history (UserMessage { content: line })
-        loopResult <-
-            runReactLoop ws sessionId config apiKey kernel steeringTemplate history'
-                (TokenCount 0) knownHunks usageTotals
-        liftEffect $ printLn (renderSessionTokenUsage loopResult.usageTotals)
+        roundResult <-
+            runRound ws sessionId config apiKey kernel steeringTemplate reflectionTemplate history'
+                knownHunks usageTotals autoTurnsTaken
+        liftEffect $ printLn (renderSessionTokenUsage roundResult.usageTotals)
 
-        case loopResult.error, maybePrompt of
+        case roundResult.error, maybePrompt of
             Just _, Just _ -> do
-                finishSession ws sessionId kernel loopResult.history SessionEndedError
+                finishSession ws sessionId kernel roundResult.history SessionEndedError
                 pure 1
             Just _, Nothing ->
-                runUserLoop ws sessionId config apiKey kernel steeringTemplate loopResult.history
-                    loopResult.knownHunks loopResult.usageTotals Nothing
+                runUserLoop ws sessionId config apiKey kernel steeringTemplate reflectionTemplate
+                    roundResult.history roundResult.knownHunks roundResult.usageTotals
+                    roundResult.autoTurnsTaken Nothing
             Nothing, Just _ -> do
-                finishSession ws sessionId kernel loopResult.history SessionEndedPrompt
+                finishSession ws sessionId kernel roundResult.history SessionEndedPrompt
                 pure 0
             Nothing, Nothing ->
-                runUserLoop ws sessionId config apiKey kernel steeringTemplate loopResult.history
-                    loopResult.knownHunks loopResult.usageTotals Nothing
+                runUserLoop ws sessionId config apiKey kernel steeringTemplate reflectionTemplate
+                    roundResult.history roundResult.knownHunks roundResult.usageTotals
+                    roundResult.autoTurnsTaken Nothing
 
 -- ---------------------------------------------------------------------------
 -- A1: inner loop — LLM calls + tool execution
@@ -538,15 +553,17 @@ runReactLoop
     -> TokenCount
     -> Set HunkId
     -> LlmUsage
+    -> Int
+    -> Int
     -> Aff ReactLoopResult
-runReactLoop ws sessionId config apiKey kernel steeringTemplate history accumulated knownHunks usageTotals = do
+runReactLoop ws sessionId config apiKey kernel steeringTemplate history accumulated knownHunks usageTotals turnIndex autoTurnsTaken = do
     -- A46: inject ephemeral steering message after the first tool call
     historyForLlm <-
         if accumulated == TokenCount 0
         then pure history
         else do
             juliaState <- getJuliaState kernel
-            let maybeSteer = buildSteeringMessage steeringTemplate accumulated config juliaState 1 0
+            let maybeSteer = buildSteeringMessage steeringTemplate accumulated config juliaState turnIndex autoTurnsTaken
             pure $ case maybeSteer of
                 Nothing  -> history
                 Just msg -> addMsg history (UserMessage { content: msg })
@@ -611,7 +628,7 @@ runReactLoop ws sessionId config apiKey kernel steeringTemplate history accumula
                         Tuple history'' hunks' <-
                             doTool getTs ws sessionId config kernel history' tc knownHunks
                         runReactLoop ws sessionId config apiKey kernel steeringTemplate history''
-                            newAcc hunks' usageTotals'
+                            newAcc hunks' usageTotals' turnIndex autoTurnsTaken
 
                     ExecuteToolThenCompact tc -> do
                         Tuple history'' hunks' <-
@@ -626,12 +643,12 @@ runReactLoop ws sessionId config apiKey kernel steeringTemplate history accumula
                             history''
                             usageTotals'
                         runReactLoop ws sessionId config apiKey kernel steeringTemplate compactR.history
-                            (TokenCount 0) hunks' compactR.usageTotals
+                            (TokenCount 0) hunks' compactR.usageTotals turnIndex autoTurnsTaken
 
                     ExecuteToolThenEndTurn tc -> do
                         Tuple history'' hunks' <-
                             doTool getTs ws sessionId config kernel history' tc knownHunks
-                        liftEffect $ printLn "\n[Token limit reached — please continue]"
+                        liftEffect $ printLn "\n[Token limit reached — continuing...]"
                         pure
                             { history: history''
                             , knownHunks: hunks'
@@ -685,6 +702,158 @@ loadSteeringTemplate (WorkspacePath wp) cleanup = do
             cleanup
             exit1
         Right _ -> pure tmpl
+
+-- | Load and validate the reflection_prompt.md template.
+-- | Falls back to a built-in default if the file is absent.
+-- | Calls `cleanup` then exits if the template contains unknown keywords.
+loadReflectionTemplate :: WorkspacePath -> Aff Unit -> Aff String
+loadReflectionTemplate (WorkspacePath wp) cleanup = do
+    let defaultTmpl = String.joinWith "\n"
+            [ "You are reviewing the progress of an ongoing agent session."
+            , "Turn index (within round): {{turn_index}}"
+            , "Auto-turns taken this session: {{auto_turns_taken}}"
+            , "Max turns per round: {{max_turns_per_round}}"
+            , "Current Julia state:\n{{julia_state}}"
+            , ""
+            , "Reply with JSON: {\"complete\": true} if the task is done,"
+            , "or {\"complete\": false, \"feedback\": \"<next steps>\"} if not."
+            ]
+    tmplR <- attempt (FS.readTextFile UTF8 (wp <> "/.7aigent/reflection_prompt.md"))
+    let tmpl = case tmplR of
+            Left  _ -> defaultTmpl
+            Right t -> t
+    let validateVars = Map.fromFoldable
+            [ Tuple "turn_index"         ""
+            , Tuple "auto_turns_taken"   ""
+            , Tuple "max_turns_per_round" ""
+            , Tuple "julia_state"        ""
+            ]
+    case substituteTemplate validateVars tmpl of
+        Left err -> do
+            liftEffect $ printErr ("Error in reflection_prompt.md: " <> show err)
+            cleanup
+            exit1
+        Right _ -> pure tmpl
+
+-- ---------------------------------------------------------------------------
+-- A49-A50: Round orchestration and reflection
+-- ---------------------------------------------------------------------------
+
+-- | Perform one reflection LLM call: build the reflection prompt, call the
+-- | LLM in JSON mode, log the result, and return the parsed ReflectionResult
+-- | together with token usage.
+doReflection
+    :: WorkspacePath
+    -> SessionId
+    -> Config
+    -> String
+    -> KernelHandle
+    -> String
+    -> ConversationHistory
+    -> Int
+    -> Int
+    -> LlmUsage
+    -> Aff { result :: ReflectionResult, usageTotals :: LlmUsage }
+doReflection ws sessionId config apiKey kernel reflectionTemplate history turnIndex autoTurnsTaken usageTotals = do
+    juliaState <- getJuliaState kernel
+    let vars = Map.fromFoldable
+            [ Tuple "turn_index"          (show turnIndex)
+            , Tuple "auto_turns_taken"    (show autoTurnsTaken)
+            , Tuple "max_turns_per_round" (show config.maxTurnsPerRound)
+            , Tuple "julia_state"         juliaState
+            ]
+    let prompt = case substituteTemplate vars reflectionTemplate of
+            Left  _ -> reflectionTemplate
+            Right p -> p
+    let reflHistory = addMsg history (UserMessage { content: prompt })
+    llmR <- callLlmJson config apiKey reflHistory
+    ts <- getTs
+    case llmR of
+        Left _ -> do
+            let parsed = parseReflectionResponse ""
+            writeLogEvent ws sessionId (EvtReflection
+                { timestamp: ts
+                , turnIndex
+                , autoTurnsTaken
+                , complete: parsed.complete
+                , feedback: parsed.feedback
+                })
+            pure { result: parsed, usageTotals }
+        Right llmResult -> do
+            let (LlmResponse r) = llmResult.response
+            let parsed = parseReflectionResponse r.content
+            let usageTotals' = addLlmUsage usageTotals llmResult.usage
+            writeLogEvent ws sessionId (EvtReflection
+                { timestamp: ts
+                , turnIndex
+                , autoTurnsTaken
+                , complete: parsed.complete
+                , feedback: parsed.feedback
+                })
+            writeLogEvent ws sessionId (TokenUsage
+                { timestamp: ts
+                , inputTokens: llmResult.usage.inputTokens
+                , cachedInputTokens: llmResult.usage.cachedInputTokens
+                , outputTokens: llmResult.usage.outputTokens
+                , totalSessionInputTokens: usageTotals'.inputTokens
+                , totalSessionCachedInputTokens: usageTotals'.cachedInputTokens
+                , totalSessionOutputTokens: usageTotals'.outputTokens
+                })
+            pure { result: parsed, usageTotals: usageTotals' }
+
+-- | Run a full round: one or more turns, with reflection between them.
+-- | A round ends when reflection reports complete, an error occurs, or
+-- | maxTurnsPerRound is reached (A48).
+runRound
+    :: WorkspacePath
+    -> SessionId
+    -> Config
+    -> String
+    -> KernelHandle
+    -> String
+    -> String
+    -> ConversationHistory
+    -> Set HunkId
+    -> LlmUsage
+    -> Int
+    -> Aff RoundResult
+runRound ws sessionId config apiKey kernel steeringTemplate reflectionTemplate history knownHunks usageTotals autoTurnsTaken =
+    go history knownHunks usageTotals autoTurnsTaken 1
+  where
+    go hist hunks usage auto turnIndex = do
+        loopResult <- runReactLoop ws sessionId config apiKey kernel steeringTemplate hist
+            (TokenCount 0) hunks usage turnIndex auto
+
+        case loopResult.error of
+            Just err ->
+                pure
+                    { history: loopResult.history
+                    , knownHunks: loopResult.knownHunks
+                    , usageTotals: loopResult.usageTotals
+                    , autoTurnsTaken: auto
+                    , error: Just err
+                    }
+            Nothing -> do
+                reflR <- doReflection ws sessionId config apiKey kernel reflectionTemplate
+                    loopResult.history turnIndex auto loopResult.usageTotals
+                if reflR.result.complete || turnIndex >= config.maxTurnsPerRound
+                    then
+                        pure
+                            { history: loopResult.history
+                            , knownHunks: loopResult.knownHunks
+                            , usageTotals: reflR.usageTotals
+                            , autoTurnsTaken: auto
+                            , error: Nothing
+                            }
+                    else do
+                        let feedbackMsg = case reflR.result.feedback of
+                                Nothing -> "[Reflection: continue]"
+                                Just fb -> fb
+                        ts <- getTs
+                        writeLogEvent ws sessionId (EvtUserMessage
+                            { timestamp: ts, content: feedbackMsg, source: Just "reflection" })
+                        let hist' = addMsg loopResult.history (UserMessage { content: feedbackMsg })
+                        go hist' loopResult.knownHunks reflR.usageTotals (auto + 1) (turnIndex + 1)
 
 -- ---------------------------------------------------------------------------
 -- Compaction (A33-A36)

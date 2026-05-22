@@ -17,6 +17,7 @@ import Test.JupyterSpec (jupyterSpec)
 import Test.McpSpec (mcpSpec)
 import Test.OutputThresholdSpec (outputThresholdSpec)
 import Test.ReactStepSpec (reactStepSpec)
+import Test.ReflectionSpec (reflectionSpec)
 import Test.ReplSerializeSpec (replSerializeSpec)
 import Test.RetrySpec (retrySpec)
 import Test.SandboxPreflightSpec (sandboxPreflightSpec)
@@ -42,6 +43,7 @@ main = launchAff_ $ runSpec [ consoleReporter ] do
   mcpSpec
   outputThresholdSpec
   reactStepSpec
+  reflectionSpec
   replSerializeSpec
   retrySpec
   sandboxPreflightSpec

@@ -355,3 +355,30 @@ export const streamLlmImpl =
     (result) => onComplete(result)(),
   );
 };
+
+// callJsonLlmImpl :: String -> String -> String -> Array Message
+//   -> (StreamError -> Effect Unit) -> (LlmResult -> Effect Unit) -> Effect Unit
+//
+// Like streamLlmImpl but with no tools and JSON-object response format.
+// Tokens are discarded (not streamed to the caller).
+export const callJsonLlmImpl =
+  (endpoint) => (apiKey) => (model) => (messages) =>
+  (onError) => (onComplete) => () => {
+
+  const apiMessages = messages.map(encodeMessage);
+
+  streamChatCompletion(
+    endpoint,
+    apiKey,
+    {
+      model,
+      messages: apiMessages,
+      stream: true,
+      stream_options: { include_usage: true },
+      response_format: { type: "json_object" },
+    },
+    () => {},
+    (error) => onError(error)(),
+    (result) => onComplete(result)(),
+  );
+};

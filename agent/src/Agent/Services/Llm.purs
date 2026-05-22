@@ -4,6 +4,7 @@ module Agent.Services.Llm
     ( LlmUsage
     , CallLlmResult
     , callLlm
+    , callLlmJson
     ) where
 
 import Prelude
@@ -66,6 +67,15 @@ foreign import streamLlmImpl
     -> Array { name :: String, description :: String
              , parameters :: Array { name :: String, description :: String, required :: Boolean } }
     -> (String -> Effect Unit)
+    -> (StreamError -> Effect Unit)
+    -> (LlmResult -> Effect Unit)
+    -> Effect Unit
+
+foreign import callJsonLlmImpl
+    :: String
+    -> String
+    -> String
+    -> Array Message
     -> (StreamError -> Effect Unit)
     -> (LlmResult -> Effect Unit)
     -> Effect Unit
@@ -143,6 +153,68 @@ callLlm config apiKey (ConversationHistory h) onToken = go 0
             Nothing -> Nothing
 
     looksLikeTimeout message =
+        let lowered = String.toLower message
+        in String.contains (String.Pattern "timeout") lowered
+            || String.contains (String.Pattern "timed out") lowered
+
+-- | Call the LLM without tools, requesting a JSON-object response.
+-- | Used for reflection calls (A49). Does not stream tokens to the caller.
+callLlmJson
+    :: Config
+    -> String
+    -> ConversationHistory
+    -> Aff (Either AppError CallLlmResult)
+callLlmJson config apiKey (ConversationHistory h) = go 0
+  where
+    messages = map _.message h.messages
+    modelName = let (ModelName m) = config.model in m
+
+    go attempt = do
+        result <- runOnce
+        case result of
+            Right raw -> pure (Right
+                { response: LlmResponse
+                    { content: raw.content
+                    , toolCalls: []
+                    , inputTokens: TokenCount raw.inputTokens
+                    }
+                , usage:
+                    { inputTokens: TokenCount raw.inputTokens
+                    , cachedInputTokens: TokenCount raw.cachedInputTokens
+                    , outputTokens: TokenCount raw.outputTokens
+                    }
+                })
+            Left err ->
+                case classifyApiError err of
+                    Just apiErr ->
+                        case retryDecision apiErr attempt config.maxApiRetries of
+                            Retry ms -> do
+                                delay (Milliseconds (Int.toNumber ms))
+                                go (attempt + 1)
+                            GiveUp _ ->
+                                pure (Left (LlmApiError err.message))
+                    Nothing ->
+                        pure (Left (LlmApiError err.message))
+
+    runOnce = makeAff \resolve -> do
+        let ApiEndpoint endpoint = config.apiEndpoint
+        callJsonLlmImpl
+            endpoint
+            apiKey
+            modelName
+            messages
+            (\err -> resolve (Right (Left err)))
+            (\llmResult -> resolve (Right (Right llmResult)))
+        pure nonCanceler
+
+    classifyApiError err =
+        case toMaybe err.statusCode of
+            Just status -> Just (HttpStatus status)
+            Nothing | err.isTimeout -> Just NetworkTimeout
+            Nothing | looksLikeTimeout' err.message -> Just NetworkTimeout
+            Nothing -> Nothing
+
+    looksLikeTimeout' message =
         let lowered = String.toLower message
         in String.contains (String.Pattern "timeout") lowered
             || String.contains (String.Pattern "timed out") lowered
