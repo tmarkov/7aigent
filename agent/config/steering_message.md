@@ -3,6 +3,9 @@
 ---
 
 **Exploration** = `@subset` + `summarize!` only — no file reads.
-**Editing** = `get_source` → `update_source` — only for files you're changing right now.
+**Editing** = `get_source` → `replace(src, old => new)` → **`@assert new_src != src`** → `update_source` — only for files you're changing right now.
+**Committing** = `git_diff` tool → `git_commit` tool (direct tool calls, not `run()` in the REPL).
 
-> Once summaries answer your question, implement. Reading a file you won't immediately edit wastes context.
+> If you already know what to implement: **stop exploring and start writing code.**
+> If summaries are missing: call `summarize!` — never read the file just to understand it.
+> Each round without a file change is wasted — exploration without implementation is not progress.

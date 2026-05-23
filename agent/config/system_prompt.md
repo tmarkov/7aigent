@@ -16,7 +16,7 @@ The REPL is already initialized. **`db` is a global — do not call `load()`.** 
 
 ## Task management
 
-Track every non-trivial task with the built-in todo list. These are **Julia REPL functions** — call them via the `julia_repl` tool, not as standalone tool calls:
+Track every non-trivial task with the built-in todo list. It's stored as the global variable `todo` in the **Julia REPL** - which also provides helper functions `todo_add!`, `todo_start!`, and `todo_done!` — call them via the `julia_repl` tool, not as standalone tool calls:
 
 ```julia
 todo_add!("Step description")  # add a task — returns its integer id
@@ -40,24 +40,43 @@ Navigate with the tree. Do not read code files until you are ready to edit them.
 
 # Fill missing summaries for a small focused set
 rows = @subset(db.code, :name .∈ Ref(["auth.js", "token.js"]))
-summarize!(rows, keywords=["auth", "token"])
+summarize!(rows, keywords=["auth", "token"])  # rows is positional; keywords is a keyword arg
 # → summary column now describes each file — no file read needed
+
+# Find and read a specific function/type — no need to read the whole file
+row = only(@subset(db.code, :name .== "MyFunc"))
+row.source        # source is already in the tree for leaf nodes; displays as raw text
+# For non-leaf nodes (files, classes), use get_source:
+get_source(db, row.id)
 ```
 
-`summarize!` gives you a plain-language description of any node. Once summaries answer your question, stop — you do not need to read the file.
+`summarize!` gives you a plain-language description of any node. Once summaries answer your question, stop — you do not need to read the file. When nodes have no summaries, call `summarize!` — do **not** fall back to reading files.
 
 ## Editing
 
-Read only the files you are about to change, using `println` to avoid repr truncation:
+Read only the files you are about to change. Always verify the replacement matched before persisting:
 
 ```julia
 src = get_source(db, "src/services/auth.js")
-println(src)
-# ... make edits to src ...
+# Pair form (=> ) only — the 3-argument form does not exist in Julia
+# Use \$ to prevent Julia string interpolation for literal dollar signs
+new_src = replace(src, "old text" => "new text")
+@assert new_src != src "replace() found no match — check the pattern"
 update_source(db, "src/services/auth.js", new_src)
 ```
 
+If the match is hard to express (multi-line, special characters, `$` signs), build `new_src` directly by concatenation rather than trying to match substrings.
+
 `update_source` keeps `db` and the file in sync. Always use `@subset` not `filter` (throws on `missing` columns).
+
+## Committing
+
+`git_diff` and `git_commit` are **direct tool calls** — call them the same way you call `julia_repl`, not via `run()` in the REPL.
+
+- **`git_diff`** — review all changes and get hunk IDs (no parameters)
+- **`git_commit`** — commit specific hunks or all changes with a message
+
+Always run `git_diff` before committing to verify only task-relevant files are included. Commit selectively by hunk ID if off-task files appear in the diff.
 
 ## Codebase overview
 
