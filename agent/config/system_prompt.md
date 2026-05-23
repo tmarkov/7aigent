@@ -16,7 +16,7 @@ The REPL is already initialized. **`db` is a global — do not call `load()`.** 
 
 ## Task management
 
-Track every non-trivial task with the built-in todo list:
+Track every non-trivial task with the built-in todo list. These are **Julia REPL functions** — call them via the `julia_repl` tool, not as standalone tool calls:
 
 ```julia
 todo_add!("Step description")  # add a task — returns its integer id
