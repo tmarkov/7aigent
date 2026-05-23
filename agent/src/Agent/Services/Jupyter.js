@@ -190,14 +190,17 @@ export const connectKernelImpl = (kernelJsonPath) => (summaryServiceConfig) => (
     if (prompt.startsWith(SUMMARY_INPUT_PROMPT_PREFIX)) {
       const commId = prompt.slice(SUMMARY_INPUT_PROMPT_PREFIX.length);
       const timeoutMs = 30000;
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Summary LLM call timed out after 30s")), timeoutMs));
+      let timeoutHandle;
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutHandle = setTimeout(() => reject(new Error("Summary LLM call timed out after 30s")), timeoutMs);
+      });
       try {
         const pendingReply = await Promise.race([_awaitPendingSummary(commId), timeoutPromise]);
         value = encodeSummaryReplyValue(await Promise.race([pendingReply, timeoutPromise]));
       } catch (err) {
         value = encodeSummaryReplyValue({ error: String(err.message || err) });
       } finally {
+        clearTimeout(timeoutHandle);
         pendingSummaryReplies.delete(commId);
       }
     }
