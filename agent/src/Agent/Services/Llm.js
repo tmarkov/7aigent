@@ -96,7 +96,9 @@ function looksLikeTimeout(err) {
 
 // Hard wall-clock timeout for LLM requests, regardless of socket activity.
 // This catches hung streaming responses that keep the socket "active" indefinitely.
-const LLM_WALL_CLOCK_TIMEOUT_MS = 90000;
+// LLM calls can legitimately take several minutes for long outputs, so this is set
+// conservatively. The inactivity timeout (req.setTimeout) handles truly dead connections.
+const LLM_WALL_CLOCK_TIMEOUT_MS = 300000; // 5 minutes
 
 function streamChatCompletion(endpoint, apiKey, body, onToken, onError, onComplete) {
   let url;
@@ -320,7 +322,13 @@ export function summarizeEvidence(endpoint, apiKey, model, requestJson, onError,
         response_format: { type: "json_object" },
       },
       () => {},
-      (error) => onError(error.message),
+      (error) => {
+        if (attemptsLeft > 1) {
+          attempt(attemptsLeft - 1);
+        } else {
+          onError(error.message);
+        }
+      },
       (result) => {
         try {
           const payload = extractJsonValue(result.content);

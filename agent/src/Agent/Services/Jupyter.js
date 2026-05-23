@@ -189,10 +189,12 @@ export const connectKernelImpl = (kernelJsonPath) => (summaryServiceConfig) => (
 
     if (prompt.startsWith(SUMMARY_INPUT_PROMPT_PREFIX)) {
       const commId = prompt.slice(SUMMARY_INPUT_PROMPT_PREFIX.length);
-      const timeoutMs = 30000;
+      // Must exceed LLM_WALL_CLOCK_TIMEOUT_MS × MAX_ATTEMPTS so the LLM has a full
+      // chance to respond (or exhaust retries) before we give up on the Julia side.
+      const timeoutMs = 330000; // 5.5 minutes — just above the 5-minute LLM wall-clock
       let timeoutHandle;
       const timeoutPromise = new Promise((_, reject) => {
-        timeoutHandle = setTimeout(() => reject(new Error("Summary LLM call timed out after 30s")), timeoutMs);
+        timeoutHandle = setTimeout(() => reject(new Error("Summary LLM call timed out after 330s")), timeoutMs);
       });
       try {
         const pendingReply = await Promise.race([_awaitPendingSummary(commId), timeoutPromise]);
