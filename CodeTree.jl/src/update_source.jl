@@ -9,25 +9,21 @@
 #   6. Rolls back all in-memory state if the disk write fails (R35)
 
 """
-    get_source(db, id) -> SourceText
+    get_source(db, id) -> String
 
 Return the current source text for node `id` from the in-memory buffer.
 
 For leaf nodes this matches the `source` column. For non-leaf nodes, whose
 `source` column is `missing`, this reconstructs the node span on demand using
 the node's `(line_start, line_end)` range.
-
-The result is a `SourceText`, which behaves as an `AbstractString` in all
-operations.  Its `show` method displays an explicit `… (N more chars)` suffix
-for long results rather than Julia's silent truncation ellipsis.
 """
 function get_source(
     db::CodeTreeDB,
     id::AbstractString,
-)::SourceText
+)::String
     _, file_rel, node_ls, node_le = _lookup_node_span(db, String(id))
     cur_src = db._buffer[file_rel]
-    return SourceText(_slice_lines(cur_src, Int(node_ls), Int(node_le)))
+    return _slice_lines(cur_src, Int(node_ls), Int(node_le))
 end
 
 """
