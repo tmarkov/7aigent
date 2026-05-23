@@ -531,15 +531,27 @@ sections may be present for other layers, including the REPL API; runner
 configuration parsing must ignore unknown sections and keys that it does not
 own.
 
-**A37a** — `max_tokens_per_turn` is the maximum total input tokens the runner
-may consume across all LLM calls within a single turn (the ReACT loop between
-two user prompts). The runner accumulates the input token count reported by
-the API after each LLM call in the turn. When the accumulated total exceeds
-`max_tokens_per_turn`, the runner completes the current step normally — the
-LLM response is added to conversation history and any tool calls it contains
-are executed — and then ends the turn after that step completes. The runner
-notifies the user that the token limit was reached and proceeds to the
-reflection step (A48) as if the turn had ended normally.
+**A37a** — `max_tokens_per_turn` limits how much new context the agent may
+accumulate within a single turn (the ReACT loop between two user prompts).
+At the start of each turn the runner records the *turn baseline*: the input
+token count reported by the API for the **first** LLM call of that turn.
+After each subsequent LLM call the runner computes the *turn delta*:
+
+```
+turn_delta = current_call_input_tokens − turn_baseline
+```
+
+When `turn_delta` exceeds `max_tokens_per_turn`, the runner completes the
+current step normally — the LLM response is added to conversation history
+and any tool calls it contains are executed — and then ends the turn after
+that step completes. The runner notifies the user that the token limit was
+reached and proceeds to the reflection step (A48) as if the turn had ended
+normally.
+
+On the first call of a turn the turn delta is always zero (baseline equals
+current), so the limit is never triggered on the opening call. After
+compaction (A33–A36) both the baseline and the last-call token count reset
+to zero so the following turn starts fresh.
 
 **A38** — `api_key_env` names an environment variable that holds the API
 key. The runner reads the key from the environment at startup and exits with
@@ -631,7 +643,7 @@ with an informative error (same rule as A23). The supported keywords are:
 | Keyword | Replaced with |
 |---|---|
 | `{{julia_state}}` | Formatted task-list status, resolved as in A47 |
-| `{{turn_tokens}}` | Total input tokens accumulated across all LLM calls in the current turn so far |
+| `{{turn_tokens}}` | Tokens added to context since the start of the current turn (current call input tokens minus the turn baseline from A37a) |
 | `{{turn_token_limit}}` | The `max_tokens_per_turn` value from config |
 | `{{compaction_threshold}}` | The `compaction_threshold` value from config |
 | `{{turn_index}}` | 1-based index of the current turn within the current round |
@@ -639,9 +651,8 @@ with an informative error (same rule as A23). The supported keywords are:
 | `{{auto_turns_taken}}` | Number of turns started from reflection feedback (rather than direct user input) so far this session |
 
 **A46** — In the ReACT loop, after executing a tool call and appending its result
-to the conversation history, if the accumulated input tokens for the current turn
-are greater than zero (i.e. at least one LLM call has already completed this
-turn), the runner:
+to the conversation history, if the turn baseline (A37a) is greater than zero
+(i.e. at least one LLM call has already completed this turn), the runner:
 
 1. Resolves `{{julia_state}}` as described in A47.
 2. Substitutes all keywords from A45 into the steering message template.

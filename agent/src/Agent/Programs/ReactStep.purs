@@ -36,11 +36,11 @@ instance Show NextStep where
 
 reactStep
     :: Config
-    -> TokenCount
+    -> TokenCount  -- ^ turn baseline: input tokens from the first LLM call of this turn
     -> ConversationHistory
     -> LlmResponse
     -> NextStep
-reactStep config (TokenCount accumulatedTurnTokens) _history
+reactStep config (TokenCount turnBaseline) _history
     (LlmResponse resp) =
     let TokenCount compactThresh =
             config.compactionThreshold
@@ -52,6 +52,11 @@ reactStep config (TokenCount accumulatedTurnTokens) _history
             config.preserveFinal
         TokenCount currentRequestTokens =
             resp.inputTokens
+        -- Growth since the start of this turn (tokens added by tool calls /
+        -- results since the last reflection).  On the first call of a turn,
+        -- turnBaseline == currentRequestTokens so turnDelta == 0.
+        turnDelta =
+            currentRequestTokens - turnBaseline
         -- Can only compact if there are enough tokens beyond the
         -- preserved initial and final blocks
         canCompact =
@@ -60,7 +65,7 @@ reactStep config (TokenCount accumulatedTurnTokens) _history
             Just tc ->
                 if currentRequestTokens > compactThresh
                 then ExecuteToolThenCompact tc
-                else if accumulatedTurnTokens > maxPerTurn
+                else if turnDelta > maxPerTurn
                 then ExecuteToolThenEndTurn tc
                 else ExecuteTool tc
             Nothing ->

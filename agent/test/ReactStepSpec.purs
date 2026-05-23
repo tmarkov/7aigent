@@ -100,15 +100,15 @@ reactStepSpec = do
             }
       let history = mkHistory [ systemMsg "sys", userMsg "hello" ]
       let response = toolCallResponse "julia_repl" "x" (ToolCallId "tc1") (TokenCount 900)
-      -- The turn has already accumulated > 1000 input tokens from earlier LLM
-      -- requests, but the actual request that just completed was only 900.
-      let step = reactStep config (TokenCount 1200) history response
+      -- The current request (900) is below the compaction threshold (1000),
+      -- so no compaction should occur regardless of turn delta.
+      -- baseline = 200, delta = 700 (below threshold)
+      let step = reactStep config (TokenCount 200) history response
       case step of
         ExecuteTool _ -> pure unit
-        _ -> fail "Expected ExecuteTool (compaction should use the current request size)"
+        _ -> fail "Expected ExecuteTool (compaction uses current request size, not delta)"
 
-    it "A33: text-only response likewise does not compact on cumulative \
-       \turn tokens alone" do
+    it "A33: text-only response likewise does not compact on turn delta alone" do
       let config = testConfig
             { compactionThreshold = TokenCount 1000
             , preserveInitial = TokenCount 100
@@ -116,10 +116,11 @@ reactStepSpec = do
             }
       let history = mkHistory [ systemMsg "sys", userMsg "hello" ]
       let response = textResponse "answer" (TokenCount 900)
-      let step = reactStep config (TokenCount 1200) history response
+      -- baseline = 200, current = 900 < threshold → no compaction
+      let step = reactStep config (TokenCount 200) history response
       case step of
         PromptUser -> pure unit
-        _ -> fail "Expected PromptUser (no compaction from cumulative turn tokens)"
+        _ -> fail "Expected PromptUser (no compaction from turn delta alone)"
 
   ---------------------------------------------------------------------------
   -- A7: streaming contract
@@ -157,33 +158,48 @@ reactStepSpec = do
 
   describe "A37a: per-turn token limit" do
 
-    it "A37a: accumulated tokens below limit → turn continues (ExecuteTool)" do
-      let history = mkHistory [ systemMsg "sys", userMsg "hello" ]
-      let response = toolCallResponse "julia_repl" "x" (ToolCallId "tc1") (TokenCount 100000)
-      let step = reactStep testConfig (TokenCount 100000) history response
-      case step of
-        ExecuteTool _ -> pure unit
-        _ -> fail "Expected ExecuteTool (below max_tokens_per_turn)"
-
-    it "A37a: accumulated tokens above limit → turn ends after current step" do
+    it "A37a: turn delta below limit → turn continues (ExecuteTool)" do
       let config = testConfig { maxTokensPerTurn = TokenCount 50000 }
       let history = mkHistory [ systemMsg "sys", userMsg "hello" ]
+      -- baseline = 30000 (first call), current = 45000, delta = 15000 < 50000
+      let response = toolCallResponse "julia_repl" "x" (ToolCallId "tc1") (TokenCount 45000)
+      let step = reactStep config (TokenCount 30000) history response
+      case step of
+        ExecuteTool _ -> pure unit
+        _ -> fail "Expected ExecuteTool (delta below max_tokens_per_turn)"
+
+    it "A37a: turn delta above limit → turn ends after current step" do
+      let config = testConfig { maxTokensPerTurn = TokenCount 50000 }
+      let history = mkHistory [ systemMsg "sys", userMsg "hello" ]
+      -- baseline = 5000 (first call), current = 60000, delta = 55000 > 50000
       let response = toolCallResponse "julia_repl" "x" (ToolCallId "tc1") (TokenCount 60000)
-      -- Tokens exceed max_tokens_per_turn. The current step (tool call)
+      -- Delta exceeds max_tokens_per_turn. The current step (tool call)
       -- should still execute, but the turn ends after.
-      let step = reactStep config (TokenCount 60000) history response
+      let step = reactStep config (TokenCount 5000) history response
       case step of
         ExecuteToolThenEndTurn tc -> tc.name `shouldEqual` JuliaRepl
         _ -> fail "Expected ExecuteToolThenEndTurn"
 
-    it "A37a: tokens at limit → turn continues (not strictly above)" do
+    it "A37a: turn delta at limit → turn continues (not strictly above)" do
       let config = testConfig { maxTokensPerTurn = TokenCount 50000 }
       let history = mkHistory [ systemMsg "sys", userMsg "hello" ]
-      let response = toolCallResponse "julia_repl" "x" (ToolCallId "tc1") (TokenCount 50000)
-      let step = reactStep config (TokenCount 50000) history response
+      -- baseline = 5000, current = 55000, delta = 50000 = limit (not exceeded)
+      let response = toolCallResponse "julia_repl" "x" (ToolCallId "tc1") (TokenCount 55000)
+      let step = reactStep config (TokenCount 5000) history response
       case step of
         ExecuteTool _ -> pure unit
-        _ -> fail "Expected ExecuteTool (at limit, not above)"
+        _ -> fail "Expected ExecuteTool (delta at limit, not above)"
+
+    it "A37a: large base context does not trigger turn end when delta is small" do
+      let config = testConfig { maxTokensPerTurn = TokenCount 50000 }
+      let history = mkHistory [ systemMsg "sys", userMsg "hello" ]
+      -- baseline = 80000 (large prior context), current = 82000, delta = 2000
+      -- Old behaviour would have ended the turn; new behaviour continues.
+      let response = toolCallResponse "julia_repl" "x" (ToolCallId "tc1") (TokenCount 82000)
+      let step = reactStep config (TokenCount 80000) history response
+      case step of
+        ExecuteTool _ -> pure unit
+        _ -> fail "Expected ExecuteTool (delta small despite large base context)"
 
   ---------------------------------------------------------------------------
   -- A33: compaction never immediately after user message
@@ -218,15 +234,17 @@ reactStepSpec = do
 
     it "A37a: when both compaction threshold and token limit are exceeded, \
        \compaction takes priority" do
-      -- Config: compaction at 1000 tokens, max per turn 800
+      -- Config: compaction at 1000 tokens, max per turn delta 800
       let config = testConfig
             { compactionThreshold = TokenCount 1000
             , maxTokensPerTurn = TokenCount 800
             }
       let history = mkHistory [ systemMsg "sys", userMsg "context" ]
-      -- Accumulated tokens: 1200 (exceeds both thresholds)
+      -- baseline = 200, current = 1200: delta = 1000 > maxPerTurn (800),
+      -- and current > compactionThreshold (1000).
+      -- Compaction takes priority over the per-turn limit.
       let response = toolCallResponse "julia_repl" "x" (ToolCallId "tc1") (TokenCount 1200)
-      let step = reactStep config (TokenCount 1200) history response
+      let step = reactStep config (TokenCount 200) history response
       -- Compaction should take priority: compact first, then after
       -- compaction the token limit can be re-evaluated fresh
       case step of

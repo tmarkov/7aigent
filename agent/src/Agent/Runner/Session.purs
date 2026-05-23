@@ -558,20 +558,21 @@ runReactLoop
     -> KernelHandle
     -> String
     -> ConversationHistory
-    -> TokenCount
+    -> TokenCount  -- ^ turn baseline: input tokens from first call of this turn (0 = first call)
+    -> TokenCount  -- ^ last call tokens: input tokens from the most recent LLM call (0 = first call)
     -> Set HunkId
     -> LlmUsage
     -> Int
     -> Int
     -> Aff ReactLoopResult
-runReactLoop ws sessionId config apiKey kernel steeringTemplate history accumulated knownHunks usageTotals turnIndex autoTurnsTaken = do
+runReactLoop ws sessionId config apiKey kernel steeringTemplate history turnBaseline lastCallTokens knownHunks usageTotals turnIndex autoTurnsTaken = do
     -- A46: inject ephemeral steering message after the first tool call
     historyForLlm <-
-        if accumulated == TokenCount 0
+        if turnBaseline == TokenCount 0
         then pure history
         else do
             juliaState <- getJuliaState kernel
-            let maybeSteer = buildSteeringMessage steeringTemplate accumulated config juliaState turnIndex autoTurnsTaken
+            let maybeSteer = buildSteeringMessage steeringTemplate turnBaseline lastCallTokens config juliaState turnIndex autoTurnsTaken
             pure $ case maybeSteer of
                 Nothing  -> history
                 Just msg -> addMsg history (UserMessage { content: msg })
@@ -601,11 +602,14 @@ runReactLoop ws sessionId config apiKey kernel steeringTemplate history accumula
                     , totalSessionOutputTokens: usageTotals'.outputTokens
                     })
 
-                let newAcc = addTc accumulated r.inputTokens
+                -- On the first call of the turn, record the baseline.
+                -- On subsequent calls, keep the baseline unchanged so that
+                -- reactStep can compute the delta (growth since turn start).
+                let newBaseline = if turnBaseline == TokenCount 0 then r.inputTokens else turnBaseline
                 let history' = addMsg history
                         (AssistantMessage { content: r.content, toolCalls: r.toolCalls })
 
-                case reactStep config newAcc history' response of
+                case reactStep config newBaseline history' response of
 
                     PromptUser ->
                         pure
@@ -636,7 +640,7 @@ runReactLoop ws sessionId config apiKey kernel steeringTemplate history accumula
                         Tuple history'' hunks' <-
                             doTool getTs ws sessionId config kernel history' tc knownHunks
                         runReactLoop ws sessionId config apiKey kernel steeringTemplate history''
-                            newAcc hunks' usageTotals' turnIndex autoTurnsTaken
+                            newBaseline r.inputTokens hunks' usageTotals' turnIndex autoTurnsTaken
 
                     ExecuteToolThenCompact tc -> do
                         Tuple history'' hunks' <-
@@ -651,7 +655,7 @@ runReactLoop ws sessionId config apiKey kernel steeringTemplate history accumula
                             history''
                             usageTotals'
                         runReactLoop ws sessionId config apiKey kernel steeringTemplate compactR.history
-                            (TokenCount 0) hunks' compactR.usageTotals turnIndex autoTurnsTaken
+                            (TokenCount 0) (TokenCount 0) hunks' compactR.usageTotals turnIndex autoTurnsTaken
 
                     ExecuteToolThenEndTurn tc -> do
                         Tuple history'' hunks' <-
@@ -830,7 +834,7 @@ runRound ws sessionId config apiKey kernel steeringTemplate reflectionTemplate h
   where
     go hist hunks usage auto turnIndex = do
         loopResult <- runReactLoop ws sessionId config apiKey kernel steeringTemplate hist
-            (TokenCount 0) hunks usage turnIndex auto
+            (TokenCount 0) (TokenCount 0) hunks usage turnIndex auto
 
         case loopResult.error of
             Just err ->
