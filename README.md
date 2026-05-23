@@ -10,17 +10,17 @@ user's question.
 
 ```
 ┌─────────┐   prompt/result   ┌───────┐   Julia expr / output   ┌──────────────────┐
-│   LLM   │ ◄────────────────► │ agent │ ◄──────────────────────► │ sandbox (IJulia) │
-└─────────┘                   └───────┘                          │   CodeTree.jl    │
-                                                                  │   SQLite DB      │
-                                                                  └──────────────────┘
+│   LLM   │ ◄───────────────► │ agent │ ◄─────────────────────► │ sandbox (IJulia) │
+└─────────┘                   └───────┘                         │   CodeTree.jl    │
+                                                                │   SQLite DB      │
+                                                                └──────────────────┘
 ```
 
 | Component | Location | Role |
 |-----------|----------|------|
 | **CodeTree.jl** | [`CodeTree.jl/`](CodeTree.jl/) | Julia package — `code`/`symbols` schema, indexing, query helpers |
-| **sandbox** | [`sandbox/`](sandbox/) | Sandboxed Julia process exposing an IJulia kernel with CodeTree pre-loaded |
-| **agent** | [`agent/`](agent/) | PureScript/Node.js runner — LLM ↔ sandbox bridge, git tools, session logging/resume |
+| **sandbox** | [`sandbox/`](sandbox/) | Sandboxed Julia process exposing an IJulia kernel with CodeTree and the REPL API (`SevenAigentREPL`) pre-loaded |
+| **agent** | [`agent/`](agent/) | PureScript/Node.js runner — spawns the sandbox, bridges LLM ↔ kernel, git tools, session logging/resume, MCP server mode |
 
 ## Development
 
@@ -90,6 +90,27 @@ Run the sandbox tests (requires a prior `nix build .#sandbox`):
 pytest sandbox/test/
 ```
 
+### Agent
+
+```sh
+nix build .#agent
+```
+
+### All checks
+
+```sh
+nix flake check         # runs all checks including the VM-level sandbox test
+```
+
 ## Design
 
-See [`design/`](design/) for the schema specification and loading-process documentation.
+See [`design/`](design/) for the full specification. Key documents:
+
+| Document | Contents |
+|----------|----------|
+| [`codetree-requirements.md`](design/codetree-requirements.md) | CodeTree indexing requirements (R1, R2, …) |
+| [`code-tree-schema.md`](design/code-tree-schema.md) | `code`/`symbols` schema rationale and example queries |
+| [`loading-process.md`](design/loading-process.md) | Loading and incremental re-indexing algorithm |
+| [`sandbox-requirements.md`](design/sandbox-requirements.md) | Sandbox security and isolation requirements (S1, S2, …) |
+| [`repl-api-requirements.md`](design/repl-api-requirements.md) | REPL API (`SevenAigentREPL`) requirements (RA1, RA2, …) |
+| [`agent-requirements.md`](design/agent-requirements.md) | Agent runner requirements (A1, A2, …) |

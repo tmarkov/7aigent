@@ -11,13 +11,23 @@ to this repository. Read it fully before making any changes.
 7aigent/
 ├── AGENTS.md                  ← you are here
 ├── README.md
+├── flake.nix                  ← Nix flake — all build/test outputs
 ├── design/                    ← formal design documents (source of truth)
-│   ├── codetree-requirements.md   ← formal requirements (R1, R2, …)
+│   ├── codetree-requirements.md   ← CodeTree formal requirements (R1, R2, …)
 │   ├── code-tree-schema.md        ← schema rationale and example queries
-│   └── loading-process.md         ← loading/indexing algorithm narrative
+│   ├── loading-process.md         ← loading/indexing algorithm narrative
+│   ├── agent-requirements.md      ← agent formal requirements (A1, A2, …)
+│   ├── sandbox-requirements.md    ← sandbox formal requirements (S1, S2, …)
+│   └── repl-api-requirements.md   ← REPL API formal requirements (RA1, RA2, …)
 ├── CodeTree.jl/               ← the Julia package
 │   ├── Project.toml
-│   ├── src/CodeTree.jl            ← package implementation
+│   ├── src/
+│   │   ├── CodeTree.jl            ← package entry point (includes all subfiles)
+│   │   ├── types.jl               ← domain types
+│   │   ├── config.jl              ← language configuration
+│   │   ├── load.jl                ← load / reload
+│   │   ├── update_source.jl       ← incremental re-indexing
+│   │   └── …                      ← parser, builder, symbols, cache, etc.
 │   └── test/
 │       ├── runtests.jl            ← test entry point
 │       └── test_codebase/         ← fixture codebase used by tests
@@ -25,12 +35,21 @@ to this repository. Read it fully before making any changes.
 │           ├── julia/             ← Julia files
 │           ├── docs/              ← Markdown files
 │           └── data/              ← unknown-language file (.toml)
-└── agent/                     ← ReACT agent (uses CodeTree.jl as a library)
+├── sandbox/                   ← sandboxed IJulia kernel launcher and REPL API
+│   ├── 7aigent-sandbox            ← launcher shell script
+│   ├── startup.jl                 ← kernel startup script (run inside sandbox)
+│   ├── SevenAigentREPL.jl         ← REPL API module entry point
+│   ├── SevenAigentREPL/           ← REPL API implementation
+│   │   ├── Display.jl             ← LLM-focused DataFrame display helpers
+│   │   ├── Summarize.jl           ← on-demand LLM summary workflow
+│   │   └── Todo.jl                ← agent todo-list helpers
+│   └── test/                      ← sandbox integration tests (pytest)
+└── agent/                     ← ReACT agent — LLM ↔ sandbox bridge
 ```
 
 The **design documents are the source of truth**. All code and tests must
-conform to the requirements in `design/codetree-requirements.md`. When
-requirements and code disagree, the requirements win — unless you are
+conform to the requirements in the relevant `design/*-requirements.md` file.
+When requirements and code disagree, the requirements win — unless you are
 deliberately proposing a requirements change (follow the workflow below).
 
 ---
@@ -61,16 +80,16 @@ Define these types in a dedicated `types.jl` (or a `Types` submodule) and
 import them everywhere. Never use a bare `String` or `Int` for a value that
 carries domain meaning.
 
-**Key domain types for this codebase:**
+**Key domain types — examples from across the codebase:**
 
-| Concept | Type name |
-|---------|-----------|
-| Node identifier | `NodeId` |
-| Qualified name | `QName` |
-| Line number | `LineNumber` |
-| Relative file path | `FilePath` |
-| Symbol name (from `db.symbols`) | `SymbolName` |
-| Node kind (`function`, `chunk`, …) | `NodeKind` (use an enum or const strings) |
+| Concept | Type | Component |
+|---------|------|-----------|
+| Node identifier | `NodeId` | CodeTree.jl |
+| Relative file path | `FilePath` | CodeTree.jl |
+| Node kind (`function`, `chunk`, …) | `NodeKind` | CodeTree.jl |
+| Workspace path | `WorkspacePath` | agent |
+| Git hunk identifier | `HunkId` | agent |
+| LLM token count | `TokenCount` | agent |
 
 ### Annotate all public function signatures
 
@@ -110,18 +129,18 @@ behaviour. Do not skip steps.
 
 ### Step 1 — Update the requirements
 
-Edit `design/codetree-requirements.md` to add or revise the relevant
-requirement(s). Give each new requirement the next available `R` number.
-Update `design/code-tree-schema.md` and `design/loading-process.md` if the
-schema or loading algorithm changes.
+Edit the relevant `design/*-requirements.md` file to add or revise the
+requirement(s). Give each new requirement the next available number in that
+document's series (`R`, `A`, `S`, `RA`, …). Update any companion design
+documents if the schema, protocol, or algorithm changes.
 
 *If you are only fixing a bug that is already covered by an existing
 requirement, skip this step.*
 
 ### Step 2 — Write or update tests
 
-Add tests to `CodeTree.jl/test/runtests.jl` (or a file it includes) that
-cover the new requirement. Each test must reference the requirement by ID —
+Add tests to the appropriate test suite for the component being changed
+(see repository layout above). Each test must reference the requirement by ID —
 see **Testing Strategy** below.
 
 ### Step 3 — Review the tests
@@ -158,10 +177,13 @@ implementing.
 
 ### Step 7 — Confirm the tests pass
 
-Run the full test suite. All tests must pass before you continue.
+Run the build for the component under change. All tests must pass before you continue.
 
 ```bash
-cd CodeTree.jl && julia --project=. -e 'using Pkg; Pkg.test()'
+nix build .#codeTree   # CodeTree.jl
+nix build .#sandbox    # sandbox + REPL API
+nix build .#agent      # agent runner
+nix flake check        # all components
 ```
 
 ### Step 8 — Refactor
@@ -182,21 +204,27 @@ requirement or it does not belong.
 
 ### Annotate every test with a requirement ID
 
-Use `@testset` names that include the requirement ID:
+Include the requirement ID in each test name. The format varies by framework:
+
+```purescript
+-- Agent (PureScript spec)
+describe "A1: ReACT step — no tool call response" do
+  it "A1: LLM text response → PromptUser" do
+    case reactStep testConfig tokens history response of
+      PromptUser -> pure unit
+      _          -> fail "Expected PromptUser"
+```
 
 ```julia
+-- CodeTree / sandbox (Julia @testset)
 @testset "R14b: leading comment absorbed into compound node span" begin
-    db = load(TEST_CODEBASE, config)
     qs = only(filter(r -> r.name == "quick_sort", db.code))
-
-    # The leading comment lines are absorbed: quick_sort's span starts
-    # at the first comment line, not at the `void` declaration line.
     @test qs.line_start < declaration_line_of("quick_sort", TEST_CODEBASE)
 end
 ```
 
-If a single `@testset` covers multiple requirements, list all of them:
-`"R14b + R18: absorbed comment also provides summary"`.
+When one test covers multiple requirements, list all IDs:
+`"R14b + R18: absorbed comment also provides summary"` or `describe "A1 + A7: …"`.
 
 ### The test codebase is your fixture
 
@@ -211,12 +239,11 @@ strings unless the test genuinely cannot be expressed against the fixture.
 
 ### One requirement → one or more focused tests
 
-Every requirement in `design/codetree-requirements.md` must have at least one
-test. Requirements with conditional behaviour or edge cases need multiple:
+Every requirement in the relevant `design/*-requirements.md` file must have at
+least one test. Requirements with conditional behaviour or edge cases need multiple:
 
-- R1 (ordinal suffix): test the base case, the `$2` case, and the `$3` case
-- R11 (detail threshold): test both sides of the threshold
-- R14a/b/c: test the positive case and the negative (non-triggered) case
+- R11 / A37a (thresholds): test both sides of the boundary
+- R14a/b/c / A1 (step transitions): test each case, positive and negative
 
 ### Anti-patterns to avoid
 
