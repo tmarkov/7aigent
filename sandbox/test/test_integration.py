@@ -20,6 +20,7 @@ Requirements tested:
 
 from dataclasses import dataclass
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -32,7 +33,8 @@ except ImportError:
     pytest.skip("jupyter_client not installed", allow_module_level=True)
 
 REPO_ROOT = Path(__file__).parent.parent.parent
-BUILT_LAUNCHER = REPO_ROOT / "result" / "bin" / "7aigent-sandbox"
+BUILT_LAUNCHER = Path(os.environ["SANDBOX_LAUNCHER"]) if "SANDBOX_LAUNCHER" in os.environ \
+    else REPO_ROOT / "result" / "bin" / "7aigent-sandbox"
 
 
 @dataclass

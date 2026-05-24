@@ -37,6 +37,7 @@
         sandbox = pkgs.callPackage ./sandbox {
           inherit codeTree juliaEnv;
           gvisor = pkgs.gvisor;
+          python3 = pkgs.python3;
         };
         agent = pkgs.callPackage ./agent {
           spago = pkgs.spago-unstable;

@@ -1,4 +1,4 @@
-{ stdenv, julia, lib, gvisor, codeTree, juliaEnv, cacert, bubblewrap, coreutils, bash, iputils, closureInfo, git }:
+{ stdenv, julia, lib, gvisor, codeTree, juliaEnv, cacert, bubblewrap, coreutils, bash, iputils, closureInfo, git, python3 }:
 
 let
   # juliaEnv is the single shared environment defined in flake.nix,
@@ -110,6 +110,18 @@ stdenv.mkDerivation {
       7aigent-sandbox > $out/bin/7aigent-sandbox
 
     chmod +x $out/bin/7aigent-sandbox
+  '';
+
+  doCheck = true;
+
+  nativeCheckInputs = [
+    (python3.withPackages (ps: [ ps.pytest ]))
+  ];
+
+  checkPhase = ''
+    # Run launcher dry-run tests (no KVM required — uses SANDBOX_DRY_RUN=1).
+    SANDBOX_LAUNCHER=$out/bin/7aigent-sandbox \
+      pytest -x test/test_launcher.py
   '';
 
   meta = with lib; {

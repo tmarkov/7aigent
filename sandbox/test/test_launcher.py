@@ -37,7 +37,8 @@ import time
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent.parent
-BUILT_LAUNCHER = REPO_ROOT / "result" / "bin" / "7aigent-sandbox"
+BUILT_LAUNCHER = Path(os.environ["SANDBOX_LAUNCHER"]) if "SANDBOX_LAUNCHER" in os.environ \
+    else REPO_ROOT / "result" / "bin" / "7aigent-sandbox"
 SANDBOX_GIT_ROOT = "/git-metadata"
 UUID4_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",

@@ -132,7 +132,7 @@ pkgs.testers.nixosTest {
       graphics = false;
     };
     environment.systemPackages = [
-      (pkgs.python3.withPackages (ps: [ ps.jupyter-client ]))
+      (pkgs.python3.withPackages (ps: [ ps.jupyter-client ps.pytest ]))
       pkgs.gvisor
       pkgs.iputils
     ];
@@ -172,6 +172,25 @@ pkgs.testers.nixosTest {
         raise Exception("kernel test failed — see logs above")
     _, klog = machine.execute("cat /tmp/kernel-test.log")
     print(klog)
+
+    # Kill the first sandbox (the pytest integration tests start their own)
+    machine.execute("kill $(cat /tmp/7aigent-*/sockets/../sandbox.pid 2>/dev/null) 2>/dev/null || true")
+    machine.sleep(2)
+
+    # Run pytest integration tests (test_integration.py).
+    # These start their own sandbox via the running_kernel fixture.
+    rc, _ = machine.execute(
+        "SANDBOX_LAUNCHER=${sandbox}/bin/7aigent-sandbox "
+        "SANDBOX_PLATFORM=systrap "
+        "pytest -x ${sandbox.src}/test/test_integration.py "
+        "2>&1 | tee /tmp/pytest-integration.log"
+    )
+    if rc != 0:
+        _, log = machine.execute("cat /tmp/pytest-integration.log")
+        print("=== pytest-integration.log ===\n" + log)
+        raise Exception("pytest integration tests failed — see logs above")
+    _, log = machine.execute("cat /tmp/pytest-integration.log")
+    print(log)
   '';
 }
 
