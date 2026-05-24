@@ -12,6 +12,7 @@ import Data.Maybe (fromMaybe)
 import Agent.Types (WorkspacePath(..), SessionId(..))
 import Agent.Programs.CLI (parseCLIArgs, CLIMode(..))
 import Agent.Runner.Session (runNewSession, runResumeSession, runListSessions, runMcpServer)
+import Agent.Runner.Services (productionServices)
 import Agent.Services.Terminal (printErr)
 
 main :: Effect Unit
@@ -26,10 +27,10 @@ main = launchAff_ do
             liftEffect $ printErr msg
             liftEffect $ Process.exit' 1
         ListSessions ->
-            runListSessions ws
+            runListSessions productionServices ws
         ResumeSession sid ->
-            runResumeSession ws sid parsed.prompt
+            runResumeSession productionServices ws sid parsed.prompt
         McpServer port ->
-            runMcpServer ws port
+            runMcpServer productionServices ws port
         StartSession ->
-            runNewSession ws parsed.prompt
+            runNewSession productionServices ws parsed.prompt
