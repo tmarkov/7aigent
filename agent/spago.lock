@@ -44,7 +44,7 @@
     },
     "package_set": {
       "address": {
-        "registry": "76.2.1"
+        "registry": "77.3.1"
       },
       "compiler": ">=0.15.15 <0.16.0",
       "content": {
@@ -293,7 +293,7 @@
         "js-maps": "0.1.2",
         "js-promise": "1.0.0",
         "js-promise-aff": "1.0.0",
-        "js-temporal": "2.1.0",
+        "js-temporal": "3.0.0",
         "js-timers": "6.1.0",
         "js-uri": "3.1.0",
         "jsdom": "1.0.0",
@@ -430,6 +430,7 @@
         "profunctor-lenses": "8.0.0",
         "prospero": "0.1.0",
         "protobuf": "4.4.0",
+        "ps-spa": "0.7.1",
         "psa-utils": "8.0.0",
         "psci-support": "6.0.0",
         "punycode": "1.0.0",
@@ -651,7 +652,7 @@
         "yoga-fastify": "0.5.1",
         "yoga-fastify-om": "0.4.4",
         "yoga-fetch": "1.0.1",
-        "yoga-fetch-om": "0.6.2",
+        "yoga-fetch-om": "0.6.3",
         "yoga-http-api": "0.3.1",
         "yoga-jaeger": "0.1.1",
         "yoga-json": "5.2.1",

@@ -38,4 +38,4 @@ workspace:
   # Run `spago install` after editing this file to regenerate spago.lock,
   # then update the outputHash in agent/default.nix.
   packageSet:
-    registry: 76.2.1
+    registry: 77.3.1

@@ -38,7 +38,7 @@ let
 
     outputHashAlgo = "sha256";
     outputHashMode = "recursive";
-    outputHash = "sha256-DpVGUCx6U1lCLAhHDZVZCvBGNbSbyx/ECSs4KA1zmP8=";
+    outputHash = "sha256-kKvmmTYRqcHO7QsPpJpM1Bey70saDkOdQwUsrvvMhuA=";
 
     buildPhase = ''
       export HOME=$TMPDIR
@@ -62,7 +62,7 @@ buildNpmPackage {
   src = ./.;
 
   # Update with: nix run nixpkgs#prefetch-npm-deps agent/package-lock.json
-  npmDepsHash = "sha256-ITLCHv0KOcnLIn79HpXuhvDfo2pc9kskIrfasM08y08=";
+  npmDepsHash = "sha256-k2QcwtlRAnEq/ONnnfRO/O460X/rgBaV6Nzcbxy6srU=";
 
   # pkg-config + zeromq: required to compile the zeromq native Node.js addon.
   # purescript + spago: compile PureScript source and run tests.
