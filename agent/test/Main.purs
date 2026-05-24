@@ -9,6 +9,7 @@ import Test.Spec.Runner (runSpec)
 import Test.CLISpec (cliSpec)
 import Test.CompactionSpec (compactionSpec)
 import Test.ConfigSpec (configSpec)
+import Test.ControllerSpec (controllerSpec)
 import Test.GitCommitSpec (gitCommitSpec)
 import Test.GitDiffSpec (gitDiffSpec)
 import Test.InterruptionSpec (interruptionSpec)
@@ -29,12 +30,15 @@ import Test.SteeringSpec (steeringSpec)
 import Test.TemplateSpec (templateSpec)
 import Test.TimeoutSpec (timeoutSpec)
 import Test.ToolDefsSpec (toolDefsSpec)
+import Test.WireFormatSpec (wireFormatSpec)
+import Test.RoundStepSpec (roundStepSpec)
 
 main :: Effect Unit
 main = launchAff_ $ runSpec [ consoleReporter ] do
   cliSpec
   compactionSpec
   configSpec
+  controllerSpec
   gitCommitSpec
   gitDiffSpec
   interruptionSpec
@@ -46,6 +50,7 @@ main = launchAff_ $ runSpec [ consoleReporter ] do
   reflectionSpec
   replSerializeSpec
   retrySpec
+  roundStepSpec
   sandboxPreflightSpec
   sessionListingSpec
   sessionLogSpec
@@ -55,3 +60,4 @@ main = launchAff_ $ runSpec [ consoleReporter ] do
   templateSpec
   timeoutSpec
   toolDefsSpec
+  wireFormatSpec

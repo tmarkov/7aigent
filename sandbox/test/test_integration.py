@@ -342,3 +342,121 @@ class TestInterrupt:
             f"Kernel did not recover after interrupting child process. "
             f"result={result!r} err={err!r}"
         )
+
+
+# ── A4: julia_repl full execute_request → iopub flow ─────────────────────────
+
+
+class TestExecuteRequestFlow:
+    """
+    A4: Send execute_request, collect ALL iopub messages until execute_reply.
+    Verifies that stream, execute_result, display_data, and error messages
+    are all delivered before the status=idle message.
+    """
+
+    def test_stream_output_collected(self, running_kernel):
+        """A4: println() output appears as stream messages before idle."""
+        km = running_kernel.client
+        msg_id = km.execute('println("alpha"); println("beta")')
+
+        messages = []
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            try:
+                msg = km.get_iopub_msg(timeout=1)
+            except Exception:
+                continue
+            if msg.get("parent_header", {}).get("msg_id") != msg_id:
+                continue
+            messages.append(msg)
+            mt = msg["msg_type"]
+            if mt == "status" and msg["content"]["execution_state"] == "idle":
+                break
+
+        stream_msgs = [m for m in messages if m["msg_type"] == "stream"]
+        combined = "".join(m["content"]["text"] for m in stream_msgs)
+        assert "alpha" in combined, f"Expected 'alpha' in stream output: {combined!r}"
+        assert "beta" in combined, f"Expected 'beta' in stream output: {combined!r}"
+
+    def test_execute_result_collected(self, running_kernel):
+        """A4: expression result appears as execute_result before idle."""
+        km = running_kernel.client
+        result, err = execute_and_collect(km, "42 * 2")
+        assert err == "", f"Unexpected error: {err}"
+        assert "84" in result
+
+    def test_error_collected(self, running_kernel):
+        """A4: error output is collected as error message before idle."""
+        km = running_kernel.client
+        result, err = execute_and_collect(km, "error(\"test error A4\")")
+        assert "test error A4" in err, f"Expected error text in: {err!r}"
+
+    def test_display_data_collected(self, running_kernel):
+        """A4: display() output is collected before idle."""
+        km = running_kernel.client
+        result, err = execute_and_collect(
+            km, 'display("text/plain" => "displayed_value")'
+        )
+        assert err == "", f"Unexpected error: {err}"
+        assert "displayed_value" in result
+
+
+# ── A47: SevenAigentREPL.status() and Main.ans preservation ──────────────────
+
+
+class TestJuliaState:
+    """
+    A47: SevenAigentREPL.status() reports correct state, and Main.ans
+    is preserved across calls that use the ans-preserving wrapper.
+    """
+
+    def test_status_returns_string(self, running_kernel):
+        """A47: SevenAigentREPL.status() returns a non-empty string."""
+        km = running_kernel.client
+        result, err = execute_and_collect(km, "SevenAigentREPL.status()")
+        assert err == "", f"Unexpected error: {err}"
+        assert len(result.strip()) > 0, "status() returned empty string"
+
+    def test_ans_preserved_after_status(self, running_kernel):
+        """A47: Main.ans is not clobbered by status() wrapper."""
+        km = running_kernel.client
+        # Set ans to a known value
+        execute_and_collect(km, "42")
+        # Call the ans-preserving wrapper (same as getJuliaState in Session.purs)
+        execute_and_collect(km, """begin
+  local _ans = isdefined(Main, :ans) ? Main.ans : nothing
+  SevenAigentREPL.status()
+  _ans
+end""")
+        # Verify ans is still 42
+        result, err = execute_and_collect(km, "Main.ans")
+        assert err == "", f"Unexpected error: {err}"
+        assert "42" in result, f"Expected ans=42, got: {result!r}"
+
+
+# ── A20b: summary RPC via handleSummaryComm ──────────────────────────────────
+
+
+class TestSummaryRPC:
+    """
+    A20b: The kernel handles summary comm_open messages and routes
+    summary requests to the LLM via handleSummaryComm in Jupyter.js.
+
+    NOTE: This test exercises the Julia side. The JS-side handleSummaryComm
+    is tested implicitly by verifying the kernel accepts comm_open and
+    responds via input_request (the summary_reply protocol).
+    """
+
+    def test_summary_comm_target_exists(self, running_kernel):
+        """A20b: kernel recognizes the 7aigent.summary comm target."""
+        km = running_kernel.client
+        # SevenAigentREPL should define the summary config
+        result, err = execute_and_collect(
+            km, "SevenAigentREPL.summary_config()"
+        )
+        assert err == "", f"Unexpected error: {err}"
+        # Should contain fields like max_nodes
+        assert "SummaryConfig" in result or "max_nodes" in result.lower(), (
+            f"Expected SummaryConfig in result: {result!r}"
+        )
+

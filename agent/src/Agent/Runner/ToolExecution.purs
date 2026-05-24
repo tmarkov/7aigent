@@ -20,7 +20,7 @@ import Effect.Class (liftEffect)
 import Agent.Types
     ( WorkspacePath
     , SessionId
-    , Timestamp
+    , Timestamp(..)
     , ToolName(..)
     , Config
     , ConversationHistory(..)
@@ -47,11 +47,11 @@ import Agent.Programs.ToolInput
     , parseGitCommitInput
     )
 import Agent.Programs.ToolOutput (processToolOutput)
-import Agent.Services.Jupyter (KernelHandle, executeCode)
-import Agent.Services.Terminal (printLn)
+import Agent.Runner.Services (RunnerServices)
+import Agent.Services.Jupyter (KernelHandle)
 
 doTool
-    :: Aff Timestamp
+    :: RunnerServices
     -> WorkspacePath
     -> SessionId
     -> Config
@@ -60,25 +60,25 @@ doTool
     -> ToolCall
     -> Set HunkId
     -> Aff (Tuple ConversationHistory (Set HunkId))
-doTool timestampNow ws sessionId config kernel history tc knownHunks = do
-    ts <- timestampNow
+doTool svc ws sessionId config kernel history tc knownHunks = do
+    ts <- Timestamp <$> liftEffect svc.nowIso
     writeLogEvent ws sessionId (EvtToolCall
         { timestamp: ts
         , toolName: tc.name
         , toolCallId: tc.id
         , input: tc.input
         })
-    liftEffect $ printLn ("\n[Tool: " <> renderToolName tc.name <> "]")
+    liftEffect $ svc.printLn ("\n[Tool: " <> renderToolName tc.name <> "]")
     let inputSummary = summarizeToolInput tc.name tc.input
     when (not (String.null inputSummary)) do
-        liftEffect $ printLn inputSummary
+        liftEffect $ svc.printLn inputSummary
 
-    Tuple rawOut hunks' <- dispatchTool ws kernel tc knownHunks
+    Tuple rawOut hunks' <- dispatchTool svc ws kernel tc knownHunks
 
     let proc = processToolOutput config.outputThresholdChars rawOut
-    liftEffect $ printLn proc.displayText
+    liftEffect $ svc.printLn proc.displayText
 
-    ts2 <- timestampNow
+    ts2 <- Timestamp <$> liftEffect svc.nowIso
     writeLogEvent ws sessionId (ToolResult
         { timestamp: ts2
         , toolCallId: tc.id
@@ -90,16 +90,17 @@ doTool timestampNow ws sessionId config kernel history tc knownHunks = do
     pure (Tuple (addMsg history toolMsg) hunks')
 
 dispatchTool
-    :: WorkspacePath
+    :: RunnerServices
+    -> WorkspacePath
     -> KernelHandle
     -> ToolCall
     -> Set HunkId
     -> Aff (Tuple String (Set HunkId))
-dispatchTool ws kernel tc knownHunks =
+dispatchTool svc ws kernel tc knownHunks =
     case tc.name of
         JuliaRepl -> do
             let code = parseJuliaCodeInput tc.input
-            out <- executeCode kernel (RawJulia code) (const (pure unit))
+            out <- svc.executeCode kernel (RawJulia code) (const (pure unit))
             pure (Tuple out Set.empty)
 
         GitDiff -> do
