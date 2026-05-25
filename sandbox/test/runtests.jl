@@ -553,3 +553,59 @@ end
 
     @test occursin("module DataProcessor", witness.text)
 end
+
+# ===========================================================================
+# RA33 — Base.replace override prints match count
+# ===========================================================================
+
+@testset "RA33: replace prints 'replaced 1 occurrence(s)' when pattern matches once" begin
+    s = "hello world"
+    original_stdout = Base.stdout
+    (rd, wr) = redirect_stdout()
+    result = replace(s, "world" => "Julia")
+    redirect_stdout(original_stdout)
+    close(wr)
+    output = read(rd, String)
+
+    @test result == "hello Julia"
+    @test occursin("replaced 1 occurrence(s)", output)
+end
+
+@testset "RA33: replace prints 'replaced 0 occurrence(s)' when pattern absent" begin
+    s = "hello world"
+    original_stdout = Base.stdout
+    (rd, wr) = redirect_stdout()
+    result = replace(s, "typo" => "fix")
+    redirect_stdout(original_stdout)
+    close(wr)
+    output = read(rd, String)
+
+    @test result == "hello world"
+    @test occursin("replaced 0 occurrence(s)", output)
+end
+
+@testset "RA33: replace reports correct count for multiple occurrences" begin
+    s = "aababab"
+    original_stdout = Base.stdout
+    (rd, wr) = redirect_stdout()
+    result = replace(s, "ab" => "X")
+    redirect_stdout(original_stdout)
+    close(wr)
+    output = read(rd, String)
+
+    @test result == "aXXX"
+    @test occursin("replaced 3 occurrence(s)", output)
+end
+
+@testset "RA33: replace respects count keyword and reports capped replacements" begin
+    s = "aababab"
+    original_stdout = Base.stdout
+    (rd, wr) = redirect_stdout()
+    result = replace(s, "ab" => "X"; count = 2)
+    redirect_stdout(original_stdout)
+    close(wr)
+    output = read(rd, String)
+
+    @test result == "aXXab"
+    @test occursin("replaced 2 occurrence(s)", output)
+end

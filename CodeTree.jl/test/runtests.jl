@@ -1101,7 +1101,7 @@ end
 end
 
 # ===========================================================================
-# Phase 9 — update_source (R30–R35)
+# Phase 9 — update_source (R30–R36)
 # ===========================================================================
 
 @testset "R30: update_source succeeds and updates db.code" begin
@@ -1290,6 +1290,76 @@ end
         @test sort(db.code.id)      == ids_before
         @test db._buffer[node.file] == buf_before
         @test nrow(db.symbols)      == syms_count_before
+
+        chmod(utils_path, 0o644)
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R36: update_source prints a compact diff to stdout" begin
+    tmp = _tmp_codebase()
+    try
+        db = load(tmp, TEST_CONFIG)
+        node = only(filter(r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"), db.code))
+        new_src = "function is_sorted(v)\n    return issorted(v)\nend\n"
+
+        original_stdout = Base.stdout
+        (rd, wr) = redirect_stdout()
+        update_source(db, node.id, new_src)
+        redirect_stdout(original_stdout)
+        close(wr)
+        output = read(rd, String)
+
+        @test occursin("update_source:", output)
+        @test occursin(node.file, output)
+        @test occursin("+", output) || occursin("-", output)
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R36: update_source diff header contains correct +/- counts" begin
+    tmp = _tmp_codebase()
+    try
+        db = load(tmp, TEST_CONFIG)
+        node = only(filter(r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"), db.code))
+        # Original is 3 lines; replace with 5 lines (net +2 lines)
+        new_src = "# is_sorted: linear scan\nfunction is_sorted(v)\n    n = length(v)\n    all(i -> v[i] <= v[i+1], 1:n-1)\nend\n"
+
+        original_stdout = Base.stdout
+        (rd, wr) = redirect_stdout()
+        update_source(db, node.id, new_src)
+        redirect_stdout(original_stdout)
+        close(wr)
+        output = read(rd, String)
+
+        @test occursin("+", output)
+        @test occursin("-", output)
+        # Added lines should appear prefixed with "+"
+        @test any(occursin("+", l) for l in split(output, '\n') if !startswith(l, "update_source:"))
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R36: failed update_source produces no stdout output" begin
+    tmp = _tmp_codebase()
+    try
+        db = load(tmp, TEST_CONFIG)
+        node = only(filter(r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"), db.code))
+
+        utils_path = joinpath(tmp, "julia", "utils.jl")
+        chmod(utils_path, 0o444)
+
+        original_stdout = Base.stdout
+        (rd, wr) = redirect_stdout()
+        @test_throws Exception update_source(db, node.id, "function is_sorted(v)\n    return true\nend\n")
+        redirect_stdout(original_stdout)
+        close(wr)
+        output = read(rd, String)
+
+        @test !occursin("update_source:", output)
 
         chmod(utils_path, 0o644)
     finally

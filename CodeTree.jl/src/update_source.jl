@@ -1,4 +1,4 @@
-# update_source() — R30–R35.
+# update_source() — R30–R36.
 #
 # This is the sole authorized mutation path (R30). It:
 #   1. Detects external file changes and re-indexes if needed (R30a)
@@ -7,6 +7,7 @@
 #   4. Updates db.code and db.symbols atomically before disk write (R33, R33a)
 #   5. Writes to disk and updates the SQLite cache (R34)
 #   6. Rolls back all in-memory state if the disk write fails (R35)
+#   7. Prints a compact diff to stdout on success (R36)
 
 """
     get_source(db, id) -> String
@@ -108,6 +109,9 @@ function update_source(
         merge!(getfield(db.code, :_summary_overrides), old_summary_overrides)
         rethrow(e)
     end
+
+    # --- R36: print compact diff to stdout ---
+    _print_update_diff(file_rel, current_node_src, new_src)
 
     return nothing
 end
@@ -341,4 +345,87 @@ function _update_cache_for_file!(
         close(cache_db)
     end
     return nothing
+end
+
+# ---------------------------------------------------------------------------
+# R36 — compact diff helpers
+# ---------------------------------------------------------------------------
+
+const _DIFF_MAX_DISPLAY_LINES = 20
+
+# Print a compact diff of the replaced node span to stdout (R36).
+function _print_update_diff(
+    file_rel::String,
+    old_node_src::String,
+    new_src::String,
+)::Nothing
+    old_lines = _split_lines_for_diff(old_node_src)
+    new_lines = _split_lines_for_diff(new_src)
+
+    edits = _line_diff(old_lines, new_lines)
+
+    n_added   = count(e -> e[1] === :add, edits)
+    n_removed = count(e -> e[1] === :del, edits)
+
+    println("update_source: $file_rel (+$n_added / -$n_removed lines)")
+
+    displayed = 0
+    truncated = false
+    for (kind, line) in edits
+        kind === :same && continue
+        if displayed >= _DIFF_MAX_DISPLAY_LINES
+            truncated = true
+            break
+        end
+        prefix = kind === :add ? "+" : "-"
+        println("  $prefix $line")
+        displayed += 1
+    end
+    truncated && println("  ...")
+
+    return nothing
+end
+
+function _split_lines_for_diff(src::String)::Vector{String}
+    lines = split(src, '\n')
+    !isempty(lines) && isempty(lines[end]) && pop!(lines)
+    return lines
+end
+
+# Compute a line-level diff between two sequences using LCS.
+# Returns a vector of (:same/:add/:del, line) tuples.
+# Falls back to listing all deletions then insertions for large inputs.
+function _line_diff(
+    a::Vector{String},
+    b::Vector{String},
+)::Vector{Tuple{Symbol,String}}
+    m, n = length(a), length(b)
+
+    if m * n > 50_000
+        result = Tuple{Symbol,String}[]
+        for l in a; push!(result, (:del, l)); end
+        for l in b; push!(result, (:add, l)); end
+        return result
+    end
+
+    dp = zeros(Int, m + 1, n + 1)
+    for i in 1:m, j in 1:n
+        dp[i+1, j+1] = a[i] == b[j] ? dp[i, j] + 1 : max(dp[i, j+1], dp[i+1, j])
+    end
+
+    result = Tuple{Symbol,String}[]
+    i, j = m, n
+    while i > 0 || j > 0
+        if i > 0 && j > 0 && a[i] == b[j]
+            pushfirst!(result, (:same, a[i]))
+            i -= 1; j -= 1
+        elseif j > 0 && (i == 0 || dp[i, j+1] >= dp[i+1, j])
+            pushfirst!(result, (:add, b[j]))
+            j -= 1
+        else
+            pushfirst!(result, (:del, a[i]))
+            i -= 1
+        end
+    end
+    return result
 end

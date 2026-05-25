@@ -392,3 +392,12 @@ are consistent with the new content.
 rolls back `db.code`, `db.symbols`, and the in-memory buffer to the state
 they held before the call, then raises an error. After a failed
 `update_source` the `db` must be indistinguishable from its pre-call state.
+
+**R36** — After a successful edit, `update_source` prints a compact diff to
+`stdout`. The output begins with a header line of the form
+`update_source: <file> (+N / -M lines)` where `N` is the number of lines
+added and `M` is the number of lines removed relative to the replaced node
+span. Following the header, each changed line is printed prefixed by `+ ` for
+additions and `- ` for deletions, bounded to at most 20 changed lines total;
+if the diff is longer a trailing `  ...` line is appended. Unchanged lines
+are not printed. No output is produced on a failed `update_source` call.
