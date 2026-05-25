@@ -304,6 +304,29 @@ Test observable outputs: the contents of `db.code` and `db.symbols` after
 
 ---
 
+## Filing Issues
+
+Issues live in `issues/` as plain Markdown files. The filename encodes the
+status and number:
+
+```
+issues/<status>: #<number> <short title>.md
+```
+
+- `<status>` should be `open` for new issues, and changed to `done` once the issue is completed.
+- `<number>` is a four-digit zero-padded integer (`%04d`), assigned
+  sequentially by creation date. The next number is one higher than the
+  highest currently in the directory.
+- `<short title>` is a brief, lowercase description of the issue.
+
+**Creating a new issue:** pick the next available number, write the file with
+status `open`, and commit it. Do not reuse or skip numbers.
+
+**Closing an issue:** rename the file from `open: #NNNN …` to `done: #NNNN …`
+using `git mv` so history is preserved.
+
+---
+
 ## Commit Messages
 
 - Write the subject line in the imperative mood: *"Add R14b absorption rule"*,
