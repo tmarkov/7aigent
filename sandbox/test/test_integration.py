@@ -53,6 +53,76 @@ def get_launcher() -> Path:
     )
 
 
+def _wait_for_kernel_sockets(
+    host_sockets_dir: Path,
+    conn: dict,
+    proc: subprocess.Popen,
+    timeout: float = 120.0,
+) -> None:
+    """Block until Julia has created the ZMQ IPC socket files.
+
+    kernel.json is written by the launcher shell *before* Julia starts inside
+    gvisor. The ZMQ IPC socket files (e.g. ``kernel-5`` for the heartbeat
+    channel) are only created when Julia loads IJulia and calls
+    ``run_kernel()``. Under gvisor systrap this can take tens of seconds.
+
+    If we connect jupyter_client before the socket files exist, the heartbeat
+    thread fails immediately (``time_to_dead = 1.0`` s in jupyter_client) and
+    ``wait_for_ready`` raises "Kernel died before replying to kernel_info"
+    within ~3 seconds — long before the 30-second timeout fires.
+
+    This helper polls for the heartbeat socket file and skips the test if the
+    launcher exits early (unsupported runner environment).
+    """
+    hb_socket = host_sockets_dir / f"kernel-{conn['hb_port']}"
+    deadline = time.monotonic() + timeout
+    while not hb_socket.exists():
+        if proc.poll() is not None:
+            stderr = proc.stderr.read().strip()
+            pytest.skip(
+                "Sandbox launcher exited before kernel created sockets: "
+                f"{stderr or 'runner unsupported in this environment'}"
+            )
+        if time.monotonic() > deadline:
+            proc.terminate()
+            pytest.fail(
+                f"Kernel sockets not created within {timeout:.0f} seconds "
+                f"(expected {hb_socket})"
+            )
+        time.sleep(0.2)
+    # Small buffer to let Julia bind all channels before we connect.
+    time.sleep(0.5)
+
+
+def _wait_for_process_exit(proc: subprocess.Popen, runtime_dir: Path) -> None:
+    """Gracefully shut down the sandbox launcher and verify cleanup.
+
+    Under gvisor systrap the Julia process and gvisor itself can take
+    30-60 seconds to exit cleanly after a shutdown request or SIGTERM.
+    This helper:
+      1. Waits up to 90 s for a natural exit (e.g. after km.shutdown()).
+      2. If the process is still alive, sends SIGTERM (which triggers the
+         launcher's cleanup trap) and waits another 60 s.
+      3. As a last resort, sends SIGKILL.
+    Only asserts that runtime_dir was cleaned up when we know SIGTERM had a
+    chance to run the trap (i.e. the process exited on its own or via SIGTERM).
+    """
+    killed = False
+    try:
+        proc.wait(timeout=90)
+    except subprocess.TimeoutExpired:
+        proc.terminate()
+        try:
+            proc.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            killed = True
+
+    if not killed:
+        assert not runtime_dir.exists(), f"runtime directory leaked: {runtime_dir}"
+
+
 @pytest.fixture(scope="module")
 def workspace(tmp_path_factory):
     """A minimal workspace directory with a .git subdirectory."""
@@ -84,17 +154,15 @@ def running_kernel(workspace):
         f"kernel.json not found: {kernel_json_path}\nstderr: {proc.stderr.read()}"
     )
 
-    time.sleep(1.0)
-    if proc.poll() is not None:
-        stderr = proc.stderr.read().strip()
-        pytest.skip(
-            "Sandbox launcher exited before the kernel became usable: "
-            f"{stderr or 'runner unsupported in this environment'}"
-        )
-
     runtime_dir = kernel_json_path.parent.parent
     conn = json.loads(kernel_json_path.read_text())
     host_sockets_dir = kernel_json_path.parent
+
+    # kernel.json is written by the launcher shell *before* Julia starts.
+    # Wait for the ZMQ IPC socket files to appear (Julia creates them when it
+    # loads IJulia and binds the channels). Without this, jupyter_client's
+    # 1-second heartbeat fires immediately, reporting a false "kernel died".
+    _wait_for_kernel_sockets(host_sockets_dir, conn, proc)
 
     conn["ip"] = str(host_sockets_dir / "kernel")
     tmp_conn = host_sockets_dir / "kernel-host.json"
@@ -120,8 +188,7 @@ def running_kernel(workspace):
 
     km.shutdown()
     km.stop_channels()
-    proc.wait(timeout=10)
-    assert not runtime_dir.exists(), f"runtime directory leaked: {runtime_dir}"
+    _wait_for_process_exit(proc, runtime_dir)
 
 
 @pytest.fixture(scope="module")
@@ -145,17 +212,11 @@ def raw_running_kernel(workspace):
         f"kernel.json not found: {kernel_json_path}\nstderr: {proc.stderr.read()}"
     )
 
-    time.sleep(1.0)
-    if proc.poll() is not None:
-        stderr = proc.stderr.read().strip()
-        pytest.skip(
-            "Sandbox launcher exited before the kernel became usable: "
-            f"{stderr or 'runner unsupported in this environment'}"
-        )
-
     runtime_dir = kernel_json_path.parent.parent
     conn = json.loads(kernel_json_path.read_text())
     host_sockets_dir = kernel_json_path.parent
+
+    _wait_for_kernel_sockets(host_sockets_dir, conn, proc)
 
     conn["ip"] = str(host_sockets_dir / "kernel")
     tmp_conn = host_sockets_dir / "kernel-host.json"
@@ -169,8 +230,7 @@ def raw_running_kernel(workspace):
 
     km.stop_channels()
     proc.terminate()
-    proc.wait(timeout=10)
-    assert not runtime_dir.exists(), f"runtime directory leaked: {runtime_dir}"
+    _wait_for_process_exit(proc, runtime_dir)
 
 
 def execute_and_collect(km, code, timeout=30):

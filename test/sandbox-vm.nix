@@ -143,6 +143,9 @@ pkgs.testers.nixosTest {
 
     # Set up a writable copy of the test codebase as the workspace
     machine.execute("cp -r ${testCodebase} /tmp/test-codebase && chmod -R u+w /tmp/test-codebase")
+    # Ensure .7aigent/state exists — the directory is gitignored so the nix
+    # flake source filter strips it from the testCodebase derivation.
+    machine.execute("mkdir -p /tmp/test-codebase/.7aigent/state")
 
     # Start the sandbox under runsc with systrap platform.
     # systrap uses ptrace-based syscall interception — no KVM required — so it
