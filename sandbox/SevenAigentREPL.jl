@@ -64,7 +64,6 @@ const _summary_transport_ref = Ref{Any}(nothing)
 
 include("SevenAigentREPL/Display.jl")
 include("SevenAigentREPL/Todo.jl")
-include("SevenAigentREPL/Edit.jl")
 
 """
     bind!(workspace, db) -> Nothing

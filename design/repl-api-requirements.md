@@ -289,17 +289,3 @@ defined or is not a `DataFrame`, `status()` prints nothing and returns normally.
 `status()` must not throw under any circumstances and must not modify any state.
 The specific output format is at the discretion of the implementation; it is
 consumed as the `{{julia_state}}` substitution value by the runner (A47).
-
----
-
-### Editing Feedback
-
-**RA33** — The REPL API module extends `Base.replace` for `String` first
-arguments by adding a method that prints the number of substitutions made to
-`stdout` before returning the result. The printed message has the form
-`replaced N occurrence(s)` where `N` is the number of non-overlapping matches
-of the pattern in the original string, capped by the `count` keyword argument
-when supplied. The return value and observable side-effects of the replacement
-are identical to the standard `Base.replace` behaviour; only the additional
-`stdout` line is added. This method covers the single-`Pair` form
-`replace(s, pat => repl; count=…)` used in typical editing workflows.
