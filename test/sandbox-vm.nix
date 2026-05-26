@@ -1,5 +1,7 @@
 { pkgs, sandbox, codeTree, testCodebase }:
 let
+  common = import ./vm-common.nix { inherit pkgs; };
+
   # This script runs inside the VM (not in the type-checked test driver).
   # It connects to the running Julia kernel and exercises all required behaviours.
   kernelTestPy = pkgs.writeText "kernel-test.py" ''
@@ -124,14 +126,8 @@ pkgs.testers.nixosTest {
   # not in the test-driver Python that gets type-checked.
   skipTypeCheck = true;
 
-  nodes.machine = { ... }: {
-    boot.loader.grub.enable = false;
-    virtualisation = {
-      cores = 4;
-      memorySize = 4096;
-      graphics = false;
-    };
-    environment.systemPackages = [
+  nodes.machine = common.mkNode {
+    systemPackages = [
       (pkgs.python3.withPackages (ps: [ ps.jupyter-client ps.pytest ]))
       pkgs.gvisor
       pkgs.iputils
@@ -142,10 +138,7 @@ pkgs.testers.nixosTest {
     machine.wait_for_unit("multi-user.target")
 
     # Set up a writable copy of the test codebase as the workspace
-    machine.execute("cp -r ${testCodebase} /tmp/test-codebase && chmod -R u+w /tmp/test-codebase")
-    # Ensure .7aigent/state exists — the directory is gitignored so the nix
-    # flake source filter strips it from the testCodebase derivation.
-    machine.execute("mkdir -p /tmp/test-codebase/.7aigent/state")
+    machine.execute("${common.prepareWorkspaceCommand { inherit testCodebase; destination = "/tmp/test-codebase"; }}")
 
     # Start the sandbox under runsc with systrap platform.
     # systrap uses ptrace-based syscall interception — no KVM required — so it
@@ -196,4 +189,3 @@ pkgs.testers.nixosTest {
     print(log)
   '';
 }
-

@@ -20,14 +20,25 @@ import Effect.Class (liftEffect)
 import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (shouldEqual, shouldSatisfy, fail)
 
-import Agent.Types (WorkspacePath(..), SessionId(..), TokenCount(..), LlmResponse(..), ToolName(..), ToolCallId(..))
-import Agent.Runner.Session (runNewSession, runResumeSession)
-import Agent.Runner.Services (RunnerServices)
-import Agent.Services.Jupyter as Jupyter
+import Agent.Types (WorkspacePath(..), ConversationHistory(..), Message(..), SessionId(..), TokenCount(..), LlmResponse(..), ToolName(..), ToolCallId(..))
+import Agent.Runner.Session (runNewSession, runResumeSession, runListSessions)
 import Agent.Services.Llm as Llm
-import Test.Helpers.MockServices (MockState, CallRecord(..), mkMockServices, getCalls, callsMatching)
-import Test.Helpers.Workspace (withWorkspace, writeWorkspaceFile, writeSessionLog)
-import Test.Helpers.ControllerFixtures (setTestEnv, unsetTestEnv, testConfigToml, minimalSystemPrompt, mockKernelHandle, mockSandboxHandle)
+import Test.Helpers.MockServices
+    ( MockState
+    , CallRecord(..)
+    , mkMockServices
+    , getCalls
+    , getLlmHistories
+    , getLlmInvocations
+    )
+import Test.Helpers.Workspace
+    ( withWorkspace
+    , writeWorkspaceFile
+    , readWorkspaceFile
+    , workspaceFileExists
+    , writeSessionLog
+    )
+import Test.Helpers.ControllerFixtures (setTestEnv, setEmptyTestEnv, unsetTestEnv, testConfigToml, minimalSystemPrompt, mockKernelHandle, mockSandboxHandle)
 
 -- | Helper: call index of first occurrence matching a predicate
 indexOf :: (CallRecord -> Boolean) -> Array CallRecord -> Maybe Int
@@ -61,6 +72,25 @@ juliaToolLlmResult code =
         , inputTokens: TokenCount 100
         }
     , usage: { inputTokens: TokenCount 100, cachedInputTokens: TokenCount 0, outputTokens: TokenCount 30 }
+    }
+
+-- | An LLM response with a julia_repl tool call and explicit input-token count.
+juliaToolLlmResultHighTokens :: String -> Int -> Llm.CallLlmResult
+juliaToolLlmResultHighTokens code tokens =
+    { response: LlmResponse
+        { content: ""
+        , toolCalls:
+            [ { name: JuliaRepl, input: "{\"code\": " <> show code <> "}", id: ToolCallId "tc-1" } ]
+        , inputTokens: TokenCount tokens
+        }
+    , usage: { inputTokens: TokenCount tokens, cachedInputTokens: TokenCount 0, outputTokens: TokenCount 30 }
+    }
+
+-- | A text-only LLM response with explicit input-token count.
+textLlmResultHighTokens :: String -> Int -> Llm.CallLlmResult
+textLlmResultHighTokens content tokens =
+    { response: LlmResponse { content, toolCalls: [], inputTokens: TokenCount tokens }
+    , usage: { inputTokens: TokenCount tokens, cachedInputTokens: TokenCount 0, outputTokens: TokenCount 20 }
     }
 
 -- | A reflection response marking the round as complete
@@ -109,6 +139,36 @@ withTestSession opts check = withWorkspace \ws -> do
     _ <- attempt $ runNewSession svc ws (Just "test prompt")
     calls <- liftEffect $ getCalls state
     check state calls
+    liftEffect unsetTestEnv
+
+withTestSessionCustom
+    :: { llmResponses :: Array (Either String Llm.CallLlmResult)
+       , execResponses :: Array String
+       , execDetailedResponses :: Array { output :: String, hadError :: Boolean }
+       , readLineResponses :: Array String
+       , configToml :: String
+       , prompt :: Maybe String
+       }
+    -> (MockState -> Array CallRecord -> WorkspacePath -> Aff Unit)
+    -> Aff Unit
+withTestSessionCustom opts check = withWorkspace \ws -> do
+    writeWorkspaceFile ws ".7aigent/config.toml" opts.configToml
+    writeWorkspaceFile ws ".7aigent/system_prompt.md" minimalSystemPrompt
+    writeWorkspaceFile ws ".7aigent/startup.jl" "# empty startup"
+
+    liftEffect setTestEnv
+    { svc, state } <- liftEffect $ mkMockServices
+        { llmResponses: opts.llmResponses
+        , execResponses: opts.execResponses
+        , execDetailedResponses: opts.execDetailedResponses
+        , readLineResponses: opts.readLineResponses
+        , streamingChunks: []
+        , spawnResult: Right mockSandboxHandle
+        , connectResult: Right mockKernelHandle
+        }
+    _ <- attempt $ runNewSession svc ws opts.prompt
+    calls <- liftEffect $ getCalls state
+    check state calls ws
     liftEffect unsetTestEnv
 
 controllerSpec :: Spec Unit
@@ -402,6 +462,1023 @@ controllerSpec = do
                         CallExecuteCode code ->
                             String.contains (String.Pattern "foo") code
                         _ -> false))
+
+    describe "A9: large tool output is replaced for the LLM but logged in full" do
+        it "A9: output above threshold → LLM sees error text and session log keeps full output" do
+            let largeOutput = "This output is definitely longer than ten characters and must stay in the log."
+            let lowThresholdConfig = String.joinWith "\n"
+                    [ "api_endpoint = \"http://localhost:9999/v1/messages\""
+                    , "model = \"test-model\""
+                    , "api_key_env = \"TEST_7AIGENT_KEY\""
+                    , "output_threshold_chars = 10"
+                    , "max_api_retries = 3"
+                    , "max_tokens_per_turn = 50000"
+                    , "compaction_threshold = 40000"
+                    , "preserve_initial = 5000"
+                    , "preserve_final = 10000"
+                    , "max_turns_per_round = 3"
+                    ]
+            withTestSessionCustom
+                { llmResponses:
+                    [ Right (juliaToolLlmResult "big_output()")
+                    , Right (textLlmResult "Acknowledged")
+                    , Right reflectionComplete
+                    ]
+                , execResponses: [ largeOutput, "", "" ]
+                , execDetailedResponses:
+                    [ { output: "", hadError: false }
+                    , { output: "", hadError: false }
+                    ]
+                , readLineResponses: []
+                , configToml: lowThresholdConfig
+                , prompt: Just "test prompt"
+                } \state _ ws -> do
+                    histories <- liftEffect $ getLlmHistories state
+                    case Array.index histories 1 of
+                        Nothing -> fail "Expected a follow-up LLM call after tool execution"
+                        Just (ConversationHistory h) -> do
+                            let llmToolOutputs = Array.mapMaybe (\entry -> case entry.message of
+                                    ToolResultMessage r -> Just r.output
+                                    _ -> Nothing) h.messages
+                            llmToolOutputs `shouldSatisfy`
+                                (Array.any (\output ->
+                                    String.contains (String.Pattern "Output too large") output
+                                    && not (String.contains (String.Pattern largeOutput) output)))
+
+                    logText <- readWorkspaceFile ws ".7aigent/sessions/1/log.jsonl"
+                    logText `shouldSatisfy`
+                        (\text -> String.contains (String.Pattern largeOutput) text
+                            && String.contains (String.Pattern "\"truncated\":true") text)
+
+    describe "A23: unknown template keyword aborts before session start" do
+        it "A23: unknown keyword in system_prompt.md → informative exit and no session log" do
+            withWorkspace \ws -> do
+                writeWorkspaceFile ws ".7aigent/config.toml" testConfigToml
+                writeWorkspaceFile ws ".7aigent/system_prompt.md"
+                    "Hello {{unknown_nonexistent_keyword}}"
+                writeWorkspaceFile ws ".7aigent/startup.jl" ""
+                liftEffect setTestEnv
+                { svc, state } <- liftEffect $ mkMockServices
+                    { llmResponses: []
+                    , execResponses: []
+                    , execDetailedResponses:
+                        [ { output: "", hadError: false }
+                        , { output: "", hadError: false }
+                        ]
+                    , readLineResponses: []
+                    , streamingChunks: []
+                    , spawnResult: Right mockSandboxHandle
+                    , connectResult: Right mockKernelHandle
+                    }
+                _ <- attempt $ runNewSession svc ws (Just "test")
+                calls <- liftEffect $ getCalls state
+                liftEffect unsetTestEnv
+
+                calls `shouldSatisfy`
+                    (Array.any (\c -> c == CallExit 1))
+                calls `shouldSatisfy`
+                    (Array.any (\c -> case c of
+                        CallPrintErr s ->
+                            String.contains (String.Pattern "unknown") (String.toLower s)
+                                || String.contains (String.Pattern "keyword") (String.toLower s)
+                        _ -> false))
+
+                logExists <- workspaceFileExists ws ".7aigent/sessions/1/log.jsonl"
+                logExists `shouldEqual` false
+
+    describe "A29: julia_defs.jl is written from replay-safe julia_repl inputs" do
+        it "A29: pure julia definitions are written in execution order" do
+            withTestSessionCustom
+                { llmResponses:
+                    [ Right (juliaToolLlmResult "function alpha(x)\n    x + 1\nend")
+                    , Right (juliaToolLlmResult "1 + 1")
+                    , Right (juliaToolLlmResult "struct Beta\n    x::Int\nend")
+                    , Right (textLlmResult "Done")
+                    , Right reflectionComplete
+                    ]
+                , execResponses: [ "", "2", "", "", "" ]
+                , execDetailedResponses:
+                    [ { output: "", hadError: false }
+                    , { output: "", hadError: false }
+                    ]
+                , readLineResponses: []
+                , configToml: testConfigToml
+                , prompt: Just "test prompt"
+                } \_ _ ws -> do
+                    defsExists <- workspaceFileExists ws ".7aigent/sessions/1/julia_defs.jl"
+                    defsExists `shouldEqual` true
+                    defsText <- readWorkspaceFile ws ".7aigent/sessions/1/julia_defs.jl"
+                    defsText `shouldSatisfy`
+                        (\text ->
+                            String.contains (String.Pattern "function alpha") text
+                                && String.contains (String.Pattern "struct Beta") text
+                                && not (String.contains (String.Pattern "1 + 1") text)
+                                && case String.indexOf (String.Pattern "function alpha") text
+                                    , String.indexOf (String.Pattern "struct Beta") text of
+                                    Just alphaIx, Just betaIx -> alphaIx < betaIx
+                                    _, _ -> false)
+
+    describe "A13: EOF when idle behaves like SIGINT teardown" do
+        it "A13: interactive EOF → serialize, write session_end(eof), exit(0)" do
+            withTestSessionCustom
+                { llmResponses:
+                    [ Right (textLlmResult "Hello!")
+                    , Right reflectionComplete
+                    ]
+                , execResponses: [ "", "" ]
+                , execDetailedResponses:
+                    [ { output: "", hadError: false }
+                    , { output: "", hadError: false }
+                    ]
+                , readLineResponses: [ "hi", "" ]
+                , configToml: testConfigToml
+                , prompt: Nothing
+                } \_ calls ws -> do
+                    calls `shouldSatisfy`
+                        (Array.any (\c -> case c of
+                            CallExecuteCode code ->
+                                String.contains (String.Pattern "serialize") (String.toLower code)
+                                    || String.contains (String.Pattern "julia_state") code
+                            _ -> false))
+                    calls `shouldSatisfy`
+                        (Array.any (\c -> c == CallExit 0))
+
+                    logExists <- workspaceFileExists ws ".7aigent/sessions/1/log.jsonl"
+                    logExists `shouldEqual` true
+                    logText <- readWorkspaceFile ws ".7aigent/sessions/1/log.jsonl"
+                    logText `shouldSatisfy`
+                        (\text ->
+                            String.contains (String.Pattern "\"type\":\"session_end\"") text
+                                && String.contains (String.Pattern "\"reason\":\"eof\"") text)
+
+    describe "A20a: sandbox crash during a session" do
+        it "A20a: tool execution crash → session_end(error), informative error, exit(1)" do
+            withTestSessionCustom
+                { llmResponses: [ Right (juliaToolLlmResult "crash()") ]
+                , execResponses: [ "__CRASH__kernel connection lost" ]
+                , execDetailedResponses:
+                    [ { output: "", hadError: false }
+                    , { output: "", hadError: false }
+                    ]
+                , readLineResponses: []
+                , configToml: testConfigToml
+                , prompt: Just "test prompt"
+                } \_ calls ws -> do
+                    calls `shouldSatisfy`
+                        (Array.any (\c -> c == CallExit 1))
+                    calls `shouldSatisfy`
+                        (Array.any (\c -> case c of
+                            CallPrintErr s ->
+                                String.contains (String.Pattern "kernel") (String.toLower s)
+                                    || String.contains (String.Pattern "sandbox") (String.toLower s)
+                            _ -> false))
+
+                    logExists <- workspaceFileExists ws ".7aigent/sessions/1/log.jsonl"
+                    logExists `shouldEqual` true
+                    logText <- readWorkspaceFile ws ".7aigent/sessions/1/log.jsonl"
+                    logText `shouldSatisfy`
+                        (\text ->
+                            String.contains (String.Pattern "\"type\":\"session_end\"") text
+                                && String.contains (String.Pattern "\"reason\":\"error\"") text)
+
+    describe "A38: api_key_env failures abort startup" do
+        it "A38: missing env var → informative exit before session start" do
+            withWorkspace \ws -> do
+                let badKeyConfig = String.joinWith "\n"
+                        [ "api_endpoint = \"http://localhost:9999/v1/messages\""
+                        , "model = \"test-model\""
+                        , "api_key_env = \"NONEXISTENT_7AIGENT_KEY_XYZ\""
+                        , "output_threshold_chars = 5000"
+                        , "max_api_retries = 3"
+                        , "max_tokens_per_turn = 50000"
+                        , "compaction_threshold = 40000"
+                        , "preserve_initial = 5000"
+                        , "preserve_final = 10000"
+                        , "max_turns_per_round = 3"
+                        ]
+                writeWorkspaceFile ws ".7aigent/config.toml" badKeyConfig
+                writeWorkspaceFile ws ".7aigent/system_prompt.md" minimalSystemPrompt
+                writeWorkspaceFile ws ".7aigent/startup.jl" ""
+                liftEffect unsetTestEnv
+                { svc, state } <- liftEffect $ mkMockServices
+                    { llmResponses: []
+                    , execResponses: []
+                    , execDetailedResponses: []
+                    , readLineResponses: []
+                    , streamingChunks: []
+                    , spawnResult: Right mockSandboxHandle
+                    , connectResult: Right mockKernelHandle
+                    }
+                _ <- attempt $ runNewSession svc ws (Just "test")
+                calls <- liftEffect $ getCalls state
+                calls `shouldSatisfy`
+                    (Array.any (\c -> c == CallExit 1))
+                calls `shouldSatisfy`
+                    (Array.any (\c -> case c of
+                        CallPrintErr s ->
+                            String.contains (String.Pattern "env") (String.toLower s)
+                                || String.contains (String.Pattern "variable") (String.toLower s)
+                                || String.contains (String.Pattern "not set") (String.toLower s)
+                        _ -> false))
+                logExists <- workspaceFileExists ws ".7aigent/sessions/1/log.jsonl"
+                logExists `shouldEqual` false
+
+        it "A38: empty env var → informative exit before session start" do
+            withWorkspace \ws -> do
+                let emptyKeyConfig = String.joinWith "\n"
+                        [ "api_endpoint = \"http://localhost:9999/v1/messages\""
+                        , "model = \"test-model\""
+                        , "api_key_env = \"TEST_7AIGENT_KEY\""
+                        , "output_threshold_chars = 5000"
+                        , "max_api_retries = 3"
+                        , "max_tokens_per_turn = 50000"
+                        , "compaction_threshold = 40000"
+                        , "preserve_initial = 5000"
+                        , "preserve_final = 10000"
+                        , "max_turns_per_round = 3"
+                        ]
+                writeWorkspaceFile ws ".7aigent/config.toml" emptyKeyConfig
+                writeWorkspaceFile ws ".7aigent/system_prompt.md" minimalSystemPrompt
+                writeWorkspaceFile ws ".7aigent/startup.jl" ""
+                liftEffect setEmptyTestEnv
+                { svc, state } <- liftEffect $ mkMockServices
+                    { llmResponses: []
+                    , execResponses: []
+                    , execDetailedResponses: []
+                    , readLineResponses: []
+                    , streamingChunks: []
+                    , spawnResult: Right mockSandboxHandle
+                    , connectResult: Right mockKernelHandle
+                    }
+                _ <- attempt $ runNewSession svc ws (Just "test")
+                calls <- liftEffect $ getCalls state
+                liftEffect unsetTestEnv
+                calls `shouldSatisfy`
+                    (Array.any (\c -> c == CallExit 1))
+                calls `shouldSatisfy`
+                    (Array.any (\c -> case c of
+                        CallPrintErr s ->
+                            String.contains (String.Pattern "empty") (String.toLower s)
+                                || String.contains (String.Pattern "api key") (String.toLower s)
+                        _ -> false))
+                calls `shouldSatisfy` (not <<< Array.any isSpawnSandbox)
+                logExists <- workspaceFileExists ws ".7aigent/sessions/1/log.jsonl"
+                logExists `shouldEqual` false
+                liftEffect unsetTestEnv
+
+    describe "A39: config errors abort before session start" do
+        it "A39: missing config.toml → informative exit and no session log" do
+            withWorkspace \ws -> do
+                writeWorkspaceFile ws ".7aigent/system_prompt.md" minimalSystemPrompt
+                writeWorkspaceFile ws ".7aigent/startup.jl" ""
+                liftEffect setTestEnv
+                { svc, state } <- liftEffect $ mkMockServices
+                    { llmResponses: []
+                    , execResponses: []
+                    , execDetailedResponses: []
+                    , readLineResponses: []
+                    , streamingChunks: []
+                    , spawnResult: Right mockSandboxHandle
+                    , connectResult: Right mockKernelHandle
+                    }
+                _ <- attempt $ runNewSession svc ws (Just "test")
+                calls <- liftEffect $ getCalls state
+                liftEffect unsetTestEnv
+                calls `shouldSatisfy`
+                    (Array.any (\c -> c == CallExit 1))
+                calls `shouldSatisfy`
+                    (Array.any (\c -> case c of
+                        CallPrintErr s -> String.contains (String.Pattern "config.toml") s
+                        _ -> false))
+                logExists <- workspaceFileExists ws ".7aigent/sessions/1/log.jsonl"
+                logExists `shouldEqual` false
+
+        it "A39: required field missing → informative exit and no session log" do
+            withWorkspace \ws -> do
+                let missingFieldConfig = String.joinWith "\n"
+                        [ "api_endpoint = \"http://localhost:9999/v1/messages\""
+                        , "model = \"test-model\""
+                        , "output_threshold_chars = 5000"
+                        , "max_api_retries = 3"
+                        , "max_tokens_per_turn = 50000"
+                        , "compaction_threshold = 40000"
+                        , "preserve_initial = 5000"
+                        , "preserve_final = 10000"
+                        , "max_turns_per_round = 3"
+                        ]
+                writeWorkspaceFile ws ".7aigent/config.toml" missingFieldConfig
+                writeWorkspaceFile ws ".7aigent/system_prompt.md" minimalSystemPrompt
+                writeWorkspaceFile ws ".7aigent/startup.jl" ""
+                liftEffect setTestEnv
+                { svc, state } <- liftEffect $ mkMockServices
+                    { llmResponses: []
+                    , execResponses: []
+                    , execDetailedResponses: []
+                    , readLineResponses: []
+                    , streamingChunks: []
+                    , spawnResult: Right mockSandboxHandle
+                    , connectResult: Right mockKernelHandle
+                    }
+                _ <- attempt $ runNewSession svc ws (Just "test")
+                calls <- liftEffect $ getCalls state
+                liftEffect unsetTestEnv
+                calls `shouldSatisfy`
+                    (Array.any (\c -> c == CallExit 1))
+                calls `shouldSatisfy`
+                    (Array.any (\c -> case c of
+                        CallPrintErr s ->
+                            String.contains (String.Pattern "config") (String.toLower s)
+                                && String.contains (String.Pattern "api") (String.toLower s)
+                        _ -> false))
+                calls `shouldSatisfy` (not <<< Array.any isSpawnSandbox)
+                logExists <- workspaceFileExists ws ".7aigent/sessions/1/log.jsonl"
+                logExists `shouldEqual` false
+
+    describe "A41: sessions listing shows duration and open-session marker" do
+        it "A41: ended sessions show computed duration and open sessions show —" do
+            withWorkspace \ws -> do
+                writeWorkspaceFile ws ".7aigent/config.toml" testConfigToml
+                let session1 = String.joinWith "\n"
+                        [ "{\"type\":\"session_start\",\"id\":1,\"timestamp\":\"2025-01-01T00:00:00Z\",\"workspace\":\"/tmp\",\"model\":\"test-model\",\"resumed_from\":null}"
+                        , "{\"type\":\"user_message\",\"timestamp\":\"2025-01-01T00:00:00Z\",\"content\":\"Add R14b absorption rule to CodeTree.jl\"}"
+                        , "{\"type\":\"session_end\",\"timestamp\":\"2025-01-01T00:01:05Z\",\"reason\":\"eof\"}"
+                        ]
+                let session2 = String.joinWith "\n"
+                        [ "{\"type\":\"session_start\",\"id\":2,\"timestamp\":\"2025-01-01T02:00:00Z\",\"workspace\":\"/tmp\",\"model\":\"test-model\",\"resumed_from\":null}"
+                        , "{\"type\":\"user_message\",\"timestamp\":\"2025-01-01T02:00:00Z\",\"content\":\"Resume me later\"}"
+                        ]
+                writeSessionLog ws (sidFromInt 1) session1
+                writeSessionLog ws (sidFromInt 2) session2
+
+                liftEffect setTestEnv
+                { svc, state } <- liftEffect $ mkMockServices
+                    { llmResponses: []
+                    , execResponses: []
+                    , execDetailedResponses: []
+                    , readLineResponses: []
+                    , streamingChunks: []
+                    , spawnResult: Right mockSandboxHandle
+                    , connectResult: Right mockKernelHandle
+                    }
+                _ <- attempt $ runListSessions svc ws
+                calls <- liftEffect $ getCalls state
+                liftEffect unsetTestEnv
+
+                let printed = Array.mapMaybe (\c -> case c of
+                        CallPrintLn s -> Just s
+                        _ -> Nothing) calls
+                printed `shouldSatisfy`
+                    (Array.any (\s ->
+                        String.contains (String.Pattern "ID") s
+                            && String.contains (String.Pattern "Started") s
+                            && String.contains (String.Pattern "Duration") s
+                            && String.contains (String.Pattern "Description") s
+                            && String.contains (String.Pattern "1m 05s") s
+                            && String.contains (String.Pattern "Resume me later") s
+                            && String.contains (String.Pattern "—") s))
+
+    describe "A33: controller triggers real compaction at the right times" do
+        it "A33: tool round-trip with oversized request → compaction call and compaction event" do
+            let compactConfig = String.joinWith "\n"
+                    [ "api_endpoint = \"http://localhost:9999/v1/messages\""
+                    , "model = \"test-model\""
+                    , "api_key_env = \"TEST_7AIGENT_KEY\""
+                    , "output_threshold_chars = 5000"
+                    , "max_api_retries = 3"
+                    , "max_tokens_per_turn = 50000"
+                    , "compaction_threshold = 200"
+                    , "preserve_initial = 50"
+                    , "preserve_final = 50"
+                    , "max_turns_per_round = 3"
+                    ]
+            withTestSessionCustom
+                { llmResponses:
+                    [ Right (juliaToolLlmResultHighTokens "compute()" 300)
+                    , Right (textLlmResult "Summary of conversation so far")
+                    , Right (textLlmResult "Done with compacted context")
+                    , Right reflectionComplete
+                    ]
+                , execResponses: [ "42", "[Tasks: 0]", "[Tasks: 0]", "" ]
+                , execDetailedResponses:
+                    [ { output: "", hadError: false }
+                    , { output: "", hadError: false }
+                    ]
+                , readLineResponses: []
+                , configToml: compactConfig
+                , prompt: Just "test prompt"
+                } \state calls ws -> do
+                    let llmCalls = Array.filter isCallLlm calls
+                    Array.length llmCalls `shouldEqual` 3
+
+                    invocations <- liftEffect $ getLlmInvocations state
+                    case Array.index invocations 1 of
+                        Nothing -> fail "Expected a separate compaction LLM call"
+                        Just inv -> case inv.history of
+                            ConversationHistory h ->
+                                Array.length h.messages `shouldEqual` 1
+
+                    logText <- readWorkspaceFile ws ".7aigent/sessions/1/log.jsonl"
+                    logText `shouldSatisfy`
+                        (String.contains (String.Pattern "\"type\":\"compaction\""))
+
+        it "A33: oversized no-tool response → compaction still runs" do
+            let compactConfig = String.joinWith "\n"
+                    [ "api_endpoint = \"http://localhost:9999/v1/messages\""
+                    , "model = \"test-model\""
+                    , "api_key_env = \"TEST_7AIGENT_KEY\""
+                    , "output_threshold_chars = 5000"
+                    , "max_api_retries = 3"
+                    , "max_tokens_per_turn = 50000"
+                    , "compaction_threshold = 200"
+                    , "preserve_initial = 50"
+                    , "preserve_final = 50"
+                    , "max_turns_per_round = 3"
+                    ]
+            withTestSessionCustom
+                { llmResponses:
+                    [ Right (textLlmResultHighTokens "Long answer" 300)
+                    , Right (textLlmResult "Summary of the conversation")
+                    , Right reflectionComplete
+                    ]
+                , execResponses: [ "[Tasks: 0]", "[Tasks: 0]", "" ]
+                , execDetailedResponses:
+                    [ { output: "", hadError: false }
+                    , { output: "", hadError: false }
+                    ]
+                , readLineResponses: []
+                , configToml: compactConfig
+                , prompt: Just "test prompt"
+                } \_ calls ws -> do
+                    let llmCalls = Array.filter isCallLlm calls
+                    Array.length llmCalls `shouldEqual` 2
+
+                    logText <- readWorkspaceFile ws ".7aigent/sessions/1/log.jsonl"
+                    logText `shouldSatisfy`
+                        (String.contains (String.Pattern "\"type\":\"compaction\""))
+
+        it "A33: cumulative tokens alone do not trigger compaction" do
+            let compactConfig = String.joinWith "\n"
+                    [ "api_endpoint = \"http://localhost:9999/v1/messages\""
+                    , "model = \"test-model\""
+                    , "api_key_env = \"TEST_7AIGENT_KEY\""
+                    , "output_threshold_chars = 5000"
+                    , "max_api_retries = 3"
+                    , "max_tokens_per_turn = 50000"
+                    , "compaction_threshold = 200"
+                    , "preserve_initial = 50"
+                    , "preserve_final = 50"
+                    , "max_turns_per_round = 3"
+                    ]
+            withTestSessionCustom
+                { llmResponses:
+                    [ Right (juliaToolLlmResultHighTokens "step1()" 150)
+                    , Right (juliaToolLlmResultHighTokens "step2()" 180)
+                    , Right (textLlmResult "Done")
+                    , Right reflectionComplete
+                    ]
+                , execResponses: [ "first", "[Tasks: 0]", "second", "[Tasks: 0]", "[Tasks: 0]", "" ]
+                , execDetailedResponses:
+                    [ { output: "", hadError: false }
+                    , { output: "", hadError: false }
+                    ]
+                , readLineResponses: []
+                , configToml: compactConfig
+                , prompt: Just "test prompt"
+                } \_ calls ws -> do
+                    let llmCalls = Array.filter isCallLlm calls
+                    Array.length llmCalls `shouldEqual` 3
+                    calls `shouldSatisfy`
+                        (not <<< Array.any (\c -> case c of
+                            CallPrintStr s -> String.contains (String.Pattern "[Compacting context...]") s
+                            _ -> false))
+
+                    logText <- readWorkspaceFile ws ".7aigent/sessions/1/log.jsonl"
+                    logText `shouldSatisfy`
+                        (not <<< String.contains (String.Pattern "\"type\":\"compaction\""))
+
+        it "A33: oversized user prompt alone does not compact before the first LLM response" do
+            let compactConfig = String.joinWith "\n"
+                    [ "api_endpoint = \"http://localhost:9999/v1/messages\""
+                    , "model = \"test-model\""
+                    , "api_key_env = \"TEST_7AIGENT_KEY\""
+                    , "output_threshold_chars = 5000"
+                    , "max_api_retries = 3"
+                    , "max_tokens_per_turn = 50000"
+                    , "compaction_threshold = 200"
+                    , "preserve_initial = 50"
+                    , "preserve_final = 50"
+                    , "max_turns_per_round = 3"
+                    ]
+            let hugePrompt = String.joinWith "" (Array.replicate 400 "very-large-user-prompt ")
+            withTestSessionCustom
+                { llmResponses:
+                    [ Right (textLlmResultHighTokens "Initial answer" 100)
+                    , Right reflectionComplete
+                    ]
+                , execResponses: [ "[Tasks: 0]", "[Tasks: 0]", "" ]
+                , execDetailedResponses:
+                    [ { output: "", hadError: false }
+                    , { output: "", hadError: false }
+                    ]
+                , readLineResponses: []
+                , configToml: compactConfig
+                , prompt: Just hugePrompt
+                } \_ calls ws -> do
+                    let llmCalls = Array.filter isCallLlm calls
+                    Array.length llmCalls `shouldEqual` 1
+                    calls `shouldSatisfy`
+                        (not <<< Array.any (\c -> case c of
+                            CallPrintStr s -> String.contains (String.Pattern "[Compacting context...]") s
+                            _ -> false))
+
+                    logText <- readWorkspaceFile ws ".7aigent/sessions/1/log.jsonl"
+                    logText `shouldSatisfy`
+                        (not <<< String.contains (String.Pattern "\"type\":\"compaction\""))
+
+    describe "A34: post-compaction overflow aborts the session" do
+        it "A34: compacted history still too large → informative error, session_end(error), exit(1)" do
+            let compactConfig = String.joinWith "\n"
+                    [ "api_endpoint = \"http://localhost:9999/v1/messages\""
+                    , "model = \"test-model\""
+                    , "api_key_env = \"TEST_7AIGENT_KEY\""
+                    , "output_threshold_chars = 5000"
+                    , "max_api_retries = 3"
+                    , "max_tokens_per_turn = 50000"
+                    , "compaction_threshold = 200"
+                    , "preserve_initial = 50"
+                    , "preserve_final = 50"
+                    , "max_turns_per_round = 3"
+                    ]
+            withTestSessionCustom
+                { llmResponses:
+                    [ Right (juliaToolLlmResultHighTokens "work()" 300)
+                    , Right (textLlmResult (String.joinWith "" (Array.replicate 500 "word ")))
+                    , Right (textLlmResult "should not reach here")
+                    , Right reflectionComplete
+                    ]
+                , execResponses: [ "result", "[Tasks: 0]", "" ]
+                , execDetailedResponses:
+                    [ { output: "", hadError: false }
+                    , { output: "", hadError: false }
+                    ]
+                , readLineResponses: []
+                , configToml: compactConfig
+                , prompt: Just "test prompt"
+                } \_ calls ws -> do
+                    calls `shouldSatisfy`
+                        (Array.any (\c -> c == CallExit 1))
+                    calls `shouldSatisfy`
+                        (Array.any (\c -> case c of
+                            CallPrintErr s ->
+                                String.contains (String.Pattern "compact") (String.toLower s)
+                                    || String.contains (String.Pattern "context") (String.toLower s)
+                                    || String.contains (String.Pattern "large") (String.toLower s)
+                            _ -> false))
+
+                    logText <- readWorkspaceFile ws ".7aigent/sessions/1/log.jsonl"
+                    logText `shouldSatisfy`
+                        (\text ->
+                            String.contains (String.Pattern "\"type\":\"session_end\"") text
+                                && String.contains (String.Pattern "\"reason\":\"error\"") text)
+
+        it "A34: runner rebuilds history as initial block + summary user message + final block" do
+            let compactConfig = String.joinWith "\n"
+                    [ "api_endpoint = \"http://localhost:9999/v1/messages\""
+                    , "model = \"test-model\""
+                    , "api_key_env = \"TEST_7AIGENT_KEY\""
+                    , "output_threshold_chars = 5000"
+                    , "max_api_retries = 3"
+                    , "max_tokens_per_turn = 50000"
+                    , "compaction_threshold = 200"
+                    , "preserve_initial = 1"
+                    , "preserve_final = 5"
+                    , "max_turns_per_round = 3"
+                    ]
+            withTestSessionCustom
+                { llmResponses:
+                    [ Right (juliaToolLlmResultHighTokens "step1()" 100)
+                    , Right (juliaToolLlmResultHighTokens "step2()" 300)
+                    , Right (textLlmResult "Compacted earlier work.")
+                    , Right (textLlmResult "Done with compacted context")
+                    , Right reflectionComplete
+                    ]
+                , execResponses:
+                    [ "old-result"
+                    , "[Tasks: 0]"
+                    , "recent-result"
+                    , "[Tasks: 0]"
+                    , "[Tasks: 0]"
+                    , ""
+                    ]
+                , execDetailedResponses:
+                    [ { output: "", hadError: false }
+                    , { output: "", hadError: false }
+                    ]
+                , readLineResponses: []
+                , configToml: compactConfig
+                , prompt: Just "test prompt"
+                } \state _ _ -> do
+                    invocations <- liftEffect $ getLlmInvocations state
+                    case Array.index invocations 3 of
+                        Just continuation -> case continuation.history of
+                            ConversationHistory h -> do
+                                case Array.index h.messages 0, Array.index h.messages 1, Array.index h.messages 2 of
+                                    Just first, Just second, Just third -> do
+                                        case first.message of
+                                            SystemMessage _ -> pure unit
+                                            _ -> fail "Expected the preserved system prompt first"
+                                        case second.message of
+                                            UserMessage r ->
+                                                String.contains (String.Pattern "test prompt") r.content
+                                                    `shouldEqual` true
+                                            _ ->
+                                                fail "Expected the preserved initial user message second"
+                                        case third.message of
+                                            UserMessage r ->
+                                                String.contains (String.Pattern "Compacted earlier work.") r.content
+                                                    `shouldEqual` true
+                                            _ ->
+                                                fail "Expected the synthetic summary user message third"
+                                    _, _, _ ->
+                                        fail "Expected system prompt, initial user message, and summary user message"
+                                h.messages `shouldSatisfy`
+                                    (Array.any (\entry -> case entry.message of
+                                        ToolResultMessage r ->
+                                            String.contains (String.Pattern "recent-result") r.output
+                                        _ -> false))
+                                h.messages `shouldSatisfy`
+                                    (not <<< Array.any (\entry -> case entry.message of
+                                        ToolResultMessage r ->
+                                            String.contains (String.Pattern "old-result") r.output
+                                        _ -> false))
+                        Nothing ->
+                            fail "Expected a continuation LLM call after compaction"
+
+    describe "A36: compaction call properties at controller level" do
+        it "A36: compaction uses the same model, is logged, and its prompt stays out of conversation history" do
+            let compactConfig = String.joinWith "\n"
+                    [ "api_endpoint = \"http://localhost:9999/v1/messages\""
+                    , "model = \"test-model\""
+                    , "api_key_env = \"TEST_7AIGENT_KEY\""
+                    , "output_threshold_chars = 5000"
+                    , "max_api_retries = 3"
+                    , "max_tokens_per_turn = 50000"
+                    , "compaction_threshold = 200"
+                    , "preserve_initial = 50"
+                    , "preserve_final = 50"
+                    , "max_turns_per_round = 3"
+                    ]
+            withTestSessionCustom
+                { llmResponses:
+                    [ Right (juliaToolLlmResultHighTokens "compute()" 300)
+                    , Right (textLlmResult "Summary: user asked to compute something")
+                    , Right (textLlmResult "Done")
+                    , Right reflectionComplete
+                    ]
+                , execResponses: [ "42", "[Tasks: 0]", "[Tasks: 0]", "" ]
+                , execDetailedResponses:
+                    [ { output: "", hadError: false }
+                    , { output: "", hadError: false }
+                    ]
+                , readLineResponses: []
+                , configToml: compactConfig
+                , prompt: Just "test prompt"
+                } \state _ ws -> do
+                    invocations <- liftEffect $ getLlmInvocations state
+                    case Array.index invocations 0, Array.index invocations 1, Array.index invocations 2 of
+                        Just initial, Just compactCall, Just continuation -> do
+                            compactCall.config.model `shouldEqual` initial.config.model
+                            case continuation.history of
+                                ConversationHistory h -> do
+                                    let allContent = String.joinWith " "
+                                            (map (\entry -> case entry.message of
+                                                UserMessage r -> r.content
+                                                SystemMessage r -> r.content
+                                                AssistantMessage r -> r.content
+                                                ToolResultMessage r -> r.output) h.messages)
+                                    allContent `shouldSatisfy`
+                                        (\text ->
+                                            String.contains (String.Pattern "Summary: user asked to compute something") text
+                                                && not (String.contains (String.Pattern "Summarise:") text))
+                        _, _, _ ->
+                            fail "Expected initial, compaction, and continuation LLM calls"
+
+                    logText <- readWorkspaceFile ws ".7aigent/sessions/1/log.jsonl"
+                    logText `shouldSatisfy`
+                        (\text ->
+                            String.contains (String.Pattern "\"type\":\"compaction\"") text
+                                && String.contains (String.Pattern "Summary: user asked to compute something") text)
+
+        it "A36: compaction prompt is recorded only via the compaction event, not persisted history" do
+            let compactConfig = String.joinWith "\n"
+                    [ "api_endpoint = \"http://localhost:9999/v1/messages\""
+                    , "model = \"test-model\""
+                    , "api_key_env = \"TEST_7AIGENT_KEY\""
+                    , "output_threshold_chars = 5000"
+                    , "max_api_retries = 3"
+                    , "max_tokens_per_turn = 50000"
+                    , "compaction_threshold = 200"
+                    , "preserve_initial = 50"
+                    , "preserve_final = 50"
+                    , "max_turns_per_round = 3"
+                    ]
+            withWorkspace \ws -> do
+                writeWorkspaceFile ws ".7aigent/config.toml" compactConfig
+                writeWorkspaceFile ws ".7aigent/system_prompt.md" minimalSystemPrompt
+                writeWorkspaceFile ws ".7aigent/startup.jl" "# empty startup"
+                writeWorkspaceFile ws ".7aigent/compaction_prompt.md"
+                    "COMPACTION_PROMPT_SENTINEL\n{{initial_messages}}\n{{compacted_messages}}\n{{final_messages}}\n{{julia_state}}"
+                writeWorkspaceFile ws ".7aigent/summary_message.md" "Summary: {{summary}}"
+                liftEffect setTestEnv
+                { svc, state } <- liftEffect $ mkMockServices
+                    { llmResponses:
+                        [ Right (juliaToolLlmResultHighTokens "step1()" 100)
+                        , Right (juliaToolLlmResultHighTokens "step2()" 300)
+                        , Right (textLlmResult "Compacted earlier work.")
+                        , Right (textLlmResult "Done")
+                        , Right reflectionComplete
+                        ]
+                    , execResponses:
+                        [ "old-result"
+                        , "[Tasks: 0]"
+                        , "recent-result"
+                        , "[Tasks: 0]"
+                        , "[Tasks: 0]"
+                        , ""
+                        ]
+                    , execDetailedResponses:
+                        [ { output: "", hadError: false }
+                        , { output: "", hadError: false }
+                        ]
+                    , readLineResponses: []
+                    , streamingChunks: []
+                    , spawnResult: Right mockSandboxHandle
+                    , connectResult: Right mockKernelHandle
+                    }
+                _ <- attempt $ runNewSession svc ws (Just "test prompt")
+                histories <- liftEffect $ getLlmHistories state
+                logText <- readWorkspaceFile ws ".7aigent/sessions/1/log.jsonl"
+                liftEffect unsetTestEnv
+
+                logText `shouldSatisfy`
+                    (\text ->
+                        String.contains (String.Pattern "\"type\":\"compaction\"") text
+                            && not (String.contains (String.Pattern "COMPACTION_PROMPT_SENTINEL") text))
+
+                case Array.index histories 3 of
+                    Just (ConversationHistory continuation) ->
+                        continuation.messages `shouldSatisfy`
+                            (not <<< Array.any (\entry -> case entry.message of
+                                UserMessage r ->
+                                    String.contains (String.Pattern "COMPACTION_PROMPT_SENTINEL") r.content
+                                AssistantMessage r ->
+                                    String.contains (String.Pattern "COMPACTION_PROMPT_SENTINEL") r.content
+                                SystemMessage r ->
+                                    String.contains (String.Pattern "COMPACTION_PROMPT_SENTINEL") r.content
+                                ToolResultMessage r ->
+                                    String.contains (String.Pattern "COMPACTION_PROMPT_SENTINEL") r.output))
+                    Nothing ->
+                        fail "Expected a continuation history after compaction"
+
+        it "A36: compaction does not consume turn budget for later LLM calls" do
+            let compactConfig = String.joinWith "\n"
+                    [ "api_endpoint = \"http://localhost:9999/v1/messages\""
+                    , "model = \"test-model\""
+                    , "api_key_env = \"TEST_7AIGENT_KEY\""
+                    , "output_threshold_chars = 5000"
+                    , "max_api_retries = 3"
+                    , "max_tokens_per_turn = 50"
+                    , "compaction_threshold = 200"
+                    , "preserve_initial = 50"
+                    , "preserve_final = 50"
+                    , "max_turns_per_round = 3"
+                    ]
+            withTestSessionCustom
+                { llmResponses:
+                    [ Right (juliaToolLlmResultHighTokens "step1()" 300)
+                    , Right (textLlmResultHighTokens "Summary" 500)
+                    , Right (juliaToolLlmResultHighTokens "step2()" 210)
+                    , Right (textLlmResultHighTokens "Done" 180)
+                    , Right reflectionComplete
+                    ]
+                , execResponses: [ "first", "[Tasks: 0]", "second", "[Tasks: 0]", "[Tasks: 0]", "" ]
+                , execDetailedResponses:
+                    [ { output: "", hadError: false }
+                    , { output: "", hadError: false }
+                    ]
+                , readLineResponses: []
+                , configToml: compactConfig
+                , prompt: Just "test prompt"
+                } \_ calls _ -> do
+                    let llmCalls = Array.filter isCallLlm calls
+                    Array.length llmCalls `shouldSatisfy` (_ >= 4)
+                    calls `shouldSatisfy`
+                        (not <<< Array.any (\c -> case c of
+                            CallPrintLn s -> String.contains (String.Pattern "Token limit reached") s
+                            _ -> false))
+
+    describe "A37a: controller enforces turn budget after the current step completes" do
+        it "A37a: second oversized call executes its tool, then ends turn and reflects" do
+            let turnLimitConfig = String.joinWith "\n"
+                    [ "api_endpoint = \"http://localhost:9999/v1/messages\""
+                    , "model = \"test-model\""
+                    , "api_key_env = \"TEST_7AIGENT_KEY\""
+                    , "output_threshold_chars = 5000"
+                    , "max_api_retries = 3"
+                    , "max_tokens_per_turn = 50"
+                    , "compaction_threshold = 400000"
+                    , "preserve_initial = 5000"
+                    , "preserve_final = 10000"
+                    , "max_turns_per_round = 3"
+                    ]
+            withTestSessionCustom
+                { llmResponses:
+                    [ Right (juliaToolLlmResult "step1()")
+                    , Right (juliaToolLlmResultHighTokens "step2()" 300)
+                    , Right reflectionComplete
+                    ]
+                , execResponses: [ "one", "[Tasks: 0]", "two", "[Tasks: 0]", "" ]
+                , execDetailedResponses:
+                    [ { output: "", hadError: false }
+                    , { output: "", hadError: false }
+                    ]
+                , readLineResponses: []
+                , configToml: turnLimitConfig
+                , prompt: Just "test prompt"
+                } \_ calls _ -> do
+                    let llmCalls = Array.filter isCallLlm calls
+                    Array.length llmCalls `shouldEqual` 2
+                    appearsBeforeIn
+                        (\c -> case c of
+                            CallExecuteCode code -> String.contains (String.Pattern "step2()") code
+                            _ -> false)
+                        (\c -> case c of
+                            CallPrintLn s -> String.contains (String.Pattern "Token limit reached") s
+                            _ -> false)
+                        calls `shouldEqual` true
+                    appearsBeforeIn
+                        (\c -> case c of
+                            CallPrintLn s -> String.contains (String.Pattern "Token limit reached") s
+                            _ -> false)
+                        isCallLlmJson
+                        calls `shouldEqual` true
+
+        it "A37a: opening call sets the baseline and later calls compare against the delta" do
+            let turnLimitConfig = String.joinWith "\n"
+                    [ "api_endpoint = \"http://localhost:9999/v1/messages\""
+                    , "model = \"test-model\""
+                    , "api_key_env = \"TEST_7AIGENT_KEY\""
+                    , "output_threshold_chars = 5000"
+                    , "max_api_retries = 3"
+                    , "max_tokens_per_turn = 50"
+                    , "compaction_threshold = 400000"
+                    , "preserve_initial = 5000"
+                    , "preserve_final = 10000"
+                    , "max_turns_per_round = 3"
+                    ]
+            withTestSessionCustom
+                { llmResponses:
+                    [ Right (juliaToolLlmResultHighTokens "step1()" 300)
+                    , Right (juliaToolLlmResultHighTokens "step2()" 340)
+                    , Right (juliaToolLlmResultHighTokens "step3()" 370)
+                    , Right reflectionComplete
+                    ]
+                , execResponses:
+                    [ "one"
+                    , "[Tasks: 0]"
+                    , "two"
+                    , "[Tasks: 0]"
+                    , "three"
+                    , "[Tasks: 0]"
+                    , ""
+                    ]
+                , execDetailedResponses:
+                    [ { output: "", hadError: false }
+                    , { output: "", hadError: false }
+                    ]
+                , readLineResponses: []
+                , configToml: turnLimitConfig
+                , prompt: Just "test prompt"
+                } \_ calls _ -> do
+                    let llmCalls = Array.filter isCallLlm calls
+                    Array.length llmCalls `shouldEqual` 3
+
+                    case indexOf (\c -> case c of
+                            CallExecuteCode code -> String.contains (String.Pattern "step3()") code
+                            _ -> false) calls
+                        , indexOf (\c -> case c of
+                            CallPrintLn s -> String.contains (String.Pattern "Token limit reached") s
+                            _ -> false) calls of
+                        Just step3Ix, Just tokenIx ->
+                            (step3Ix < tokenIx) `shouldEqual` true
+                        _, _ ->
+                            fail "Expected the token-limit notice after the third tool execution"
+
+                    appearsBeforeIn
+                        (\c -> case c of
+                            CallPrintLn s -> String.contains (String.Pattern "Token limit reached") s
+                            _ -> false)
+                        isCallLlmJson
+                        calls `shouldEqual` true
+
+    describe "A46: steering messages are ephemeral and regenerated" do
+        it "A46: steering is injected into later calls only, not persisted or logged" do
+            withWorkspace \ws -> do
+                writeWorkspaceFile ws ".7aigent/config.toml" testConfigToml
+                writeWorkspaceFile ws ".7aigent/system_prompt.md" minimalSystemPrompt
+                writeWorkspaceFile ws ".7aigent/startup.jl" "# empty startup"
+                writeWorkspaceFile ws ".7aigent/steering_message.md"
+                    "**Turn status:** {{turn_tokens}}/{{turn_token_limit}} tokens | {{julia_state}}"
+                liftEffect setTestEnv
+                { svc, state } <- liftEffect $ mkMockServices
+                    { llmResponses:
+                        [ Right (juliaToolLlmResult "step1()")
+                        , Right (juliaToolLlmResultHighTokens "step2()" 300)
+                        , Right (textLlmResult "All done")
+                        , Right reflectionComplete
+                        ]
+                    , execResponses: [ "result1", "[Tasks: 0]", "result2", "[Tasks: 0]", "[Tasks: 0]", "" ]
+                    , execDetailedResponses:
+                        [ { output: "", hadError: false }
+                        , { output: "", hadError: false }
+                        ]
+                    , readLineResponses: []
+                    , streamingChunks: []
+                    , spawnResult: Right mockSandboxHandle
+                    , connectResult: Right mockKernelHandle
+                    }
+                _ <- attempt $ runNewSession svc ws (Just "test prompt")
+                histories <- liftEffect $ getLlmHistories state
+                liftEffect unsetTestEnv
+
+                case Array.index histories 0, Array.index histories 1, Array.index histories 2 of
+                    Just (ConversationHistory first), Just (ConversationHistory second), Just (ConversationHistory third) -> do
+                        let firstContent = String.joinWith " "
+                                (map (\entry -> case entry.message of
+                                    UserMessage r -> r.content
+                                    SystemMessage r -> r.content
+                                    AssistantMessage r -> r.content
+                                    ToolResultMessage r -> r.output) first.messages)
+                        let secondContent = String.joinWith " "
+                                (map (\entry -> case entry.message of
+                                    UserMessage r -> r.content
+                                    SystemMessage r -> r.content
+                                    AssistantMessage r -> r.content
+                                    ToolResultMessage r -> r.output) second.messages)
+                        let thirdContent = String.joinWith " "
+                                (map (\entry -> case entry.message of
+                                    UserMessage r -> r.content
+                                    SystemMessage r -> r.content
+                                    AssistantMessage r -> r.content
+                                    ToolResultMessage r -> r.output) third.messages)
+                        let secondSteering = Array.mapMaybe (\entry -> case entry.message of
+                                UserMessage r ->
+                                    if String.contains (String.Pattern "**Turn status:**") r.content then
+                                        Just r.content
+                                    else
+                                        Nothing
+                                _ -> Nothing) second.messages
+                        let thirdSteering = Array.mapMaybe (\entry -> case entry.message of
+                                UserMessage r ->
+                                    if String.contains (String.Pattern "**Turn status:**") r.content then
+                                        Just r.content
+                                    else
+                                        Nothing
+                                _ -> Nothing) third.messages
+                        firstContent `shouldSatisfy`
+                            (not <<< String.contains (String.Pattern "**Turn status:**"))
+                        Array.length secondSteering `shouldEqual` 1
+                        Array.length thirdSteering `shouldEqual` 1
+                        secondContent `shouldSatisfy`
+                            (String.contains (String.Pattern "**Turn status:** 0/50000 tokens | [Tasks: 0]"))
+                        thirdContent `shouldSatisfy`
+                            (\text ->
+                                String.contains (String.Pattern "**Turn status:** 200/50000 tokens | [Tasks: 0]") text
+                                    && not (String.contains (String.Pattern "**Turn status:** 0/50000 tokens | [Tasks: 0]") text))
+                        second.messages `shouldSatisfy`
+                            (not <<< Array.any (\entry -> case entry.message of
+                                SystemMessage r ->
+                                    String.contains (String.Pattern "**Turn status:**") r.content
+                                AssistantMessage r ->
+                                    String.contains (String.Pattern "**Turn status:**") r.content
+                                ToolResultMessage r ->
+                                    String.contains (String.Pattern "**Turn status:**") r.output
+                                UserMessage _ -> false))
+                        third.messages `shouldSatisfy`
+                            (not <<< Array.any (\entry -> case entry.message of
+                                SystemMessage r ->
+                                    String.contains (String.Pattern "**Turn status:**") r.content
+                                AssistantMessage r ->
+                                    String.contains (String.Pattern "**Turn status:**") r.content
+                                ToolResultMessage r ->
+                                    String.contains (String.Pattern "**Turn status:**") r.output
+                                UserMessage _ -> false))
+                    _, _, _ ->
+                        fail "Expected first, second, and third LLM histories"
+
+                logText <- readWorkspaceFile ws ".7aigent/sessions/1/log.jsonl"
+                logText `shouldSatisfy`
+                    (not <<< String.contains (String.Pattern "Turn status"))
 
 -- ---------------------------------------------------------------------------
 -- Predicates for filtering call records

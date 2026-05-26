@@ -2,10 +2,13 @@
 -- | Records all service calls and returns scripted responses.
 module Test.Helpers.MockServices
     ( MockState
+    , LlmInvocation
     , CallRecord(..)
     , mkMockServices
     , getCalls
     , callsMatching
+    , getLlmInvocations
+    , getLlmHistories
     ) where
 
 import Prelude
@@ -14,8 +17,8 @@ import Data.Array as Array
 import Data.Either (Either(..))
 import Data.Foldable (for_)
 import Data.Maybe (Maybe(..))
+import Data.String as String
 import Effect (Effect)
-import Effect.Aff (Aff)
 import Effect.Class (liftEffect)
 import Effect.Ref (Ref)
 import Effect.Ref as Ref
@@ -69,6 +72,12 @@ instance showCallRecord :: Show CallRecord where
     show (CallWritePrompt s) = "CallWritePrompt(" <> s <> ")"
     show (CallExit n) = "CallExit(" <> show n <> ")"
 
+type LlmInvocation =
+    { kind :: String
+    , config :: Config
+    , history :: ConversationHistory
+    }
+
 -- | Mutable state shared between mock service functions and the test.
 type MockState =
     { calls :: Ref (Array CallRecord)
@@ -77,6 +86,7 @@ type MockState =
     , execDetailedResponses :: Ref (Array Jupyter.ExecutionResult)
     , readLineResponses :: Ref (Array String)
     , streamingChunks :: Ref (Array (Array String))
+    , llmInvocations :: Ref (Array LlmInvocation)
     , spawnResult :: Either String Sandbox.SandboxHandle
     , connectResult :: Either String Jupyter.KernelHandle
     }
@@ -84,6 +94,12 @@ type MockState =
 -- | Get all recorded calls.
 getCalls :: MockState -> Effect (Array CallRecord)
 getCalls st = Ref.read st.calls
+
+getLlmInvocations :: MockState -> Effect (Array LlmInvocation)
+getLlmInvocations st = Ref.read st.llmInvocations
+
+getLlmHistories :: MockState -> Effect (Array ConversationHistory)
+getLlmHistories st = map _.history <$> getLlmInvocations st
 
 -- | Filter recorded calls matching a predicate.
 callsMatching :: (CallRecord -> Boolean) -> MockState -> Effect (Array CallRecord)
@@ -109,6 +125,7 @@ mkMockServices opts = do
     execDetailedResponses <- Ref.new opts.execDetailedResponses
     readLineResponses <- Ref.new opts.readLineResponses
     streamingChunks <- Ref.new opts.streamingChunks
+    llmInvocations <- Ref.new []
     let state =
             { calls
             , llmResponses
@@ -116,6 +133,7 @@ mkMockServices opts = do
             , execDetailedResponses
             , readLineResponses
             , streamingChunks
+            , llmInvocations
             , spawnResult: opts.spawnResult
             , connectResult: opts.connectResult
             }
@@ -161,15 +179,19 @@ mkMockServices opts = do
                     Right k -> Right k
             , executeCode: \_ (RawJulia code) _ -> do
                 liftEffect $ record (CallExecuteCode code)
-                liftEffect $ popStr execResponses ""
+                result <- liftEffect $ popStr execResponses ""
+                case String.stripPrefix (String.Pattern "__CRASH__") result of
+                    Just msg -> liftEffect $ Exception.throw ("Sandbox crashed: " <> msg)
+                    Nothing -> pure result
             , executeCodeDetailed: \_ (RawJulia code) _ -> do
                 liftEffect $ record (CallExecuteCodeDetailed code)
                 liftEffect $ popDetailed execDetailedResponses { output: "", hadError: false }
             , interruptKernel: \_ -> do
                 liftEffect $ record CallInterruptKernel
             , closeKernel: \_ -> record CallCloseKernel
-            , callLlm: \_ _ _ onChunk -> do
+            , callLlm: \config _ history onChunk -> do
                 liftEffect $ record (CallLlm "stream")
+                liftEffect $ Ref.modify_ (_ <> [{ kind: "stream", config, history }]) llmInvocations
                 -- A7: invoke the streaming callback with scripted chunks
                 chunks <- liftEffect $ popChunks streamingChunks
                 liftEffect $ for_ chunks onChunk
@@ -177,8 +199,9 @@ mkMockServices opts = do
                 pure $ case r of
                     Left e -> Left (LlmApiError e)
                     Right v -> Right v
-            , callLlmJson: \_ _ _ -> do
+            , callLlmJson: \config _ history -> do
                 liftEffect $ record (CallLlmJson "json")
+                liftEffect $ Ref.modify_ (_ <> [{ kind: "json", config, history }]) llmInvocations
                 r <- liftEffect $ popLlm llmResponses (Left "no more LLM JSON responses")
                 pure $ case r of
                     Left e -> Left (LlmApiError e)

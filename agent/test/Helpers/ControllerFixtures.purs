@@ -1,6 +1,7 @@
 -- | Shared fixtures for controller integration tests.
 module Test.Helpers.ControllerFixtures
     ( setTestEnv
+    , setEmptyTestEnv
     , unsetTestEnv
     , testConfigToml
     , minimalSystemPrompt
@@ -60,3 +61,6 @@ foreign import setTestEnv :: Effect Unit
 
 -- | Unset the test environment variable.
 foreign import unsetTestEnv :: Effect Unit
+
+-- | Set the test API key environment variable to the empty string.
+foreign import setEmptyTestEnv :: Effect Unit

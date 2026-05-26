@@ -60,6 +60,9 @@
           sandbox-e2e = pkgs.callPackage ./test/sandbox-vm.nix {
             inherit sandbox codeTree testCodebase;
           };
+          agent-e2e = pkgs.callPackage ./test/agent-vm.nix {
+            inherit agent testCodebase;
+          };
         };
 
         devShells.default = pkgs.mkShell {
