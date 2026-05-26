@@ -275,7 +275,7 @@ end
     @test ismissing(reloaded_noop_row.summary)
 end
 
-@testset "RA5: generated summaries survive update_source when the node id is unchanged" begin
+@testset "RA5: generated summaries survive update_source! when the node id is unchanged" begin
     workspace = _workspace_from_fixture()
     db = _bind_repl_session(workspace)
 
@@ -285,10 +285,10 @@ end
     )
 
     SevenAigentREPL.summarize!([noop_id])
-    CodeTree.update_source(
+    CodeTree.update_source!(
         db,
         noop_id,
-        "function noop(x)\n    y = x + 1\n    return y - 1\nend\n",
+        "return x" => "return x  # passthrough",
     )
 
     updated_noop = only(filter(r -> r.id == noop_id, eachrow(_code_df(db))))

@@ -21,7 +21,7 @@ servicing summary requests by calling the external LLM.
 ## Roles and Boundaries
 
 - **CodeTree**: loads the tree, provides documentation-derived `summary` values,
-  and exposes `db.code`, `db.symbols`, `get_source`, and `update_source`.
+  and exposes `db.code`, `db.symbols`, `get_source`, and `update_source!`.
 - **REPL API module**: Julia module provided by the sandbox runtime. Exposes
   interactive helpers such as `summarize!`.
 - **Workspace startup**: thin bootstrap file that imports/configures the REPL
@@ -68,12 +68,12 @@ display path used by Jupyter frontends.
 returns, later reads from `db.code` in that session must see the generated
 summary text for the summarized rows. The REPL/runtime also tracks those
 generated summaries as session-scoped overrides keyed by node id so they can be
-re-applied after `update_source` re-indexes a file.
+re-applied after `update_source!` re-indexes a file.
 
 **RA5** — Generated summaries mutate only the in-memory `CodeTreeDB` for the
 current session. They do not change the indexing contract of `CodeTree.jl`, are
 not written into `.7aigent/code_tree/index.db`, and are not required to survive
-`reload` or a fresh session. They do survive `update_source` when the
+`reload` or a fresh session. They do survive `update_source!` when the
 re-indexed rows keep the same ids; if a node id changes or disappears, its
 generated summary may be lost.
 

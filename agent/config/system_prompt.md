@@ -54,20 +54,17 @@ get_source(db, row.id)
 
 ## Editing
 
-Read only the files you are about to change. Always verify the replacement matched before persisting:
+Use `update_source!` to apply a pattern substitution to a node. It handles indentation automatically, prints a unified diff, and warns if the pattern matches more places than `count`:
 
 ```julia
-src = get_source(db, "src/services/auth.js")
-# Pair form (=> ) only — the 3-argument form does not exist in Julia
-# Use \$ to prevent Julia string interpolation for literal dollar signs
-new_src = replace(src, "old text" => "new text")
-@assert new_src != src "replace() found no match — check the pattern"
-update_source(db, "src/services/auth.js", new_src)
+update_source!(db, row.id, "old text" => "new text")
+# For regex patterns:
+update_source!(db, row.id, r"old_name" => "new_name")
+# To replace all occurrences (default count=1, use typemax(Int) for all):
+update_source!(db, row.id, "old text" => "new text"; count=typemax(Int))
 ```
 
-If the match is hard to express (multi-line, special characters, `$` signs), build `new_src` directly by concatenation rather than trying to match substrings.
-
-`update_source` keeps `db` and the file in sync. Always use `@subset` not `filter` (throws on `missing` columns).
+`update_source!` keeps `db` and the file in sync. Always use `@subset` not `filter` (throws on `missing` columns).
 
 ## Committing
 

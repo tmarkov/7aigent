@@ -14,7 +14,7 @@ These architectural decisions are requirements, not implementation details.
 
 - **`CodeTreeDB`** — a container struct bundling `code`, `symbols`, the
   codebase root path, and the language config. This is what `load` returns
-  and what `update_source` operates on.
+  and what `update_source!` operates on.
 
 - **`CodeTree <: AbstractDataFrame`** — the `code` table, exposed as a
   queryable DataFrame. All DataFrames.jl query, filter, grouping, and join
@@ -39,8 +39,10 @@ These architectural decisions are requirements, not implementation details.
   node span from the in-memory buffer. For leaf nodes this matches the `source`
   column; for non-leaf nodes it reconstructs the span on demand.
 
-- **`update_source(db, id, new_source)`** — the sole mutation path. Updates
-  both `db.code` and `db.symbols` together.
+- **`update_source!(db, id, pattern => repl; count=1)`** — the sole mutation
+  path. Searches for `pattern` within the source of node `id`, replaces up to
+  `count` occurrences with `repl`, re-indexes the changed file, and prints a
+  unified diff to stdout. Updates both `db.code` and `db.symbols` together.
 
 ---
 
@@ -90,7 +92,7 @@ joining, `@subset`, etc.) work on `db.code` and `db.symbols`.
 
 **R4** — Any attempt to directly mutate `db.symbols`, or any column of
 `db.code` other than `summary`, raises an informative error directing the
-caller to use `update_source` for code edits.
+caller to use `update_source!` for code edits.
 
 **R4a** — Direct writes to `db.code.summary` are allowed. They update the
 current in-memory `CodeTreeDB` in place, record a session-scoped summary
@@ -229,7 +231,7 @@ block comment (same summary-lines rule as R17). Directory-level summary
 comes from the first paragraph of `README.md` (all lines up to the first
 blank line) if present, using the summary-lines rule.
 
-**R20** — During `load`, `reload`, and `update_source`, summaries are never
+**R20** — During `load`, `reload`, and `update_source!`, summaries are never
 mechanically generated from structure or requested from an external LLM. If no
 documentation is found, `summary` is `missing`.
 
@@ -340,26 +342,39 @@ slicing the in-memory buffer over that node's `(line_start, line_end)` span.
 For leaf nodes, this equals the node's `source` column. For non-leaf nodes,
 this reconstructs the span on demand even though `source` is `missing`.
 
-**R30** — `update_source(db, id, new_source)` is the sole mutation path. It
-must accept both leaf and non-leaf nodes, as long as the target node has a
-file association and line range.
-There is no other supported way to change codebase content.
+**R30** — `update_source!(db, id, pattern => repl; count=1)` is the sole
+mutation path. It must accept both leaf and non-leaf nodes, as long as the
+target node has a file association and line range. There is no other supported
+way to change codebase content. The function:
 
-**R30a** — Before applying any edit, `update_source` computes the SHA-256
+1. Looks up node `id` to determine its file and span.
+2. Reads the current source for that node via `get_source(db, id)`.
+3. Searches for `pattern` within that node's source (see R37 for string
+   patterns; Regex patterns use `Base.replace` semantics).
+4. Throws `ArgumentError("update_source!: pattern not found in <id>")` if
+   there are zero matches (R38).
+5. If the actual match count exceeds `count`, prints a warning naming all
+   match locations and replaces only the first `count` occurrences (R38).
+6. Applies the substitution to produce `new_source` for the node span,
+   then delegates to the internal `_update_source!` implementation which
+   carries out R30a–R35.
+7. Prints a compact unified diff of the changed file to stdout (R36).
+
+**R30a** — Before applying any edit, `_update_source!` computes the SHA-256
 hash of the current on-disk content of the target node's file and compares it
 to the hash stored at last-load or last-write time for that file. If the
-hashes differ, the file was modified externally: `update_source` re-indexes
+hashes differ, the file was modified externally: `_update_source!` re-indexes
 the file from disk (as in R27), updates `db.code`, `db.symbols`, and the
 buffer to reflect the new on-disk state, and then raises an informative error
 explaining that the file changed externally and the `db` has been refreshed.
 The caller may inspect the updated `db` and retry.
 
 **R30b** — Any comparison or verification of the current source text of the
-target node inside `update_source` is performed against `get_source(db, id)`,
+target node inside `_update_source!` is performed against `get_source(db, id)`,
 not against the raw `source` column. Non-leaf nodes must therefore verify and
 edit correctly even though their `source` column is `missing`.
 
-**R31** — `update_source` reconstructs the new file content in memory by
+**R31** — `_update_source!` reconstructs the new file content in memory by
 replacing lines `line_start` through `line_end` (inclusive) of the target
 node's file in the buffer with `new_source`. `new_source` must include the
 full replacement text for that span — including any declaration line. The
@@ -379,7 +394,7 @@ fresh symbol rows are inserted for the new leaf nodes produced by re-parsing.
 No cross-file re-resolution is needed since `db.symbols` records names only,
 not target node ids.
 
-**R33b** — When `update_source` re-indexes a file, any in-memory summary
+**R33b** — When `_update_source!` re-indexes a file, any in-memory summary
 overrides previously attached to rows in that file are re-applied to the new
 rows whose ids are unchanged. Overrides for rows whose ids disappear are
 dropped.
@@ -388,7 +403,39 @@ dropped.
 to disk and the cache is updated. Disk is never written before the DataFrames
 are consistent with the new content.
 
-**R35** — If the disk write or cache update in R34 fails, `update_source`
+**R35** — If the disk write or cache update in R34 fails, `_update_source!`
 rolls back `db.code`, `db.symbols`, and the in-memory buffer to the state
 they held before the call, then raises an error. After a failed
-`update_source` the `db` must be indistinguishable from its pre-call state.
+`update_source!` the `db` must be indistinguishable from its pre-call state.
+
+**R36** — After every successful edit, `update_source!` prints a unified diff
+of the changed file to stdout. The diff uses standard unified format
+(`--- a/…`, `+++ b/…`, `@@ -L,N +L,N @@` hunks) with 3 lines of context
+around each changed hunk and full-file scope so that absolute line numbers are
+immediately verifiable. The diff is not printed on error (zero-match throw or
+any other failure).
+
+**R37** — When `pattern` is a plain `String` (not a `Regex`), matching and
+replacement are indentation-agnostic:
+
+- **Dedent the pattern**: strip its minimum common leading whitespace (ignoring
+  blank lines when computing the minimum) from every non-blank line.
+- Search the node's source for the dedented pattern, ignoring absolute
+  indentation but preserving relative indentation between lines.
+- Detect the actual indentation offset (number of leading spaces) of the
+  match in the source.
+- **Dedent the replacement**: strip its minimum common leading whitespace
+  (ignoring blank lines), then re-indent every non-blank line by the detected
+  offset.
+
+When `pattern` is a `Regex`, behaviour is identical to `Base.replace` with no
+indentation normalisation.
+
+**R38** — If `pattern` matches zero times in the node's source,
+`update_source!` throws
+`ArgumentError("update_source!: pattern not found in <id>")`.
+If the actual match count in the node's source exceeds `count`, `update_source!`
+prints a warning to stdout listing every match location before applying the
+replacement. Match locations are reported as `line L` for `String` patterns
+and `line L, chars M:N` (1-based character range within that line) for
+`Regex` patterns. Only the first `count` occurrences are replaced.

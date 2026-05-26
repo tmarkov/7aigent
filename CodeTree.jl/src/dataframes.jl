@@ -12,7 +12,7 @@ Base.showerror(io::IO, e::MutationError) = print(io, "MutationError: ", e.msg)
 
 const MUTATION_MSG =
     "direct mutation is not supported; " *
-    "use update_source(db, id, new_source) to modify codebase content. " *
+    "use update_source!(db, id, pattern => repl) to modify codebase content. " *
     "Only db.code.summary may be written directly."
 
 # ---------------------------------------------------------------------------

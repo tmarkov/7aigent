@@ -12,7 +12,7 @@ Evaluate the following before deciding:
 
 1. **Task complete?** Check carefully against the original request.
 2. **Todos done?** (See [status] above.) Any `pending` or `in_progress` todos → not complete. No todos created for non-trivial work → not complete.
-3. **Files actually written?** `replace()` alone does nothing. `update_source(db, path, new_src)` is required. If expected file changes are missing → not complete.
+3. **Files actually written?** `update_source!(db, id, pattern => repl)` is required. If expected file changes are missing → not complete.
 4. **Only task-relevant files changed?** Off-task edits do not count as progress.
 5. **Tests run?** Check `AGENTS.md` for instructions. If tools are unavailable, note it and do not block — commit what's verified.
 6. **Changes committed?** Use `git_diff` tool to see what changed, then `git_commit` tool (not `run()`) to commit only task-relevant hunks.

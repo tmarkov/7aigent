@@ -3,7 +3,7 @@
 ---
 
 **Exploration** = `@subset` + `summarize!` only — no file reads.
-**Editing** = `get_source` → `replace(src, old => new)` → **`@assert new_src != src`** → `update_source` — only for files you're changing right now.
+**Editing** = `update_source!(db, id, "old text" => "new text")` — only for files you're changing right now.
 **Committing** = `git_diff` tool → `git_commit` tool (direct tool calls, not `run()` in the REPL).
 
 > If you already know what to implement: **stop exploring and start writing code.**

@@ -71,7 +71,7 @@ end
     -> Vector{NamedTuple{(:node_id, :symbol, :kind)}}
 
 Core per-file symbol extraction used by both `extract_symbols!` (global pass)
-and `_extract_symbols_for_file` (single-file update after `update_source`).
+and `_extract_symbols_for_file` (single-file update after `update_source!`).
 
 - For non-Markdown: parses `src` with the language grammar, runs call/def/ref
   queries, and classifies captures in each leaf's line range as `call` or

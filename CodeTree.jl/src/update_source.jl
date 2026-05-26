@@ -1,6 +1,13 @@
-# update_source() — R30–R35.
+# update_source!() — R30–R38.
 #
 # This is the sole authorized mutation path (R30). It:
+#   1. Searches for pattern in the node's source (R37 for String, Base.replace for Regex)
+#   2. Throws ArgumentError on zero matches (R38)
+#   3. Warns with match locations on over-match (R38)
+#   4. Delegates to _update_source! for R30a–R35
+#   5. Prints a unified diff on success (R36)
+#
+# _update_source!(db, id, new_source) — internal core mutation (R30a–R35):
 #   1. Detects external file changes and re-indexes if needed (R30a)
 #   2. Splices new_source over the node's line range (R31)
 #   3. Re-indexes in memory; only updates DataFrames on success (R32)
@@ -27,15 +34,56 @@ function get_source(
 end
 
 """
-    update_source(db, id, new_source)
+    update_source!(db, id, pattern => repl; count=1)
 
-Replace the source of node `id` in `db` with `new_source`.
+Replace occurrences of `pattern` in the source of node `id` with `repl`,
+re-index the changed file, and print a unified diff to stdout.
 
-`new_source` must cover the full span of the node (from `line_start` to
-`line_end`).  Raises an error if the target file was modified externally since
-the last `load`; in that case `db` is refreshed to reflect the on-disk state.
+`pattern` may be a `String` or a `Regex`:
+- `String`: matching is indentation-agnostic (R37) — the pattern is dedented
+  before searching, and the replacement is re-indented to match the detected
+  offset in the source.
+- `Regex`: uses `Base.replace` semantics with no indentation normalisation.
+
+`count` is the maximum number of occurrences to replace (default 1). Throws
+`ArgumentError` if the pattern matches zero times. Prints a warning naming all
+match locations if the actual count exceeds `count`.
 """
-function update_source(
+function update_source!(
+    db::CodeTreeDB,
+    id::AbstractString,
+    pair::Pair;
+    count::Int = 1,
+)::Nothing
+    id_str  = String(id)
+    pattern = pair.first
+    repl    = pair.second
+
+    node_src = get_source(db, id_str)
+
+    # R37/R38: find matches, validate count, build new node source
+    new_node_src, file_rel = _apply_pattern_substitution(
+        db, id_str, node_src, pattern, repl, count)
+
+    # Delegate to internal mutation (R30a–R35)
+    old_file_src = db._buffer[file_rel]
+    _update_source!(db, id_str, new_node_src)
+    new_file_src = db._buffer[file_rel]
+
+    # R36: print unified diff of the changed file
+    _print_unified_diff(file_rel, old_file_src, new_file_src)
+    return nothing
+end
+
+"""
+    _update_source!(db, id, new_source)
+
+Internal mutation path. Replace the source of node `id` in `db` with
+`new_source`, carrying out external-change detection (R30a), in-memory
+re-indexing (R31–R33), disk write, cache update (R34), and rollback on
+failure (R35).
+"""
+function _update_source!(
     db::CodeTreeDB,
     id::AbstractString,
     new_source::AbstractString,
@@ -43,6 +91,7 @@ function update_source(
     id_str  = String(id)
     new_src = String(new_source)
 
+    code_df = getfield(db.code, :_df)
     code_df = getfield(db.code, :_df)
     syms_df = getfield(db.symbols, :_df)
     _, file_rel, node_ls, node_le = _lookup_node_span(db, id_str)
@@ -113,7 +162,330 @@ function update_source(
 end
 
 # ---------------------------------------------------------------------------
-# Internal helpers
+# Internal helpers: pattern substitution, indentation-agnostic matching,
+# unified diff output (R36, R37, R38)
+# ---------------------------------------------------------------------------
+
+# R38 + R37: apply the pattern substitution to node_src, enforcing zero-match
+# error and over-match warning. Returns (new_node_src, file_rel).
+function _apply_pattern_substitution(
+    db::CodeTreeDB,
+    id_str::String,
+    node_src::String,
+    pattern::AbstractString,
+    repl::AbstractString,
+    count::Int,
+)::Tuple{String,String}
+    pat_str = String(pattern)
+    rep_str = String(repl)
+
+    # R37: indentation-agnostic search for String patterns.
+    dedented_pat = _dedent(pat_str)
+    matches = _find_indentation_agnostic_matches(node_src, dedented_pat)
+
+    if isempty(matches)
+        throw(ArgumentError("update_source!: pattern not found in $(id_str)"))
+    end
+
+    if length(matches) > count
+        _warn_over_matches_string(id_str, matches, node_src, count)
+    end
+
+    new_node_src = _apply_indentation_agnostic_replace(
+        node_src, dedented_pat, rep_str, matches, count)
+
+    _, file_rel, _, _ = _lookup_node_span(db, id_str)
+    return new_node_src, file_rel
+end
+
+function _apply_pattern_substitution(
+    db::CodeTreeDB,
+    id_str::String,
+    node_src::String,
+    pattern::Regex,
+    repl::AbstractString,
+    count::Int,
+)::Tuple{String,String}
+    rep_str = String(repl)
+
+    matches = collect(eachmatch(pattern, node_src))
+    if isempty(matches)
+        throw(ArgumentError("update_source!: pattern not found in $(id_str)"))
+    end
+
+    if length(matches) > count
+        _warn_over_matches_regex(id_str, matches, node_src, count)
+    end
+
+    new_node_src = replace(node_src, pattern => rep_str; count=count)
+
+    _, file_rel, _, _ = _lookup_node_span(db, id_str)
+    return new_node_src, file_rel
+end
+
+# Strip minimum common leading whitespace from all non-blank lines.
+function _dedent(s::String)::String
+    lines = split(s, '\n')
+    non_blank = filter(l -> !isempty(strip(l)), lines)
+    isempty(non_blank) && return s
+    min_indent = minimum(length(l) - length(lstrip(l)) for l in non_blank)
+    min_indent == 0 && return s
+    prefix = ' '^min_indent
+    result = map(lines) do l
+        isempty(strip(l)) ? l : (startswith(l, prefix) ? l[min_indent+1:end] : l)
+    end
+    return join(result, '\n')
+end
+
+# Find all positions where the dedented pattern occurs in src with any
+# consistent indentation.  Returns a vector of (line_index, indent_spaces)
+# pairs, where line_index is 1-based into split(src, '\n').
+function _find_indentation_agnostic_matches(
+    src::String,
+    dedented_pat::String,
+)::Vector{Tuple{Int,Int}}
+    src_lines = split(src, '\n')
+    pat_lines = split(dedented_pat, '\n')
+    n_src = length(src_lines)
+    n_pat = length(pat_lines)
+    results = Tuple{Int,Int}[]
+
+    for start_i in 1:(n_src - n_pat + 1)
+        offset = -1
+        matched = true
+        for (j, pl) in enumerate(pat_lines)
+            sl = src_lines[start_i + j - 1]
+            pl_is_blank = isempty(strip(pl))
+
+            if pl_is_blank
+                if !isempty(strip(sl))
+                    matched = false; break
+                end
+            else
+                sl_indent = length(sl) - length(lstrip(sl))
+                if offset == -1
+                    offset = sl_indent
+                end
+                expected = ' '^offset * pl
+                if sl != expected
+                    matched = false; break
+                end
+            end
+        end
+        if matched && offset >= 0
+            push!(results, (start_i, offset))
+        end
+    end
+    return results
+end
+
+# Apply indentation-agnostic replacement for the first `count` matches.
+# matches is a vector of (line_index, indent) from _find_indentation_agnostic_matches.
+function _apply_indentation_agnostic_replace(
+    src::String,
+    dedented_pat::String,
+    repl::String,
+    matches::Vector{Tuple{Int,Int}},
+    count::Int,
+)::String
+    pat_lines = split(dedented_pat, '\n')
+    n_pat_lines = length(pat_lines)
+    result_lines = split(src, '\n')
+
+    n_to_replace = min(count, length(matches))
+    # Work backwards to preserve line indices for earlier matches.
+    for i in n_to_replace:-1:1
+        ls, indent = matches[i]
+        le = ls + n_pat_lines - 1
+
+        dedented_repl = _dedent(repl)
+        repl_lines = split(dedented_repl, '\n')
+        re_indented = map(repl_lines) do rl
+            isempty(strip(rl)) ? rl : ' '^indent * rl
+        end
+
+        splice!(result_lines, ls:le, re_indented)
+    end
+    return join(result_lines, '\n')
+end
+
+# Warn about over-matches. For :string patterns uses line numbers; for :regex
+# uses line + char range within the line.
+function _warn_over_matches_string(
+    id_str::String,
+    matches::Vector{Tuple{Int,Int}},
+    node_src::String,
+    count::Int,
+)::Nothing
+    src_lines = split(node_src, '\n')
+    # Add node-level line offset to get correct absolute line numbers within
+    # the node source (matches are already 1-based line indices).
+    println("Warning: pattern matched $(length(matches)) times in $(id_str) " *
+            "(count=$(count)); replacing only the first $(count).")
+    println("Match locations:")
+    for (ln, _) in matches
+        println("  line $(ln)")
+    end
+    return nothing
+end
+
+function _warn_over_matches_regex(
+    id_str::String,
+    matches::Vector{RegexMatch},
+    node_src::String,
+    count::Int,
+)::Nothing
+    src_lines = split(node_src, '\n')
+    println("Warning: pattern matched $(length(matches)) times in $(id_str) " *
+            "(count=$(count)); replacing only the first $(count).")
+    println("Match locations:")
+    for m in matches
+        ln, col_start = _byte_offset_to_line_col(src_lines, m.offset)
+        col_end = col_start + ncodeunits(m.match) - 1
+        println("  line $(ln), chars $(col_start):$(col_end)")
+    end
+    return nothing
+end
+
+function _byte_offset_to_line_col(
+    src_lines::Vector{<:AbstractString},
+    byte_start::Int,
+)::Tuple{Int,Int}
+    acc = 0
+    for (i, l) in enumerate(src_lines)
+        line_end = acc + ncodeunits(l) + 1
+        if line_end >= byte_start
+            col = byte_start - acc
+            return (i, col)
+        end
+        acc = line_end
+    end
+    return (length(src_lines), 1)
+end
+
+# ---------------------------------------------------------------------------
+# R36: Unified diff output
+# ---------------------------------------------------------------------------
+
+# Print a standard unified diff (--- a/..., +++ b/..., @@ hunks, 3-line
+# context) of old_src → new_src for the given file path.
+function _print_unified_diff(file_rel::String, old_src::String, new_src::String)::Nothing
+    old_lines = split(old_src, '\n')
+    new_lines = split(new_src, '\n')
+
+    hunks = _compute_diff_hunks(old_lines, new_lines; context=3)
+    isempty(hunks) && return nothing
+
+    println("--- a/$(file_rel)")
+    println("+++ b/$(file_rel)")
+    for hunk in hunks
+        _print_hunk(hunk)
+    end
+    return nothing
+end
+
+struct DiffHunk
+    old_start::Int
+    old_count::Int
+    new_start::Int
+    new_count::Int
+    lines::Vector{String}   # each line prefixed with ' ', '-', or '+'
+end
+
+# Compute an edit script using a simple LCS-based diff, then group into hunks
+# with `context` lines of surrounding context.
+function _compute_diff_hunks(
+    old_lines::Vector{<:AbstractString},
+    new_lines::Vector{<:AbstractString};
+    context::Int = 3,
+)::Vector{DiffHunk}
+    ops = _diff_ops(old_lines, new_lines)  # vector of (' ', '-', '+') with line text
+    isempty(ops) && return DiffHunk[]
+
+    # Group ops into hunks: collect changed regions ± context lines.
+    n = length(ops)
+    hunks = DiffHunk[]
+    i = 1
+    while i <= n
+        # Skip equal ops until we find a change.
+        if ops[i][1] == ' '
+            i += 1
+            continue
+        end
+        # Found a change; back up `context` lines for pre-context.
+        hunk_start = max(1, i - context)
+        # Advance past all changes + context.
+        j = i
+        while j <= n
+            if ops[j][1] != ' '
+                j += 1
+            elseif j + context <= n && any(ops[k][1] != ' ' for k in (j+1):min(j+context, n))
+                j += 1
+            else
+                j = min(j + context, n) + 1
+                break
+            end
+        end
+        hunk_end = j - 1
+
+        hunk_ops = ops[hunk_start:hunk_end]
+        old_s = count(op -> op[1] != '+', ops[1:hunk_start-1]) + 1
+        new_s = count(op -> op[1] != '-', ops[1:hunk_start-1]) + 1
+        old_c = count(op -> op[1] != '+', hunk_ops)
+        new_c = count(op -> op[1] != '-', hunk_ops)
+        lines = [op[1] * op[2] for op in hunk_ops]
+        push!(hunks, DiffHunk(old_s, old_c, new_s, new_c, lines))
+        i = hunk_end + 1
+    end
+    return hunks
+end
+
+function _print_hunk(h::DiffHunk)::Nothing
+    old_range = h.old_count == 1 ? "$(h.old_start)" : "$(h.old_start),$(h.old_count)"
+    new_range = h.new_count == 1 ? "$(h.new_start)" : "$(h.new_start),$(h.new_count)"
+    println("@@ -$(old_range) +$(new_range) @@")
+    for l in h.lines
+        println(l)
+    end
+    return nothing
+end
+
+# Produce a sequence of (op, line_text) pairs where op ∈ {' ', '-', '+'}.
+# Uses the Myers/Wagner-Fischer LCS to compute the shortest edit script.
+function _diff_ops(
+    old_lines::Vector{<:AbstractString},
+    new_lines::Vector{<:AbstractString},
+)::Vector{Tuple{Char,String}}
+    m, n = length(old_lines), length(new_lines)
+    # Build LCS table.
+    dp = zeros(Int, m + 1, n + 1)
+    for i in m:-1:1, j in n:-1:1
+        if old_lines[i] == new_lines[j]
+            dp[i, j] = 1 + dp[i+1, j+1]
+        else
+            dp[i, j] = max(dp[i+1, j], dp[i, j+1])
+        end
+    end
+    # Backtrack to produce edit ops.
+    ops = Tuple{Char,String}[]
+    i, j = 1, 1
+    while i <= m || j <= n
+        if i <= m && j <= n && old_lines[i] == new_lines[j]
+            push!(ops, (' ', old_lines[i]))
+            i += 1; j += 1
+        elseif j <= n && (i > m || dp[i, j+1] >= dp[i+1, j])
+            push!(ops, ('+', new_lines[j]))
+            j += 1
+        else
+            push!(ops, ('-', old_lines[i]))
+            i += 1
+        end
+    end
+    return ops
+end
+
+# ---------------------------------------------------------------------------
+# Internal helpers: node lookup, line splicing
 # ---------------------------------------------------------------------------
 
 function _lookup_node_span(

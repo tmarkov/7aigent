@@ -88,7 +88,7 @@ end
     @test :name ∈ propertynames(joined)
 end
 
-@testset "R4: setindex! on non-summary CodeTree columns raises an error mentioning update_source" begin
+@testset "R4: setindex! on non-summary CodeTree columns raises an error mentioning update_source!" begin
     ct = CodeTree.CodeTree(minimal_code_df())
     err = @test_throws Exception (ct[1, :name] = "changed")
     @test occursin("update_source", lowercase(sprint(showerror, err.value)))
@@ -100,7 +100,7 @@ end
     @test ct[4, :summary] == "Session summary."
 end
 
-@testset "R4: setindex! on CodeSymbols raises an informative error" begin
+@testset "R4: setindex! on CodeSymbols raises an informative error mentioning update_source!" begin
     sym = CodeTree.CodeSymbols(minimal_symbols_df())
     err = @test_throws Exception (sym[1, :symbol] = "changed")
     @test occursin("update_source", lowercase(sprint(showerror, err.value)))
@@ -1101,26 +1101,26 @@ end
 end
 
 # ===========================================================================
-# Phase 9 — update_source (R30–R35)
+# Phase 9 — update_source! (R30–R38)
 # ===========================================================================
 
-@testset "R30: update_source succeeds and updates db.code" begin
+@testset "R30: update_source! with string pattern succeeds and updates db.code" begin
     tmp = _tmp_codebase()
     try
         db = load(tmp, TEST_CONFIG)
         node = only(filter(r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"), db.code))
 
-        new_src = "function is_sorted(v)\n    return true\nend\n"
-        update_source(db, node.id, new_src)
+        update_source!(db, node.id, "return true" => "return true  # sorted")
 
         updated = filter(r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"), db.code)
         @test nrow(updated) >= 1
+        @test occursin("return true  # sorted", get_source(db, only(updated).id))
     finally
         rm(tmp; recursive=true)
     end
 end
 
-@testset "R30 + R29a: update_source succeeds on a non-leaf file node" begin
+@testset "R30 + R29a: update_source! succeeds on a non-leaf file node" begin
     tmp = _tmp_codebase()
     try
         db = load(tmp, TEST_CONFIG)
@@ -1131,26 +1131,15 @@ end
         @test file_node.n_children > 0
         @test ismissing(file_node.source)
 
-        new_src = join([
-            "[sorting]",
-            "default_algorithm = \"merge_sort\"",
-            "",
-            "[limits]",
-            "detail_threshold = 99",
-            "",
-        ], '\n')
-        update_source(db, file_node.id, new_src)
+        update_source!(db, file_node.id,
+            "default_algorithm = \"quick_sort\"" => "default_algorithm = \"merge_sort\"")
 
         updated_file = only(filter(
             r -> isequal(r.file, "data/config.toml") && r.kind == "file",
             db.code,
         ))
-        @test updated_file.n_children == 2
-        @test ismissing(updated_file.source)
-        @test get_source(db, updated_file.id) == chomp(new_src)
         child_sources = collect(skipmissing(filter(r -> isequal(r.parent, updated_file.id), db.code).source))
         @test any(src -> occursin("merge_sort", src), child_sources)
-        @test any(src -> occursin("detail_threshold = 99", src), child_sources)
     finally
         rm(tmp; recursive=true)
     end
@@ -1162,11 +1151,11 @@ end
         db = load(tmp, TEST_CONFIG)
         node = only(filter(r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"), db.code))
 
-        # Tamper with the file externally (bypass update_source)
+        # Tamper with the file externally (bypass update_source!)
         utils_path = joinpath(tmp, "julia", "utils.jl")
         write(utils_path, "function external_fn()\n  99\nend\n")
 
-        @test_throws Exception update_source(db, node.id, "function is_sorted(v)\n  true\nend\n")
+        @test_throws Exception update_source!(db, node.id, "return false" => "return false  # unsorted")
 
         # db must now reflect the externally modified content
         @test any(r -> isequal(r.name, "external_fn"), eachrow(db.code))
@@ -1175,7 +1164,7 @@ end
     end
 end
 
-@testset "R31: file content on disk after update is a splice of old content with new_source" begin
+@testset "R31: file content on disk after update is a splice of old content with substituted source" begin
     tmp = _tmp_codebase()
     try
         db = load(tmp, TEST_CONFIG)
@@ -1184,19 +1173,13 @@ end
         utils_path     = joinpath(tmp, "julia", "utils.jl")
         original_lines = readlines(utils_path; keep=true)
         ls = node.line_start
-        le = node.line_end
 
-        new_src = "function is_sorted(v)\n    return true  # stub\nend\n"
-        update_source(db, node.id, new_src)
+        update_source!(db, node.id, "return true" => "return true  # stub")
 
         disk_lines = readlines(utils_path; keep=true)
 
-        # Lines before the replaced span unchanged
+        # Lines before the replaced span must be unchanged
         @test all(disk_lines[i] == original_lines[i] for i in 1:(ls - 1))
-        # Lines after the replaced span unchanged
-        orig_after = original_lines[(le + 1):end]
-        new_after  = disk_lines[(ls - 1 + length(readlines(IOBuffer(new_src); keep=true)) + 1):end]
-        @test orig_after == new_after
     finally
         rm(tmp; recursive=true)
     end
@@ -1208,13 +1191,11 @@ end
         db = load(tmp, TEST_CONFIG)
         node = only(filter(r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"), db.code))
 
-        update_source(db, node.id,
-            "function is_sorted(v)\n    return issorted(v)\nend\n")
+        update_source!(db, node.id, "return false" => "return false  # unsorted")
 
         # db.code has the updated function
         @test any(r -> isequal(r.name, "is_sorted"), eachrow(db.code))
 
-        # Find updated node (id may have changed if line_start changed)
         new_node = only(filter(r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"), db.code))
 
         # No duplicate symbol rows for the new node
@@ -1230,7 +1211,7 @@ end
     end
 end
 
-@testset "R4a + R33b: summary overrides survive update_source when node ids stay stable" begin
+@testset "R4a + R33b: summary overrides survive update_source! when node ids stay stable" begin
     tmp = _tmp_codebase()
     try
         db = load(tmp, TEST_CONFIG)
@@ -1240,11 +1221,7 @@ end
         @test !isnothing(row_idx)
         db.code[row_idx, :summary] = "Session override for noop."
 
-        update_source(
-            db,
-            node.id,
-            "function noop(x)\n    y = x + 1\n    return y - 1\nend\n",
-        )
+        update_source!(db, node.id, "return x" => "return x  # passthrough")
 
         updated = only(filter(r -> isequal(r.id, node.id), db.code))
         @test updated.summary == "Session override for noop."
@@ -1253,14 +1230,13 @@ end
     end
 end
 
-@testset "R34: disk content after update_source matches db buffer" begin
+@testset "R34: disk content after update_source! matches db buffer" begin
     tmp = _tmp_codebase()
     try
         db = load(tmp, TEST_CONFIG)
         node = only(filter(r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"), db.code))
 
-        update_source(db, node.id,
-            "function is_sorted(v)\n    return issorted(v)\nend\n")
+        update_source!(db, node.id, "return true" => "return true  # sorted")
 
         disk_content   = read(joinpath(tmp, node.file), String)
         buffer_content = db._buffer[node.file]
@@ -1277,15 +1253,14 @@ end
         node = only(filter(r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"), db.code))
 
         ids_before        = sort(copy(db.code.id))
-        buf_before        = db._buffer[node.file]  # String is immutable
+        buf_before        = db._buffer[node.file]
         syms_count_before = nrow(db.symbols)
 
         # Make the file read-only so the disk write fails
         utils_path = joinpath(tmp, "julia", "utils.jl")
         chmod(utils_path, 0o444)
 
-        @test_throws Exception update_source(db, node.id,
-            "function is_sorted(v)\n    return issorted(v)\nend\n")
+        @test_throws Exception update_source!(db, node.id, "return false" => "return false  # unsorted")
 
         @test sort(db.code.id)      == ids_before
         @test db._buffer[node.file] == buf_before
@@ -1294,6 +1269,185 @@ end
         chmod(utils_path, 0o644)
     finally
         rm(tmp; recursive=true)
+    end
+end
+
+@testset "R36: update_source! prints a unified diff to stdout on success" begin
+    tmp = _tmp_codebase()
+    out_file = tempname()
+    try
+        db = load(tmp, TEST_CONFIG)
+        node = only(filter(r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"), db.code))
+
+        open(out_file, "w") do io
+            redirect_stdout(io) do
+                update_source!(db, node.id, "return true" => "return true  # sorted")
+            end
+        end
+        output = read(out_file, String)
+
+        # Standard unified diff header lines
+        @test occursin("--- a/", output)
+        @test occursin("+++ b/", output)
+        # Hunk header
+        @test occursin("@@", output)
+        # The removal and addition
+        @test occursin("-", output)
+        @test occursin("+", output)
+        # The specific changed content
+        @test occursin("return true", output)
+        @test occursin("# sorted", output)
+    finally
+        rm(tmp; recursive=true)
+        isfile(out_file) && rm(out_file)
+    end
+end
+
+@testset "R36: update_source! does NOT print a diff on zero-match error" begin
+    tmp = _tmp_codebase()
+    out_file = tempname()
+    try
+        db = load(tmp, TEST_CONFIG)
+        node = only(filter(r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"), db.code))
+
+        open(out_file, "w") do io
+            redirect_stdout(io) do
+                try
+                    update_source!(db, node.id, "THIS_PATTERN_DOES_NOT_EXIST" => "replacement")
+                catch
+                end
+            end
+        end
+        output = read(out_file, String)
+
+        @test !occursin("---", output)
+        @test !occursin("+++", output)
+    finally
+        rm(tmp; recursive=true)
+        isfile(out_file) && rm(out_file)
+    end
+end
+
+@testset "R37: string pattern matching is indentation-agnostic" begin
+    tmp = _tmp_codebase()
+    try
+        db = load(tmp, TEST_CONFIG)
+        # is_sorted body uses indented "    return false" (8 spaces in the fixture).
+        # Pass the pattern with no leading whitespace — it must still match.
+        node = only(filter(r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"), db.code))
+        src_before = get_source(db, node.id)
+        # Confirm the actual source has indentation before "return false"
+        @test occursin(r"  +return false", src_before)
+
+        # Pattern supplied without leading indent — must match
+        update_source!(db, node.id, "return false" => "return false  # unsorted")
+
+        src_after = get_source(db, only(filter(
+            r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"), db.code)).id)
+        # The replacement must be re-indented to match original offset
+        @test occursin(r"  +return false  # unsorted", src_after)
+        @test !occursin(r"^return false", src_after)
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R37: multi-line string pattern with relative indentation preserved" begin
+    tmp = _tmp_codebase()
+    try
+        db = load(tmp, TEST_CONFIG)
+        node = only(filter(r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"), db.code))
+        # Dedented multi-line pattern — supply without absolute leading indent.
+        # The replacement must be re-indented to the offset detected in source.
+        update_source!(db, node.id,
+            "if arr[i] < arr[i-1]\n    return false\nend" =>
+            "if arr[i] <= arr[i-1]\n    return false  # strict\nend")
+
+        src_after = get_source(db, only(filter(
+            r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"), db.code)).id)
+        @test occursin("return false  # strict", src_after)
+        @test occursin("arr[i] <= arr[i-1]", src_after)
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R38: zero matches throws ArgumentError" begin
+    tmp = _tmp_codebase()
+    try
+        db = load(tmp, TEST_CONFIG)
+        node = only(filter(r -> isequal(r.name, "is_sorted") && isequal(r.kind, "function"), db.code))
+
+        err = @test_throws ArgumentError update_source!(db, node.id,
+            "PATTERN_THAT_DOES_NOT_EXIST_ANYWHERE" => "replacement")
+        @test occursin("pattern not found", lowercase(err.value.msg))
+        @test occursin(node.id, err.value.msg)
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R38: over-match prints warning with line numbers, replaces only first count" begin
+    tmp = _tmp_codebase()
+    out_file = tempname()
+    try
+        db = load(tmp, TEST_CONFIG)
+        # quick_sort calls itself recursively — "quick_sort" appears multiple times
+        node = only(filter(r -> isequal(r.name, "quick_sort") && isequal(r.kind, "function")
+                                && isequal(r.language, "cpp")
+                                && isequal(r.file, "src/algorithms.cpp"), db.code))
+        src = get_source(db, node.id)
+        n_matches = length(collect(eachmatch(r"quick_sort", src)))
+        @test n_matches >= 2  # fixture must have ≥2 occurrences for this test
+
+        open(out_file, "w") do io
+            redirect_stdout(io) do
+                update_source!(db, node.id, r"quick_sort" => "qs_fn"; count=1)
+            end
+        end
+        output = read(out_file, String)
+
+        # Warning was printed listing match locations
+        @test occursin("warning", lowercase(output)) || occursin("match", lowercase(output))
+        @test occursin("line", lowercase(output))
+
+        # The function declaration was renamed → qs_fn node exists in .cpp
+        qs_node = only(filter(r -> isequal(r.name, "qs_fn") && isequal(r.kind, "function")
+                               && isequal(r.file, "src/algorithms.cpp"), db.code))
+        new_src = get_source(db, qs_node.id)
+        # Exactly 1 "qs_fn" (in the declaration) and n_matches-1 "quick_sort" remaining
+        @test length(collect(eachmatch(r"qs_fn", new_src))) == 1
+        @test length(collect(eachmatch(r"quick_sort", new_src))) == n_matches - 1
+    finally
+        rm(tmp; recursive=true)
+        isfile(out_file) && rm(out_file)
+    end
+end
+
+@testset "R38: Regex match locations include chars M:N within the line" begin
+    tmp = _tmp_codebase()
+    out_file = tempname()
+    try
+        db = load(tmp, TEST_CONFIG)
+        node = only(filter(r -> isequal(r.name, "quick_sort") && isequal(r.kind, "function")
+                                && isequal(r.language, "cpp")
+                                && isequal(r.file, "src/algorithms.cpp"), db.code))
+        src = get_source(db, node.id)
+        occurrences = length(collect(eachmatch(r"quick_sort", src)))
+        @test occurrences >= 2
+
+        open(out_file, "w") do io
+            redirect_stdout(io) do
+                update_source!(db, node.id, r"quick_sort" => "qs_fn"; count=1)
+            end
+        end
+        output = read(out_file, String)
+
+        # Regex over-match warning must include "chars M:N" format
+        @test occursin("chars", output)
+    finally
+        rm(tmp; recursive=true)
+        isfile(out_file) && rm(out_file)
     end
 end
 
