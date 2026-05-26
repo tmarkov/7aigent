@@ -327,8 +327,10 @@ using `git mv` so history is preserved.
 
 ---
 
-## Commit Messages
+## Commits
 
+1. Do not commit until specifically instructed to do so.
+2. When committing, follow these guidelines for messages:
 - Write the subject line in the imperative mood: *"Add R14b absorption rule"*,
   not *"Added"* or *"Adding"*.
 - Reference requirement IDs in the subject or body when relevant.
