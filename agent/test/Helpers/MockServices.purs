@@ -145,13 +145,6 @@ mkMockServices opts = do
                 Just { head: h, tail: t } -> do
                     Ref.write t ref
                     pure h
-    let popDetailed ref def = do
-            arr <- Ref.read ref
-            case Array.uncons arr of
-                Nothing -> pure def
-                Just { head: h, tail: t } -> do
-                    Ref.write t ref
-                    pure h
     let popLlm ref def = do
             arr <- Ref.read ref
             case Array.uncons arr of
@@ -172,6 +165,7 @@ mkMockServices opts = do
                 pure $ case opts.spawnResult of
                     Left e -> Left (SandboxLaunchError e)
                     Right s -> Right s
+            , killSandbox: \_ -> pure unit
             , connectKernel: \path _ _ -> do
                 liftEffect $ record (CallConnectKernel path)
                 pure $ case opts.connectResult of
@@ -185,7 +179,16 @@ mkMockServices opts = do
                     Nothing -> pure result
             , executeCodeDetailed: \_ (RawJulia code) _ -> do
                 liftEffect $ record (CallExecuteCodeDetailed code)
-                liftEffect $ popDetailed execDetailedResponses { output: "", hadError: false }
+                detailedQueue <- liftEffect $ Ref.read execDetailedResponses
+                case Array.uncons detailedQueue of
+                    Just { head: h, tail: t } -> do
+                        liftEffect $ Ref.write t execDetailedResponses
+                        pure h
+                    Nothing -> do
+                        result <- liftEffect $ popStr execResponses ""
+                        case String.stripPrefix (String.Pattern "__CRASH__") result of
+                            Just msg -> liftEffect $ Exception.throw ("Sandbox crashed: " <> msg)
+                            Nothing -> pure { output: result, hadError: false }
             , interruptKernel: \_ -> do
                 liftEffect $ record CallInterruptKernel
             , closeKernel: \_ -> record CallCloseKernel

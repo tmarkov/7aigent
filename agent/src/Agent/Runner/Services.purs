@@ -29,9 +29,10 @@ import Agent.Services.Stdin as Stdin
 -- | to enable testing via mock implementations.
 type RunnerServices =
     { spawnSandbox       :: WorkspacePath -> Aff (Either AppError Sandbox.SandboxHandle)
+    , killSandbox        :: Sandbox.SandboxHandle -> Aff Unit
     , connectKernel      :: String
-                         -> { apiEndpoint :: String, apiKey :: String, model :: String }
-                         -> (String -> String -> Effect Unit)
+                             -> { apiEndpoint :: String, apiKey :: String, model :: String }
+                             -> (String -> String -> Effect Unit)
                          -> Aff (Either AppError Jupyter.KernelHandle)
     , executeCode        :: Jupyter.KernelHandle -> RawJulia -> (String -> Effect Unit) -> Aff String
     , executeCodeDetailed :: Jupyter.KernelHandle -> RawJulia -> (String -> Effect Unit) -> Aff Jupyter.ExecutionResult
@@ -52,6 +53,7 @@ type RunnerServices =
 productionServices :: RunnerServices
 productionServices =
     { spawnSandbox: Sandbox.spawnSandbox
+    , killSandbox: Sandbox.killSandbox
     , connectKernel: Jupyter.connectKernel
     , executeCode: Jupyter.executeCode
     , executeCodeDetailed: Jupyter.executeCodeDetailed

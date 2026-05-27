@@ -11,6 +11,7 @@ import Prelude
 import Data.Array as Array
 
 import Agent.Types (LogEvent(..), ToolName(..))
+import Agent.Programs.ToolInput (parseJuliaCodeInput)
 
 -- FFI: uses Julia's Meta.parse to classify expressions
 foreign import isPureDefinitionImpl :: String -> Boolean
@@ -35,5 +36,5 @@ extractDefs events =
 
 extractJuliaInput :: LogEvent -> Array String
 extractJuliaInput (EvtToolCall r)
-    | r.toolName == JuliaRepl = [r.input]
+    | r.toolName == JuliaRepl = [parseJuliaCodeInput r.input]
 extractJuliaInput _ = []

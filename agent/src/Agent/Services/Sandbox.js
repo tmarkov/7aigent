@@ -11,7 +11,18 @@ export const spawnSandboxImpl = (workspacePath) => (onError) => (onSuccess) => (
 
   const proc = spawn("7aigent-sandbox", [workspacePath], {
     stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
   });
+
+  const signalSandbox = (signal) => {
+    try {
+      process.kill(-proc.pid, signal);
+      return;
+    } catch (_) {}
+    try {
+      proc.kill(signal);
+    } catch (_) {}
+  };
 
   proc.stdout.on("data", (data) => {
     if (resolved) return;
@@ -21,8 +32,32 @@ export const spawnSandboxImpl = (workspacePath) => (onError) => (onSuccess) => (
         const trimmed = line.trim();
         if (trimmed) {
           resolved = true;
-          const kill = () => {
-            try { proc.kill("SIGTERM"); } catch (_) {}
+          const kill = (onDone) => () => {
+            if (proc.exitCode !== null || proc.signalCode !== null) {
+              onDone()();
+              return;
+            }
+
+            let finished = false;
+            const done = () => {
+              if (finished) return;
+              finished = true;
+              clearTimeout(timeout);
+              proc.off("exit", handleExit);
+              onDone()();
+            };
+            const handleExit = () => done();
+            const timeout = setTimeout(() => {
+              signalSandbox("SIGKILL");
+              done();
+            }, 5000);
+
+            proc.once("exit", handleExit);
+            try {
+              signalSandbox("SIGTERM");
+            } catch (_) {
+              done();
+            }
           };
           onSuccess({ kernelJsonPath: trimmed, kill })();
           return;

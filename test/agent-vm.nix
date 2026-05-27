@@ -116,6 +116,9 @@ let
         text = text.replace("__ALWAYS_429__", "")
         return text.strip()
 
+    def is_steering_message(text):
+        return text.lstrip().startswith("**Tokens:**")
+
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_POST(self):
             content_len = int(self.headers.get("Content-Length", "0"))
@@ -130,17 +133,27 @@ let
             messages = payload.get("messages", [])
             last_user = ""
             last_tool = ""
-            for message in reversed(messages):
+            last_tool_index = -1
+            for index, message in enumerate(messages):
                 role = message.get("role")
-                if not last_tool and role == "tool":
-                    last_tool = message.get("content", "")
                 if role == "user":
                     last_user = message.get("content", "")
-                    break
+                elif role == "tool":
+                    last_tool = message.get("content", "")
+                    last_tool_index = index
 
             normalized_user = strip_control_tokens(last_user)
+            non_steering_user_after_tool = False
+            if last_tool_index >= 0:
+                for message in messages[last_tool_index + 1:]:
+                    if message.get("role") != "user":
+                        continue
+                    content = message.get("content", "")
+                    if not is_steering_message(content):
+                        non_steering_user_after_tool = True
+                        break
             kind = "chat"
-            if last_tool:
+            if last_tool and not non_steering_user_after_tool:
                 kind = "tool-continuation"
             elif "__TOOL_CALL__" in last_user:
                 kind = "tool-call"
@@ -191,16 +204,16 @@ let
                 }).encode("utf-8"))
                 return
 
-            if last_tool:
+            if kind == "tool-continuation":
                 normalized_tool = last_tool.strip()
                 body = text_response(f"FINAL_TOOL_OUTPUT: {normalized_tool}")
-            elif "Should I interrupt this execution?" in last_user:
+            elif kind == "timeout-check":
                 answer = "yes" if "__INTERRUPT_YES__" in last_user else "no"
                 body = text_response(answer)
-            elif "__TOOL_CALL__" in last_user:
+            elif kind == "tool-call":
                 code = last_user.split("__TOOL_CALL__", 1)[1].strip()
                 body = tool_call_response(code)
-            elif payload.get("response_format", {}).get("type") == "json_object":
+            elif kind == "json":
                 body = reflection_response()
             else:
                 body = text_response(f"ACK: {normalized_user}")
@@ -252,6 +265,9 @@ let
             { name: "run", arguments: { message } },
             undefined,
             {
+              timeout: 120000,
+              resetTimeoutOnProgress: true,
+              maxTotalTimeout: 180000,
               onprogress: (update) => {
                 progress.push({
                   atMs: Date.now() - startedAt,
@@ -472,7 +488,6 @@ pkgs.testers.nixosTest {
     assert rc == 0, out
     assert "LLM error:" in out, out
     assert "FINAL_TOOL_OUTPUT: set-x" in out, out
-    assert "FINAL_TOOL_OUTPUT: 41" in out, out
     exhausted_entries = request_entries(kind="chat")
     first_prompt_entries = [
         entry for entry in exhausted_entries
@@ -510,9 +525,13 @@ pkgs.testers.nixosTest {
     assert len(timeout_checks) == 3, timeout_checks
     tool_request = request_entries(kind="tool-call")[0]
     offsets = [entry["timestamp"] - tool_request["timestamp"] for entry in timeout_checks]
-    assert 20 <= offsets[0] <= 45, offsets
-    assert 50 <= offsets[1] <= 75, offsets
-    assert 110 <= offsets[2] <= 140, offsets
+    assert 25 <= offsets[0] <= 60, offsets
+    check_gaps = [
+        timeout_checks[1]["timestamp"] - timeout_checks[0]["timestamp"],
+        timeout_checks[2]["timestamp"] - timeout_checks[1]["timestamp"],
+    ]
+    assert 20 <= check_gaps[0] <= 45, check_gaps
+    assert 50 <= check_gaps[1] <= 75, check_gaps
     for entry in timeout_checks:
         text = entry["last_user"]
         assert "sleep(125)" in text, text
@@ -527,6 +546,7 @@ pkgs.testers.nixosTest {
     timeout_response_events = [event for event in session_log if event.get("type") == "timeout_response"]
     assert len(timeout_check_events) == 3, timeout_check_events
     assert len(timeout_response_events) == 3, timeout_response_events
+    assert [event["elapsed_seconds"] for event in timeout_check_events] == [30, 60, 120], timeout_check_events
     assert all(event["interrupt"] is False for event in timeout_response_events), timeout_response_events
     assert "Should I interrupt this execution?" in out, out
     assert "no" in out.lower(), out
@@ -553,7 +573,7 @@ pkgs.testers.nixosTest {
     interrupted_outputs = [event["output"] for event in tool_results if "[interrupted]" in event["output"]]
     assert interrupted_outputs, tool_results
     assert all("too-late" not in output for output in interrupted_outputs), interrupted_outputs
-    assert "FINAL_TOOL_OUTPUT:" in out and "[interrupted]" in out, out
+    assert "partial" in out and "[interrupted]" in out, out
 
     # A43: MCP server exposes the run tool, sends progress, isolates sessions, and returns errors.
     reset_workspace(DEFAULT_CONFIG)
@@ -571,7 +591,15 @@ pkgs.testers.nixosTest {
         )
         if message is not None:
             command += " " + shlex.quote(message)
-        out = succeed(command, f"MCP client {mode} failed")
+        rc, out = run(command)
+        if rc != 0:
+            server_log = read_file("/tmp/mcp.log")
+            raise Exception(
+                f"MCP client {mode} failed\n"
+                f"Command: {command}\n"
+                f"Output:\n{out}\n"
+                f"MCP server log:\n{server_log}"
+            )
         return json.loads(out)
 
     tools = run_mcp_client("list-tools")

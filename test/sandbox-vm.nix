@@ -49,6 +49,10 @@ let
     run("using CodeTree; using DataFrames")
     print("PASS: using CodeTree")
 
+    result = run("SevenAigentREPL.status(); println(\"status ok\")")
+    assert "status ok" in result, f"Expected SevenAigentREPL.status() to run, got: {result!r}"
+    print("PASS: SevenAigentREPL is preloaded in Main")
+
     # 2b. Build the LanguageConfig (separate cell to isolate failures)
     run("""
     global config = CodeTree.LanguageConfig(Dict(

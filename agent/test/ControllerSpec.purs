@@ -271,7 +271,7 @@ controllerSpec = do
                         _ -> false))
 
     describe "A1: ReACT loop orchestration" do
-        it "A1: LLM tool call → executeCode → LLM called again → text → ends turn" do
+        it "A1: LLM tool call → kernel executes code → LLM called again → text → ends turn" do
             withTestSession
                 { llmResponses:
                     [ Right (juliaToolLlmResult "1 + 1")     -- first LLM call: tool call
@@ -281,17 +281,18 @@ controllerSpec = do
                 , execResponses: ["", "", "2", ""]  -- startup*2, julia_repl, getJuliaState
                 , readLineResponses: []
                 } \_ calls -> do
-                    -- Verify executeCode called with the tool's code
+                    -- Verify the kernel execution path received the tool's code
                     calls `shouldSatisfy`
                         (Array.any (\c -> case c of
                             CallExecuteCode code -> String.contains (String.Pattern "1 + 1") code
+                            CallExecuteCodeDetailed code -> String.contains (String.Pattern "1 + 1") code
                             _ -> false))
                     -- Verify LLM called at least twice (tool call + follow-up)
                     let llmCalls = Array.filter isCallLlm calls
                     Array.length llmCalls `shouldSatisfy` (_ >= 2)
 
     describe "A3: tool dispatch routes julia_repl to kernel" do
-        it "A3: julia_repl tool call → executeCode called with correct code" do
+        it "A3: julia_repl tool call → kernel receives the correct code" do
             withTestSession
                 { llmResponses:
                     [ Right (juliaToolLlmResult "println(\"hello\")")
@@ -304,6 +305,8 @@ controllerSpec = do
                     calls `shouldSatisfy`
                         (Array.any (\c -> case c of
                             CallExecuteCode code ->
+                                String.contains (String.Pattern "println(\"hello\")") code
+                            CallExecuteCodeDetailed code ->
                                 String.contains (String.Pattern "println(\"hello\")") code
                             _ -> false))
 
@@ -378,20 +381,31 @@ controllerSpec = do
 
     describe "A47: julia_state resolution uses correct expression" do
         it "A47: getJuliaState sends the ans-preserving SevenAigentREPL.status() wrapper" do
-            withTestSession
+            withTestSessionCustom
                 { llmResponses:
                     [ Right (juliaToolLlmResult "1 + 1")
                     , Right (textLlmResult "Done")
                     , Right reflectionComplete
                     ]
-                , execResponses: ["", "", "2", "[Tasks: 0]", ""]
+                , execResponses: ["2", ""]
+                , execDetailedResponses:
+                    [ { output: "", hadError: false }
+                    , { output: "", hadError: false }
+                    , { output: "[Tasks: 0]", hadError: false }
+                    ]
                 , readLineResponses: []
-                } \_ calls -> do
+                , configToml: testConfigToml
+                , prompt: Just "test prompt"
+                } \_ calls _ -> do
                     -- A47 requires the expression to contain both the ans
                     -- preservation wrapper and SevenAigentREPL.status()
                     calls `shouldSatisfy`
                         (Array.any (\c -> case c of
                             CallExecuteCode code ->
+                                String.contains (String.Pattern "SevenAigentREPL.status()") code
+                                && String.contains (String.Pattern "_ans") code
+                                && String.contains (String.Pattern "isdefined(Main, :ans)") code
+                            CallExecuteCodeDetailed code ->
                                 String.contains (String.Pattern "SevenAigentREPL.status()") code
                                 && String.contains (String.Pattern "_ans") code
                                 && String.contains (String.Pattern "isdefined(Main, :ans)") code
@@ -1062,17 +1076,15 @@ controllerSpec = do
                     , Right (textLlmResult "Done with compacted context")
                     , Right reflectionComplete
                     ]
-                , execResponses:
-                    [ "old-result"
-                    , "[Tasks: 0]"
-                    , "recent-result"
-                    , "[Tasks: 0]"
-                    , "[Tasks: 0]"
-                    , ""
-                    ]
+                , execResponses: []
                 , execDetailedResponses:
                     [ { output: "", hadError: false }
                     , { output: "", hadError: false }
+                    , { output: "old-result", hadError: false }
+                    , { output: "[Tasks: 0]", hadError: false }
+                    , { output: "recent-result", hadError: false }
+                    , { output: "[Tasks: 0]", hadError: false }
+                    , { output: "[Tasks: 0]", hadError: false }
                     ]
                 , readLineResponses: []
                 , configToml: compactConfig
@@ -1200,15 +1212,15 @@ controllerSpec = do
                         ]
                     , execResponses:
                         [ "old-result"
-                        , "[Tasks: 0]"
                         , "recent-result"
-                        , "[Tasks: 0]"
-                        , "[Tasks: 0]"
                         , ""
                         ]
                     , execDetailedResponses:
                         [ { output: "", hadError: false }
                         , { output: "", hadError: false }
+                        , { output: "[Tasks: 0]", hadError: false }
+                        , { output: "[Tasks: 0]", hadError: false }
+                        , { output: "[Tasks: 0]", hadError: false }
                         ]
                     , readLineResponses: []
                     , streamingChunks: []
@@ -1297,10 +1309,14 @@ controllerSpec = do
                     , Right (juliaToolLlmResultHighTokens "step2()" 300)
                     , Right reflectionComplete
                     ]
-                , execResponses: [ "one", "[Tasks: 0]", "two", "[Tasks: 0]", "" ]
+                , execResponses: []
                 , execDetailedResponses:
                     [ { output: "", hadError: false }
                     , { output: "", hadError: false }
+                    , { output: "one", hadError: false }
+                    , { output: "[Tasks: 0]", hadError: false }
+                    , { output: "two", hadError: false }
+                    , { output: "[Tasks: 0]", hadError: false }
                     ]
                 , readLineResponses: []
                 , configToml: turnLimitConfig
@@ -1311,6 +1327,7 @@ controllerSpec = do
                     appearsBeforeIn
                         (\c -> case c of
                             CallExecuteCode code -> String.contains (String.Pattern "step2()") code
+                            CallExecuteCodeDetailed code -> String.contains (String.Pattern "step2()") code
                             _ -> false)
                         (\c -> case c of
                             CallPrintLn s -> String.contains (String.Pattern "Token limit reached") s
@@ -1343,18 +1360,16 @@ controllerSpec = do
                     , Right (juliaToolLlmResultHighTokens "step3()" 370)
                     , Right reflectionComplete
                     ]
-                , execResponses:
-                    [ "one"
-                    , "[Tasks: 0]"
-                    , "two"
-                    , "[Tasks: 0]"
-                    , "three"
-                    , "[Tasks: 0]"
-                    , ""
-                    ]
+                , execResponses: []
                 , execDetailedResponses:
                     [ { output: "", hadError: false }
                     , { output: "", hadError: false }
+                    , { output: "one", hadError: false }
+                    , { output: "[Tasks: 0]", hadError: false }
+                    , { output: "two", hadError: false }
+                    , { output: "[Tasks: 0]", hadError: false }
+                    , { output: "three", hadError: false }
+                    , { output: "[Tasks: 0]", hadError: false }
                     ]
                 , readLineResponses: []
                 , configToml: turnLimitConfig
@@ -1365,6 +1380,7 @@ controllerSpec = do
 
                     case indexOf (\c -> case c of
                             CallExecuteCode code -> String.contains (String.Pattern "step3()") code
+                            CallExecuteCodeDetailed code -> String.contains (String.Pattern "step3()") code
                             _ -> false) calls
                         , indexOf (\c -> case c of
                             CallPrintLn s -> String.contains (String.Pattern "Token limit reached") s
@@ -1397,10 +1413,15 @@ controllerSpec = do
                         , Right (textLlmResult "All done")
                         , Right reflectionComplete
                         ]
-                    , execResponses: [ "result1", "[Tasks: 0]", "result2", "[Tasks: 0]", "[Tasks: 0]", "" ]
+                    , execResponses: []
                     , execDetailedResponses:
                         [ { output: "", hadError: false }
                         , { output: "", hadError: false }
+                        , { output: "result1", hadError: false }
+                        , { output: "[Tasks: 0]", hadError: false }
+                        , { output: "result2", hadError: false }
+                        , { output: "[Tasks: 0]", hadError: false }
+                        , { output: "[Tasks: 0]", hadError: false }
                         ]
                     , readLineResponses: []
                     , streamingChunks: []
