@@ -4,18 +4,25 @@
   inputs = {
     nixpkgs.url     = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    mkSpagoDerivation = {
+      url = "github:jeslie0/mkSpagoDerivation";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     purescript-overlay = {
       url = "github:thomashoneyman/purescript-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
-  outputs = { self, nixpkgs, flake-utils, purescript-overlay }:
+  outputs = { self, nixpkgs, flake-utils, mkSpagoDerivation, purescript-overlay }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
           inherit system;
-          overlays = [ purescript-overlay.overlays.default ];
+          overlays = [
+            mkSpagoDerivation.overlays.default
+            purescript-overlay.overlays.default
+          ];
         };
 
         # Single combined Julia environment used by both codeTree (build/test)
