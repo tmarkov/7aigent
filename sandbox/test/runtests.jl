@@ -666,6 +666,167 @@ end
     @test isempty(silent_output)
 end
 
+@testset "RA31: todo_next! prints the status tree after advancing" begin
+    workspace = _workspace_from_fixture()
+    _bind_repl_session(workspace)
+
+    parent_id = SevenAigentREPL.todo_add!("Parent task")
+    SevenAigentREPL.todo_start!(parent_id)
+    child1 = SevenAigentREPL.todo_add!("Step one"; parent=parent_id)
+    child2 = SevenAigentREPL.todo_add!("Step two"; after=child1)
+
+    output, result = _capture_stdout(() -> SevenAigentREPL.todo_next!())
+
+    @test result === nothing
+    @test occursin("[Tasks:", output)
+    @test occursin("Step two", output)
+end
+
+@testset "RA31: todo_next! prints all-done summary when no pending leaf remains" begin
+    workspace = _workspace_from_fixture()
+    _bind_repl_session(workspace)
+
+    id = SevenAigentREPL.todo_add!("Only task")
+    SevenAigentREPL.todo_start!(id)
+
+    output, _ = _capture_stdout(() -> SevenAigentREPL.todo_next!())
+
+    @test occursin("[Tasks:", output)
+    @test occursin("done", lowercase(output))
+end
+
+@testset "RA32: status() shows last known-good state under a header after validation failure" begin
+    workspace = _workspace_from_fixture()
+    _bind_repl_session(workspace)
+
+    id1 = SevenAigentREPL.todo_add!("First task")
+    SevenAigentREPL.todo_start!(id1)
+
+    Core.eval(Main, :(
+        todo = DataFrame(
+            id = [1, 1],
+            parent = Union{Missing, Int}[missing, missing],
+            description = ["First task", "Duplicate"],
+            status = [SevenAigentREPL.in_progress, SevenAigentREPL.pending],
+        )
+    ))
+
+    output, result = _capture_stdout(() -> SevenAigentREPL.status())
+
+    @test result === nothing
+    @test occursin("duplicate", lowercase(output))
+    @test occursin("last known-good", lowercase(output))
+    @test occursin("First task", output)
+end
+
+@testset "RA32: status() does not print last known-good header when todo_df is empty" begin
+    workspace = _workspace_from_fixture()
+    _bind_repl_session(workspace)
+
+    Core.eval(Main, :(todo = "bad value"))
+    output, result = _capture_stdout(() -> SevenAigentREPL.status())
+
+    @test result === nothing
+    @test occursin("dataframe", lowercase(output))
+    @test !occursin("last known-good", lowercase(output))
+end
+
+@testset "RA31: todo_refine_current! adds sibling children under the active leaf" begin
+    workspace = _workspace_from_fixture()
+    _bind_repl_session(workspace)
+
+    parent_id = SevenAigentREPL.todo_add!("Parent")
+    SevenAigentREPL.todo_start!(parent_id)
+
+    ids = SevenAigentREPL.todo_refine_current!("Alpha", "Beta", "Gamma")
+
+    @test length(ids) == 3
+    descriptions = [row.description for row in eachrow(Main.todo)]
+    @test "Alpha" in descriptions
+    @test "Beta" in descriptions
+    @test "Gamma" in descriptions
+
+    alpha_idx = _todo_index(Main.todo, ids[1])
+    @test Main.todo[alpha_idx, :parent] == parent_id
+    @test Main.todo[alpha_idx, :status] == SevenAigentREPL.in_progress
+    @test Main.todo[_todo_index(Main.todo, parent_id), :status] == SevenAigentREPL.pending
+
+    beta_idx = _todo_index(Main.todo, ids[2])
+    @test Main.todo[beta_idx, :parent] == parent_id
+    @test Main.todo[beta_idx, :status] == SevenAigentREPL.pending
+end
+
+@testset "RA31: todo_refine_current! prints the status tree after adding children" begin
+    workspace = _workspace_from_fixture()
+    _bind_repl_session(workspace)
+
+    id = SevenAigentREPL.todo_add!("Root task")
+    SevenAigentREPL.todo_start!(id)
+
+    output, result = _capture_stdout(() -> SevenAigentREPL.todo_refine_current!("Sub-task A", "Sub-task B"))
+
+    @test result isa Vector{Int}
+    @test occursin("[Tasks:", output)
+    @test occursin("Sub-task A", output)
+end
+
+@testset "RA31: todo_refine_current! throws when called with no arguments" begin
+    workspace = _workspace_from_fixture()
+    _bind_repl_session(workspace)
+
+    SevenAigentREPL.todo_add!("Root task")
+
+    @test_throws ArgumentError SevenAigentREPL.todo_refine_current!()
+end
+
+@testset "RA31: todo_refine_current! throws when there is no in_progress leaf" begin
+    workspace = _workspace_from_fixture()
+    _bind_repl_session(workspace)
+
+    SevenAigentREPL.todo_add!("Root task")
+
+    @test_throws ErrorException SevenAigentREPL.todo_refine_current!("Child")
+end
+
+@testset "RA31: todo_delete! removes a pending leaf and prints the updated tree" begin
+    workspace = _workspace_from_fixture()
+    _bind_repl_session(workspace)
+
+    id1 = SevenAigentREPL.todo_add!("Keep this")
+    id2 = SevenAigentREPL.todo_add!("Delete this")
+
+    output, result = _capture_stdout(() -> SevenAigentREPL.todo_delete!(id2))
+
+    @test result === nothing
+    @test nrow(Main.todo) == 1
+    @test Main.todo[1, :description] == "Keep this"
+    @test occursin("[Tasks:", output)
+end
+
+@testset "RA31: todo_delete! throws for non-leaf, in_progress, or done nodes" begin
+    workspace = _workspace_from_fixture()
+    _bind_repl_session(workspace)
+
+    parent_id = SevenAigentREPL.todo_add!("Parent")
+    child_id = SevenAigentREPL.todo_add!("Child"; parent=parent_id)
+    SevenAigentREPL.todo_start!(child_id)
+
+    @test_throws ErrorException SevenAigentREPL.todo_delete!(parent_id)
+    @test_throws ErrorException SevenAigentREPL.todo_delete!(child_id)
+
+    SevenAigentREPL.todo_next!()
+    @test_throws ErrorException SevenAigentREPL.todo_delete!(child_id)
+end
+
+@testset "RA31: todo_delete! throws for a missing id" begin
+    workspace = _workspace_from_fixture()
+    _bind_repl_session(workspace)
+
+    SevenAigentREPL.todo_add!("A task")
+
+    @test_throws ErrorException SevenAigentREPL.todo_delete!(99)
+end
+
 @testset "RA14: non-leaf targets use the leftmost leaf descendant as the primary witness" begin
     workspace = _workspace_from_fixture()
     db = _bind_repl_session(workspace)

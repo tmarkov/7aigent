@@ -300,7 +300,21 @@ managing the todo list:
   `done`, recursively marks any ancestors `done` whose direct children are all
   `done`, and then moves focus to the next `pending` leaf in DataFrame row order
   if one exists. If no pending leaf remains, it leaves the table with no
-  `in_progress` row.
+  `in_progress` row. After completing the mutation it prints the same status tree
+  as `status()` so the caller always sees the updated state without a separate
+  call.
+- `todo_refine_current!(descriptions::AbstractString...)::Vector{Int}` validates
+  the current todo table, throws an `ArgumentError` if called with no arguments,
+  throws an `ErrorException` unless exactly one `in_progress` leaf exists, and
+  inserts the given descriptions as sibling child leaves under that leaf in order.
+  The first child is inserted as a child of the current in-progress item (which
+  reverts to `pending`); each subsequent child is inserted as the next sibling
+  after the previous one. Returns the vector of new ids in insertion order and
+  prints the status tree after all insertions.
+- `todo_delete!(id::Int)::Nothing` validates the current todo table, throws an
+  `ErrorException` if `id` does not exist, is not a leaf, or has status
+  `in_progress` or `done`, and otherwise removes that row, re-validates, and
+  prints the updated status tree.
 
 All helper mutations update both the session-owned todo state and the REPL-visible
 `Main.todo` table.
@@ -311,7 +325,10 @@ REPL session is active, `status()` prints nothing and returns normally. If
 `Main.todo` is a `DataFrame` and validation succeeds, the validated table replaces
 the session-owned last known-good todo state before rendering. If `Main.todo` is
 not a `DataFrame` or validation fails, `status()` prints concise validation
-errors and leaves the session-owned last known-good todo state unchanged.
+errors followed by the last known-good todo state under a `[Last known-good
+state:]` header (using the same tree renderer), and leaves the session-owned last
+known-good todo state unchanged. When no last known-good state is available (e.g.
+immediately after `bind!`), only the validation errors are printed.
 Validation must detect at least duplicate ids, parent references to missing ids,
 parent cycles, more than one `in_progress` row, and any `in_progress` row that is
 not a leaf; implementations may report additional schema or type errors. For

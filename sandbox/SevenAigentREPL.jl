@@ -10,7 +10,7 @@ using CodeTree: CodeTreeDB
 
 export llm_show_dataframe, summarize!
 export TodoStatus, pending, in_progress, done
-export todo_add!, todo_start!, todo_next!, status
+export todo_add!, todo_start!, todo_next!, todo_refine_current!, todo_delete!, status
 
 const SUMMARY_COMM_TARGET = "7aigent.summary"
 const SUMMARY_INPUT_PROMPT_PREFIX = "7aigent.summary.reply:"

@@ -545,6 +545,7 @@ end
     todo_next!() -> Nothing
 
 Mark the current `in_progress` leaf as done and advance to the next pending leaf.
+Prints the updated status tree so the new active state is always visible.
 """
 function todo_next!()::Nothing
     tree = _current_todo_tree_for_mutation()
@@ -562,6 +563,61 @@ function todo_next!()::Nothing
     end
 
     _publish_todo!(tree.df)
+    final_tree = _require_valid_tree(tree.df, "Internal todo state is invalid.")
+    _print_status_tree(final_tree)
+    return nothing
+end
+
+"""
+    todo_refine_current!(descriptions::AbstractString...) -> Vector{Int}
+
+Add multiple sibling child leaves under the current `in_progress` leaf in order.
+The current leaf reverts to `pending` and the first new child becomes `in_progress`.
+Returns the vector of new ids and prints the updated status tree.
+"""
+function todo_refine_current!(descriptions::AbstractString...)::Vector{Int}
+    isempty(descriptions) &&
+        throw(ArgumentError("todo_refine_current! requires at least one description"))
+
+    tree = _current_todo_tree_for_mutation()
+    length(tree.active_ids) == 1 ||
+        throw(ErrorException("todo_refine_current! requires exactly one in_progress leaf."))
+
+    parent = only(tree.active_ids)
+    ids = Int[todo_add!(String(descriptions[1]); parent = parent)]
+    for description in descriptions[2:end]
+        push!(ids, todo_add!(String(description); after = last(ids)))
+    end
+
+    final_tree = _require_valid_tree(Main.todo, "Internal todo state is invalid.")
+    _print_status_tree(final_tree)
+    return ids
+end
+
+"""
+    todo_delete!(id::Int) -> Nothing
+
+Remove a pending leaf task by id, re-validate, and print the updated status tree.
+Throws if `id` does not exist, is not a leaf, or has status `in_progress` or `done`.
+"""
+function todo_delete!(id::Int)::Nothing
+    tree = _current_todo_tree_for_mutation()
+
+    haskey(tree.row_by_id, id) || throw(ErrorException("Todo id $id not found."))
+    isempty(get(tree.children_by_parent, id, Int[])) ||
+        throw(ErrorException("Cannot delete todo $id: only leaf tasks can be deleted."))
+
+    row_index = tree.row_by_id[id]
+    status_val = tree.df[row_index, :status]
+    status_val == in_progress &&
+        throw(ErrorException("Cannot delete todo $id: in_progress tasks cannot be deleted."))
+    status_val == done &&
+        throw(ErrorException("Cannot delete todo $id: done tasks cannot be deleted."))
+
+    deleteat!(tree.df, row_index)
+    _publish_todo!(tree.df)
+    final_tree = _require_valid_tree(tree.df, "Internal todo state is invalid.")
+    _print_status_tree(final_tree)
     return nothing
 end
 
@@ -581,6 +637,15 @@ function status()::Nothing
         println("[Todo validation failed]")
         for error in validation.errors
             println("- $error")
+        end
+        if nrow(session.todo_df) > 0
+            lkg_validation = _build_todo_tree(session.todo_df)
+            if isnothing(lkg_validation.tree)
+                return nothing
+            end
+            println()
+            println("[Last known-good state:]")
+            _print_status_tree(lkg_validation.tree::TodoTree)
         end
         return nothing
     end
