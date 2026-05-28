@@ -48,6 +48,15 @@ timeoutSpec = do
     it "A14: 240s elapsed, last check at 120s → fourth check due" do
       isCheckDue 240 120 `shouldEqual` true
 
+    it "A14: 959s elapsed, last check at 480s → no fifth-doubling check yet" do
+      isCheckDue 959 480 `shouldEqual` false
+
+    it "A14: 960s elapsed, last check at 480s → next doubled check is due" do
+      isCheckDue 960 480 `shouldEqual` true
+
+    it "A14: 1920s elapsed, last check at 960s → schedule keeps doubling" do
+      isCheckDue 1920 960 `shouldEqual` true
+
   ---------------------------------------------------------------------------
   -- A15: interrupt check request construction
   ---------------------------------------------------------------------------

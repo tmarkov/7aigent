@@ -27,11 +27,14 @@ timeoutCheckpoints = [30, 60, 120, 240, 480]
 
 isCheckDue :: Int -> Int -> Boolean
 isCheckDue elapsed lastCheckAt =
-    case Array.find
-        (\cp -> cp > lastCheckAt && cp <= elapsed)
-        timeoutCheckpoints of
-        Just _ -> true
-        Nothing -> false
+    nextTimeoutCheckpointAfter lastCheckAt <= elapsed
+
+nextTimeoutCheckpointAfter :: Int -> Int
+nextTimeoutCheckpointAfter lastCheckAt = go 30
+  where
+    go checkpoint
+        | checkpoint > lastCheckAt = checkpoint
+        | otherwise = go (checkpoint * 2)
 
 buildTimeoutCheckRequest
     :: RawJulia
