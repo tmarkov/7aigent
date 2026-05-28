@@ -15,7 +15,10 @@ Evaluate the following before deciding:
 3. **Files actually written?** `update_source!(db, id, pattern => repl)` is required. If expected file changes are missing → not complete.
 4. **Only task-relevant files changed?** Off-task edits do not count as progress.
 5. **Tests run?** Check `AGENTS.md` for instructions. If tools are unavailable, note it and do not block — commit what's verified.
-6. **Changes committed?** Use `git_diff` tool to see what changed, then `git_commit` tool (not `run()`) to commit only task-relevant hunks.
-7. **Efficiency check:** Have you been going in circles re-reading the same files? Have you been exploring instead of implementing? If yes, say so in feedback and redirect to the next concrete action.
+6. **Changes committed?** If `git_diff` would show uncommitted changes → **NOT complete**. You must commit before marking complete. Use `git_diff` tool then `git_commit` tool.
+7. **Efficiency issues to correct:** Did you re-read a file after `update_source!` (the diff output already confirmed the edit)? Did you use `read()` or `open()` instead of `update_source!`? Did you call `summarize!` on a broad set instead of a shortlist, dump every chunk of a file because `row.source` was `missing`, or forget to make nullable-column queries missing-safe? If so, note it in feedback so next round avoids these patterns.
+8. **Workflow discipline:** If you did not inspect/create todos for non-trivial work, or you ended the round with only broad exploration and no narrowed implementation target, you are **not done**.
+
+**CRITICAL: If there are file changes that haven't been committed, output `{"complete": false, "feedback": "Commit pending changes with git_commit"}` — never mark complete with uncommitted work.**
 
 Now output the JSON:

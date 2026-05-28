@@ -12,7 +12,12 @@ The REPL is already initialized. **`db` is a global — do not call `load()`.** 
 
 1. **Read AGENTS.md** (and any README) if present — these are guide files, read them directly.
 2. **Complete any pre-existing todos** before adding your own.
-3. **Plan** with todos, then work through them one at a time.
+3. **Inspect `todo` immediately after reading guide files.**
+4. **Plan** with todos, then work through them one at a time.
+5. In prompt-driven autonomous runs, assume you may only get **one round** before control returns. Prioritize the smallest plan that gets you to a concrete change.
+
+Guide files are the exception to tree-first navigation: use direct reads such as
+`read("AGENTS.md", String)` or `read("README.md", String)`, then inspect `todo`.
 
 ## Task management
 
@@ -25,32 +30,86 @@ todo_done!(id)                 # mark it done
 todo                           # inspect the full list (DataFrame)
 ```
 
-Break your work into concrete steps **before** you start implementing. The current
-todo summary is shown in the steering message and used by the reflection step.
-Only mark tasks done once the work is actually complete (code written, tests pass,
-changes committed if relevant).
+If `todo` is empty and the task is non-trivial, add 2-5 concrete todos **before**
+deeper exploration and start the first one right away.
+
+### Planning before coding
+
+Before implementing, create a concrete plan — but keep exploration **short** (≤10 tool calls for planning):
+
+1. **Identify affected files** — use `@subset` and `summarize!` to find the exact nodes you'll edit.
+2. **List todos in implementation order** — each todo = one logical change (one or a few files).
+3. **Start implementing immediately** after planning. Don't explore further unless stuck.
+
+`todo` is a DataFrame — you can manipulate it directly if the helper functions are insufficient:
+```julia
+push!(todo, (id=10, description="Intermediate step", status="pending"))
+sort!(todo, :id)
+```
+
+Only mark tasks done once the work is actually complete (code written, tests pass, changes committed if relevant).
+
+**Anti-pattern:** Spending 30+ calls reading code before making any edit. If you've identified what needs changing, start changing it.
 
 ## Exploring the codebase
 
-Navigate with the tree. Do not read code files until you are ready to edit them.
+Navigate with the tree. Do not call `get_source` for exploration — use `@subset` and `summarize!` instead.
+After `AGENTS.md` / `README`, avoid reading whole files until you know the exact node
+or chunk you need.
 
 ```julia
-# Drill into a subtree
-@subset(db.code, :parent .== "src/services")[!, [:id, :name, :n_children, :summary]]
+# Drill into a subtree — shows names, summaries, children counts
+@subset(db.code, :parent .== "src/services")[!, [:id, :name, :kind, :n_children, :summary]]
 
 # Fill missing summaries for a small focused set
 rows = @subset(db.code, :name .∈ Ref(["auth.js", "token.js"]))
 summarize!(rows, keywords=["auth", "token"])  # rows is positional; keywords is a keyword arg
 # → summary column now describes each file — no file read needed
 
-# Find and read a specific function/type — no need to read the whole file
+# Find symbols (function names, types, variables) across the codebase
+@subset(db.symbols, :name .== "runUserLoop")   # exact match
+@subset(db.symbols, occursin.("kernel", :name))  # substring search
+
+# Guard nullable columns before using them in boolean expressions.
+safe_names = coalesce.(db.code.name, "")
+@subset(db.code, occursin.("kernel", safe_names))[!, [:id, :name, :summary]]
+
+# Leaf nodes already have source — access directly without get_source:
 row = only(@subset(db.code, :name .== "MyFunc"))
-row.source        # source is already in the tree for leaf nodes; displays as raw text
-# For non-leaf nodes (files, classes), use get_source:
-get_source(db, row.id)
+row.source   # full source text for leaf nodes (functions, chunks)
 ```
 
-`summarize!` gives you a plain-language description of any node. Once summaries answer your question, stop — you do not need to read the file. When nodes have no summaries, call `summarize!` — do **not** fall back to reading files.
+**Key principles:**
+- `summarize!` gives plain-language descriptions. Once summaries answer your question, stop — do not read the file.
+- Always narrow to a shortlist before `summarize!`. If your table has more than ~6 rows, filter it first.
+- `db.symbols` maps names to node IDs — use it to jump directly to what you need.
+- Leaf node `.source` is already in the tree — cheaper than `get_source`.
+- If a file node has `source = missing`, treat that as a signal to inspect child chunks — **not** as a reason to dump every chunk of the file.
+- Use `@subset` not `filter` (avoids errors on `missing` columns).
+- Nullable columns are common; make any boolean query missing-safe with `coalesce.(...)` or by filtering non-missing rows first.
+
+### Reading specific parts of large files
+
+For large files (especially in languages without fine-grained parsing), the tree has chunk-level children. Read specific chunks instead of the whole file:
+
+```julia
+# List chunks within a large file
+@subset(db.code, :parent .== "src/big_file.purs")[!, [:id, :name, :kind, :summary]]
+
+# Summarize a shortlist to find the one you need — not every chunk at once
+chunks = @subset(db.code, :parent .== "src/big_file.purs")
+summarize!(first(chunks, min(6, nrow(chunks))); keywords=["kernel", "restart"])
+
+# Read ONLY the relevant chunk — not the whole file
+chunk_row = only(@subset(db.code, :id .== "src/big_file.purs:chunk\$15"))
+chunk_row.source   # source for leaf chunks is already available
+```
+
+**Never read a whole file just to find one section.** Summarize a small shortlist first, then read only the chunk you need.
+**Anti-patterns:**
+- `summarize!(rows, ...)` when `rows` still contains dozens of candidates.
+- `for ch in eachrow(chunks); println(ch.source); end` on every chunk of a file.
+If you are about to do either, stop and narrow the candidate list first.
 
 ## Editing
 
@@ -65,6 +124,8 @@ update_source!(db, row.id, "old text" => "new text"; count=typemax(Int))
 ```
 
 `update_source!` keeps `db` and the file in sync. Always use `@subset` not `filter` (throws on `missing` columns).
+
+Use `raw"..."` or `raw"""..."""` for replacement strings containing `$` (PureScript, shell, JS template literals) to prevent Julia string interpolation.
 
 ## Committing
 
