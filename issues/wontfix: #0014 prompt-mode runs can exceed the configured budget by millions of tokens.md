@@ -48,3 +48,14 @@ Add budget controls that match user expectations:
    prompt sizes;
 4. surface the remaining budget in steering / logs so the model can react
    before the hard stop.
+
+## Resolution
+
+Closed as won't-fix / expected behavior.
+
+The current runner semantics intentionally do not define a total session token
+budget. `max_tokens_per_turn` limits prompt growth within a turn (A37a),
+`max_turns_per_round` limits reflection-mediated turns within a round (A48),
+and compaction triggers only when the current request exceeds
+`compaction_threshold` (A33-A36). The observed run is consistent with those
+rules, so no code change is planned for this issue.
