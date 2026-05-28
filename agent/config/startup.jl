@@ -1,5 +1,4 @@
-# Custom startup for 7aigent self-test workspace.
-# Adds codebase-specific hints on top of default behaviour.
+# Startup helpers for a 7aigent workspace.
 
 using CodeTree
 using DataFrames, DataFramesMeta
@@ -37,12 +36,26 @@ Base.show(io::IO, ::MIME"text/markdown", df::CodeTree.CodeSymbols) =
 global db = CodeTree.load("/workspace")
 SevenAigentREPL.bind!("/workspace", db)
 
+if nrow(todo) == 0
+    todo_add!("Read guide files directly")
+    todo_add!("Replace this scaffold with 2-5 task-specific todos")
+    todo_add!("Start the first specific task and keep exploration limited to it")
+end
+
+global root_nodes = @subset(db.code, :depth .== 1)[!, [:id, :name, :kind, :n_children, :summary]]
+
 println("db ready: $(nrow(db.code)) nodes. Do not call load() — db persists across all tool calls.")
 println()
 
 if isfile("AGENTS.md")
-    println("AGENTS.md present — read it first (system prompt step 1).")
+    println("AGENTS.md present — read it directly first.")
     println()
 end
 
-@subset(db.code, :depth .== 1)[!, [:id, :name, :n_children, :summary]]
+println("todo ready:")
+SevenAigentREPL.status()
+println(todo)
+println()
+
+println("top-level tree:")
+root_nodes

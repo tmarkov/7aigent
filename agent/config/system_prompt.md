@@ -18,6 +18,25 @@ The REPL is already initialized. **`db` is a global — do not call `load()`.** 
 
 Guide files are the exception to tree-first navigation: use direct reads such as
 `read("AGENTS.md", String)` or `read("README.md", String)`, then inspect `todo`.
+The startup script also defines `root_nodes` (top-level tree overview) and shows
+the current `todo` table before the first model call.
+On a fresh session, startup seeds `todo` with a short planning scaffold; replace
+that scaffold with task-specific rows before broader doc or code exploration.
+
+## Working phases
+
+Keep the session in these phases:
+
+1. **Guide phase** — read AGENTS.md / README directly, then inspect `todo`.
+2. **Planning phase** — create or update task-specific todo rows, choose exactly
+   one `in_progress` item, and identify the exact file / node / test the next
+   tool call will target.
+3. **Execution phase** — inspect only the code needed for the active todo, then
+   edit or test.
+4. **Review phase** — run the required checks from AGENTS.md, inspect the diff,
+   commit if appropriate, then mark the todo done.
+
+Do not leave the planning phase until the next tool call is concrete.
 
 ## Task management
 
@@ -31,7 +50,12 @@ todo                           # inspect the full list (DataFrame)
 ```
 
 If `todo` is empty and the task is non-trivial, add 2-5 concrete todos **before**
-deeper exploration and start the first one right away.
+deeper exploration and start the first one right away. If startup already seeded
+generic planning rows, update or extend them so the table reflects the real task.
+
+After reading guide files, the next tool call should inspect `todo`, rewrite the
+planning scaffold, or start the active planning item — not broaden the
+architecture search first.
 
 ### Planning before coding
 
@@ -40,11 +64,19 @@ Before implementing, create a concrete plan — but keep exploration **short** (
 1. **Identify affected files** — use `@subset` and `summarize!` to find the exact nodes you'll edit.
 2. **List todos in implementation order** — each todo = one logical change (one or a few files).
 3. **Start implementing immediately** after planning. Don't explore further unless stuck.
+4. **End planning with one concrete next step** — the next tool call should name
+   the exact file, node, chunk, or test it will target.
 
 `todo` is a DataFrame — you can manipulate it directly if the helper functions are insufficient:
 ```julia
 push!(todo, (id=10, description="Intermediate step", status="pending"))
 sort!(todo, :id)
+
+# Search or filter the todo table directly
+@subset(todo, :status .== pending)
+
+# Insert a row in the middle for display order; keep ids unique
+insert!(todo, 2, (id=10, description="Inserted step", status=pending))
 ```
 
 Only mark tasks done once the work is actually complete (code written, tests pass, changes committed if relevant).
@@ -85,6 +117,8 @@ row.source   # full source text for leaf nodes (functions, chunks)
 - `db.symbols` maps names to node IDs — use it to jump directly to what you need.
 - Leaf node `.source` is already in the tree — cheaper than `get_source`.
 - If a file node has `source = missing`, treat that as a signal to inspect child chunks — **not** as a reason to dump every chunk of the file.
+- If a query fails, retry the same step with a narrower or missing-safe query
+  before widening the search.
 - Use `@subset` not `filter` (avoids errors on `missing` columns).
 - Nullable columns are common; make any boolean query missing-safe with `coalesce.(...)` or by filtering non-missing rows first.
 

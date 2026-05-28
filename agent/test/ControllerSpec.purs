@@ -560,6 +560,36 @@ controllerSpec = do
                 logExists <- workspaceFileExists ws ".7aigent/sessions/1/log.jsonl"
                 logExists `shouldEqual` false
 
+        it "A45 + A46: steering_message.md accepts round-status keywords used at runtime" do
+            withWorkspace \ws -> do
+                writeWorkspaceFile ws ".7aigent/config.toml" testConfigToml
+                writeWorkspaceFile ws ".7aigent/system_prompt.md" minimalSystemPrompt
+                writeWorkspaceFile ws ".7aigent/startup.jl" "# empty startup"
+                writeWorkspaceFile ws ".7aigent/steering_message.md"
+                    "turn {{turn_index}}/{{max_turns_per_round}} auto {{auto_turns_taken}}"
+                liftEffect setTestEnv
+                { svc, state } <- liftEffect $ mkMockServices
+                    { llmResponses: [ Right (textLlmResult "done"), Right reflectionComplete ]
+                    , execResponses: []
+                    , execDetailedResponses:
+                        [ { output: "", hadError: false }
+                        , { output: "", hadError: false }
+                        ]
+                    , readLineResponses: []
+                    , streamingChunks: []
+                    , spawnResult: Right mockSandboxHandle
+                    , connectResult: Right mockKernelHandle
+                    }
+                _ <- attempt $ runNewSession svc ws (Just "test")
+                calls <- liftEffect $ getCalls state
+                liftEffect unsetTestEnv
+
+                let hasTemplateError = Array.any (\c -> case c of
+                        CallPrintErr s ->
+                            String.contains (String.Pattern "Error in steering_message.md") s
+                        _ -> false) calls
+                hasTemplateError `shouldEqual` false
+
     describe "A29: julia_defs.jl is written from replay-safe julia_repl inputs" do
         it "A29: pure julia definitions are written in execution order" do
             withTestSessionCustom

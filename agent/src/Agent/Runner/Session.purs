@@ -807,6 +807,9 @@ loadSteeringTemplate svc (WorkspacePath wp) cleanup = do
             , Tuple "turn_tokens"          ""
             , Tuple "turn_token_limit"     ""
             , Tuple "compaction_threshold" ""
+            , Tuple "turn_index"           ""
+            , Tuple "max_turns_per_round"  ""
+            , Tuple "auto_turns_taken"     ""
             ]
     case substituteTemplate validateVars tmpl of
         Left err -> do
