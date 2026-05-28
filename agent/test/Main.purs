@@ -29,6 +29,7 @@ import Test.StartupSpec (startupSpec)
 import Test.SteeringSpec (steeringSpec)
 import Test.TemplateSpec (templateSpec)
 import Test.TimeoutSpec (timeoutSpec)
+import Test.ToolStepSpec (toolStepSpec)
 import Test.ToolDefsSpec (toolDefsSpec)
 import Test.WireFormatSpec (wireFormatSpec)
 import Test.RoundStepSpec (roundStepSpec)
@@ -59,5 +60,6 @@ main = launchAff_ $ runSpec [ consoleReporter ] do
   steeringSpec
   templateSpec
   timeoutSpec
+  toolStepSpec
   toolDefsSpec
   wireFormatSpec

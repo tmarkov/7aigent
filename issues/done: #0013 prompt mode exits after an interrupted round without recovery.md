@@ -60,3 +60,13 @@ occurs or the reflection step marks the task complete. For example:
 - `#0011` covers the robustness of the interrupt mechanism itself.
 - This issue is about the agent runner’s prompt-mode control flow after an
   interrupt has already happened.
+
+## Resolution
+
+Fixed.
+
+Timeout-driven Julia interrupts are now treated as ordinary tool results for
+runner control flow: the partial output with `[interrupted]` is preserved, but
+the round still follows its normal post-tool path (continue, compact, or end
+turn and reflect). Prompt mode therefore only exits after the round actually
+ends, instead of exiting immediately on a timeout-interrupted tool step.

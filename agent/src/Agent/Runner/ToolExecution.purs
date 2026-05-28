@@ -69,7 +69,7 @@ doTool
     -> ConversationHistory
     -> ToolCall
     -> Set HunkId
-    -> Aff { history :: ConversationHistory, hunks :: Set HunkId, interrupted :: Boolean }
+    -> Aff { history :: ConversationHistory, hunks :: Set HunkId, toolInterrupted :: Boolean }
 doTool svc ws sessionId config apiKey kernel history tc knownHunks = do
     ts <- Timestamp <$> liftEffect svc.nowIso
     writeLogEvent ws sessionId (EvtToolCall
@@ -83,7 +83,7 @@ doTool svc ws sessionId config apiKey kernel history tc knownHunks = do
     when (not (String.null inputSummary)) do
         liftEffect $ svc.printLn inputSummary
 
-    { output: rawOut, hunks: hunks', interrupted } <- dispatchTool svc ws sessionId config apiKey kernel tc knownHunks
+    { output: rawOut, hunks: hunks', toolInterrupted } <- dispatchTool svc ws sessionId config apiKey kernel tc knownHunks
 
     let proc = processToolOutput config.outputThresholdChars rawOut
     liftEffect $ svc.printLn proc.displayText
@@ -97,7 +97,7 @@ doTool svc ws sessionId config apiKey kernel history tc knownHunks = do
         })
 
     let toolMsg = ToolResultMessage { toolCallId: tc.id, output: proc.llmFacing }
-    pure { history: addMsg history toolMsg, hunks: hunks', interrupted }
+    pure { history: addMsg history toolMsg, hunks: hunks', toolInterrupted }
 
 dispatchTool
     :: RunnerServices
@@ -108,33 +108,33 @@ dispatchTool
     -> KernelHandle
     -> ToolCall
     -> Set HunkId
-    -> Aff { output :: String, hunks :: Set HunkId, interrupted :: Boolean }
+    -> Aff { output :: String, hunks :: Set HunkId, toolInterrupted :: Boolean }
 dispatchTool svc ws sessionId config apiKey kernel tc knownHunks =
     case tc.name of
         JuliaRepl -> do
             let code = parseJuliaCodeInput tc.input
             result <- runJuliaReplWithTimeoutChecks svc ws sessionId config apiKey kernel (RawJulia code)
-            pure { output: result.output, hunks: Set.empty, interrupted: result.interrupted }
+            pure { output: result.output, hunks: Set.empty, toolInterrupted: result.toolInterrupted }
 
         GitDiff -> do
             diff <- runGitDiff ws
             let ids = parseHunkIds diff
-            pure { output: diff, hunks: ids, interrupted: false }
+            pure { output: diff, hunks: ids, toolInterrupted: false }
 
         GitCommit -> do
             case parseGitCommitInput tc.input of
-                Nothing -> pure { output: "Invalid git_commit input", hunks: knownHunks, interrupted: false }
+                Nothing -> pure { output: "Invalid git_commit input", hunks: knownHunks, toolInterrupted: false }
                 Just input ->
                     case parseCommitWhat input.what knownHunks of
-                        Left err -> pure { output: show err, hunks: knownHunks, interrupted: false }
+                        Left err -> pure { output: show err, hunks: knownHunks, toolInterrupted: false }
                         Right commitWhat -> do
                             commitR <- runGitCommit ws commitWhat input.message input.body
                             case commitR of
-                                Left err -> pure { output: show err, hunks: knownHunks, interrupted: false }
-                                Right msg -> pure { output: msg, hunks: Set.empty, interrupted: false }
+                                Left err -> pure { output: show err, hunks: knownHunks, toolInterrupted: false }
+                                Right msg -> pure { output: msg, hunks: Set.empty, toolInterrupted: false }
 
         UnknownToolName other ->
-            pure { output: "Unknown tool: " <> other, hunks: knownHunks, interrupted: false }
+            pure { output: "Unknown tool: " <> other, hunks: knownHunks, toolInterrupted: false }
 
 runJuliaReplWithTimeoutChecks
     :: RunnerServices
@@ -144,7 +144,7 @@ runJuliaReplWithTimeoutChecks
     -> String
     -> KernelHandle
     -> RawJulia
-    -> Aff { output :: String, interrupted :: Boolean }
+    -> Aff { output :: String, toolInterrupted :: Boolean }
 runJuliaReplWithTimeoutChecks svc ws sessionId config apiKey kernel source = do
     partialRef <- liftEffect $ Ref.new ""
     resultRef <- liftEffect $ Ref.new Nothing
@@ -169,7 +169,7 @@ runJuliaReplWithTimeoutChecks svc ws sessionId config apiKey kernel source = do
         maybeResult <- liftEffect $ Ref.read resultRef
         case maybeResult of
             Just result ->
-                pure { output: result.output, interrupted: false }
+                pure { output: result.output, toolInterrupted: false }
             Nothing -> do
                 delay (Milliseconds 1000.0)
                 let elapsed' = elapsed + 1
@@ -180,7 +180,7 @@ runJuliaReplWithTimeoutChecks svc ws sessionId config apiKey kernel source = do
                         Interrupt -> do
                             svc.interruptKernel kernel
                             interruptedOutput <- liftEffect $ Ref.read partialRef
-                            pure { output: interruptedOutput <> "\n[interrupted]", interrupted: true }
+                            pure { output: interruptedOutput <> "\n[interrupted]", toolInterrupted: true }
                         ScheduleNext _ ->
                             waitForResult elapsed' elapsed' partialRef resultRef errorRef
                 else

@@ -59,6 +59,7 @@ import Agent.Programs.SessionResume (loadSessionForResume, ResumeResult(..))
 import Agent.Programs.Template (substituteTemplate)
 import Agent.Programs.ReactStep (reactStep, NextStep(..))
 import Agent.Programs.Steering (buildSteeringMessage)
+import Agent.Programs.ToolStep (ToolPostMode(..), ToolStepDecision(..), toolStepDecision)
 import Agent.Programs.Compaction (buildCompactionPlan)
 import Agent.Programs.Startup (interpretStartupExecution)
 import Agent.Programs.JuliaDefs (extractDefs)
@@ -122,7 +123,6 @@ type ReactLoopResult =
     { history :: ConversationHistory
     , knownHunks :: Set HunkId
     , usageTotals :: Llm.LlmUsage
-    , interrupted :: Boolean
     , error :: Maybe AppError
     }
 
@@ -131,7 +131,6 @@ type RoundResult =
     , knownHunks :: Set HunkId
     , usageTotals :: Llm.LlmUsage
     , autoTurnsTaken :: Int
-    , interrupted :: Boolean
     , error :: Maybe AppError
     }
 
@@ -523,7 +522,7 @@ runUserLoop svc ws sessionId config apiKey kernel steeringTemplate reflectionTem
 
     -- EOF → clean exit
     when (String.null line) do
-        finishSession svc ws sessionId kernel history false SessionEndedEof
+        finishSession svc ws sessionId kernel history SessionEndedEof
     if String.null line then
         pure 0
     else do
@@ -543,10 +542,10 @@ runUserLoop svc ws sessionId config apiKey kernel steeringTemplate reflectionTem
                     roundResult.history roundResult.knownHunks roundResult.usageTotals
                     roundResult.autoTurnsTaken Nothing
             Just _, _ -> do
-                finishSession svc ws sessionId kernel roundResult.history roundResult.interrupted SessionEndedError
+                finishSession svc ws sessionId kernel roundResult.history SessionEndedError
                 pure 1
             Nothing, Just _ -> do
-                finishSession svc ws sessionId kernel roundResult.history roundResult.interrupted SessionEndedPrompt
+                finishSession svc ws sessionId kernel roundResult.history SessionEndedPrompt
                 pure 0
             Nothing, Nothing ->
                 runUserLoop svc ws sessionId config apiKey kernel steeringTemplate reflectionTemplate
@@ -591,7 +590,7 @@ runReactLoop svc ws sessionId config apiKey kernel steeringTemplate history turn
     case llmR of
         Left err -> do
             liftEffect $ svc.printErr ("LLM error: " <> show err)
-            pure { history, knownHunks, usageTotals, interrupted: false, error: Just err }
+            pure { history, knownHunks, usageTotals, error: Just err }
 
         Right result -> case result.response of
             response@(LlmResponse r) -> do
@@ -624,7 +623,6 @@ runReactLoop svc ws sessionId config apiKey kernel steeringTemplate history turn
                             { history: history'
                             , knownHunks
                             , usageTotals: usageTotals'
-                            , interrupted: false
                             , error: Nothing
                             }
 
@@ -646,7 +644,6 @@ runReactLoop svc ws sessionId config apiKey kernel steeringTemplate history turn
                                     { history: history'
                                     , knownHunks
                                     , usageTotals: usageTotals'
-                                    , interrupted: false
                                     , error: Just err
                                     }
                             Right compacted ->
@@ -654,7 +651,6 @@ runReactLoop svc ws sessionId config apiKey kernel steeringTemplate history turn
                                     { history: compacted.history
                                     , knownHunks
                                     , usageTotals: compacted.usageTotals
-                                    , interrupted: false
                                     , error: Nothing
                                     }
 
@@ -669,21 +665,12 @@ runReactLoop svc ws sessionId config apiKey kernel steeringTemplate history turn
                                     { history: history'
                                     , knownHunks
                                     , usageTotals: usageTotals'
-                                    , interrupted: false
                                     , error: Just (KernelError errMsg)
                                     }
                             Right toolResult ->
-                                if toolResult.interrupted then
-                                    pure
-                                        { history: toolResult.history
-                                        , knownHunks: toolResult.hunks
-                                        , usageTotals: usageTotals'
-                                        , interrupted: true
-                                        , error: Nothing
-                                        }
-                                else
-                                    runReactLoop svc ws sessionId config apiKey kernel steeringTemplate toolResult.history
-                                        newBaseline r.inputTokens toolResult.hunks usageTotals' turnIndex autoTurnsTaken
+                                handleCompletedToolStep ContinueAfterTool
+                                    svc ws sessionId config apiKey kernel steeringTemplate
+                                    newBaseline r.inputTokens usageTotals' turnIndex autoTurnsTaken toolResult
 
                     ExecuteToolThenCompact tc -> do
                         toolR <- attempt $
@@ -696,44 +683,12 @@ runReactLoop svc ws sessionId config apiKey kernel steeringTemplate history turn
                                     { history: history'
                                     , knownHunks
                                     , usageTotals: usageTotals'
-                                    , interrupted: false
                                     , error: Just (KernelError errMsg)
                                     }
                             Right toolResult ->
-                                if toolResult.interrupted then
-                                    pure
-                                        { history: toolResult.history
-                                        , knownHunks: toolResult.hunks
-                                        , usageTotals: usageTotals'
-                                        , interrupted: true
-                                        , error: Nothing
-                                        }
-                                else do
-                                    compactR <- doCompact svc
-                                        ws
-                                        sessionId
-                                        config
-                                        apiKey
-                                        kernel
-                                        r.inputTokens
-                                        toolResult.history
-                                        usageTotals'
-                                    case compactR of
-                                        Left err -> do
-                                            liftEffect $ svc.printErr
-                                                "Context is too large to compact. Start a new session."
-                                            pure
-                                                { history: toolResult.history
-                                                , knownHunks: toolResult.hunks
-                                                , usageTotals: usageTotals'
-                                                , interrupted: false
-                                                , error: Just err
-                                                }
-                                        Right compacted ->
-                                            runReactLoop svc ws sessionId config apiKey kernel steeringTemplate
-                                                compacted.history
-                                                (TokenCount 0) (TokenCount 0) toolResult.hunks
-                                                compacted.usageTotals turnIndex autoTurnsTaken
+                                handleCompletedToolStep CompactAfterTool
+                                    svc ws sessionId config apiKey kernel steeringTemplate
+                                    newBaseline r.inputTokens usageTotals' turnIndex autoTurnsTaken toolResult
 
                     ExecuteToolThenEndTurn tc -> do
                         toolR <- attempt $
@@ -746,18 +701,70 @@ runReactLoop svc ws sessionId config apiKey kernel steeringTemplate history turn
                                     { history: history'
                                     , knownHunks
                                     , usageTotals: usageTotals'
-                                    , interrupted: false
                                     , error: Just (KernelError errMsg)
                                     }
-                            Right toolResult -> do
-                                liftEffect $ svc.printLn "\n[Token limit reached — continuing...]"
-                                pure
-                                    { history: toolResult.history
-                                    , knownHunks: toolResult.hunks
-                                    , usageTotals: usageTotals'
-                                    , interrupted: toolResult.interrupted
-                                    , error: Nothing
-                                    }
+                            Right toolResult ->
+                                handleCompletedToolStep EndTurnAfterTool
+                                    svc ws sessionId config apiKey kernel steeringTemplate
+                                    newBaseline r.inputTokens usageTotals' turnIndex autoTurnsTaken toolResult
+
+handleCompletedToolStep
+    :: ToolPostMode
+    -> RunnerServices
+    -> WorkspacePath
+    -> SessionId
+    -> Config
+    -> String
+    -> Jupyter.KernelHandle
+    -> String
+    -> TokenCount
+    -> TokenCount
+    -> Llm.LlmUsage
+    -> Int
+    -> Int
+    -> { history :: ConversationHistory, hunks :: Set HunkId, toolInterrupted :: Boolean }
+    -> Aff ReactLoopResult
+handleCompletedToolStep postMode svc ws sessionId config apiKey kernel steeringTemplate turnBaseline
+    currentRequestTokens usageTotals turnIndex autoTurnsTaken toolResult =
+    case toolStepDecision postMode toolResult.toolInterrupted of
+        ContinueTurn ->
+            runReactLoop svc ws sessionId config apiKey kernel steeringTemplate toolResult.history
+                turnBaseline currentRequestTokens toolResult.hunks usageTotals turnIndex autoTurnsTaken
+
+        CompactAndContinueTurn -> do
+            compactR <- doCompact svc
+                ws
+                sessionId
+                config
+                apiKey
+                kernel
+                currentRequestTokens
+                toolResult.history
+                usageTotals
+            case compactR of
+                Left err -> do
+                    liftEffect $ svc.printErr
+                        "Context is too large to compact. Start a new session."
+                    pure
+                        { history: toolResult.history
+                        , knownHunks: toolResult.hunks
+                        , usageTotals
+                        , error: Just err
+                        }
+                Right compacted ->
+                    runReactLoop svc ws sessionId config apiKey kernel steeringTemplate
+                        compacted.history
+                        (TokenCount 0) (TokenCount 0) toolResult.hunks
+                        compacted.usageTotals turnIndex autoTurnsTaken
+
+        EndTurnAndReflect -> do
+            liftEffect $ svc.printLn "\n[Token limit reached — continuing...]"
+            pure
+                { history: toolResult.history
+                , knownHunks: toolResult.hunks
+                , usageTotals
+                , error: Nothing
+                }
 
 -- ---------------------------------------------------------------------------
 -- A47: Julia state for steering and compaction
@@ -938,41 +945,29 @@ runRound svc ws sessionId config apiKey kernel steeringTemplate reflectionTempla
                     , knownHunks: loopResult.knownHunks
                     , usageTotals: loopResult.usageTotals
                     , autoTurnsTaken: auto
-                    , interrupted: false
                     , error: Just err
                     }
             Nothing -> do
-                if loopResult.interrupted then
-                    pure
-                        { history: loopResult.history
-                        , knownHunks: loopResult.knownHunks
-                        , usageTotals: loopResult.usageTotals
-                        , autoTurnsTaken: auto
-                        , interrupted: true
-                        , error: Nothing
-                        }
-                else do
-                    reflR <- doReflection svc ws sessionId config apiKey kernel reflectionTemplate
-                        loopResult.history turnIndex auto loopResult.usageTotals
-                    if reflR.result.complete || turnIndex >= config.maxTurnsPerRound
-                        then
-                            pure
-                                { history: loopResult.history
-                                , knownHunks: loopResult.knownHunks
-                                , usageTotals: reflR.usageTotals
-                                , autoTurnsTaken: auto
-                                , interrupted: false
-                                , error: Nothing
-                                }
-                        else do
-                            let feedbackMsg = case reflR.result.feedback of
-                                    Nothing -> "[Reflection: continue]"
-                                    Just fb -> fb
-                            ts <- getTs svc
-                            writeLogEvent ws sessionId (EvtUserMessage
-                                { timestamp: ts, content: feedbackMsg, source: Just "reflection" })
-                            let hist' = addMsg loopResult.history (UserMessage { content: feedbackMsg })
-                            go hist' loopResult.knownHunks reflR.usageTotals (auto + 1) (turnIndex + 1)
+                reflR <- doReflection svc ws sessionId config apiKey kernel reflectionTemplate
+                    loopResult.history turnIndex auto loopResult.usageTotals
+                if reflR.result.complete || turnIndex >= config.maxTurnsPerRound
+                    then
+                        pure
+                            { history: loopResult.history
+                            , knownHunks: loopResult.knownHunks
+                            , usageTotals: reflR.usageTotals
+                            , autoTurnsTaken: auto
+                            , error: Nothing
+                            }
+                    else do
+                        let feedbackMsg = case reflR.result.feedback of
+                                Nothing -> "[Reflection: continue]"
+                                Just fb -> fb
+                        ts <- getTs svc
+                        writeLogEvent ws sessionId (EvtUserMessage
+                            { timestamp: ts, content: feedbackMsg, source: Just "reflection" })
+                        let hist' = addMsg loopResult.history (UserMessage { content: feedbackMsg })
+                        go hist' loopResult.knownHunks reflR.usageTotals (auto + 1) (turnIndex + 1)
 
 -- ---------------------------------------------------------------------------
 -- Compaction (A33-A36)
@@ -1084,10 +1079,9 @@ finishSession
     -> SessionId
     -> Jupyter.KernelHandle
     -> ConversationHistory
-    -> Boolean
     -> SessionEndReason
     -> Aff Unit
-finishSession svc ws@(WorkspacePath wp) sessionId kernel _history interrupted reason = do
+finishSession svc ws@(WorkspacePath wp) sessionId kernel _history reason = do
     let logPath = wp <> "/.7aigent/sessions/" <> show (unwrapSid sessionId) <> "/log.jsonl"
     logTextR <- attempt (FS.readTextFile UTF8 logPath)
     let defs = case logTextR of
@@ -1106,10 +1100,9 @@ finishSession svc ws@(WorkspacePath wp) sessionId kernel _history interrupted re
             <> show (unwrapSid sessionId) <> "/julia_defs.jl"
     _ <- attempt (FS.writeTextFile UTF8 defsPath (String.joinWith "\n" defs))
 
-    unless interrupted do
-        let snippet = buildSerializationSnippet sessionId wp
-        _ <- attempt (svc.executeCode kernel (RawJulia snippet) (const (pure unit)))
-        pure unit
+    let snippet = buildSerializationSnippet sessionId wp
+    _ <- attempt (svc.executeCode kernel (RawJulia snippet) (const (pure unit)))
+    pure unit
 
     ts <- getTs svc
     writeLogEvent ws sessionId (SessionEnd { timestamp: ts, reason })
@@ -1214,7 +1207,6 @@ runMcpSession svc ws@(WorkspacePath wp) config apiKey message = do
 
                                     finishSession svc ws sessionId kernel
                                         roundResult.history
-                                        roundResult.interrupted
                                         (case roundResult.error of
                                             Just _ -> SessionEndedError
                                             Nothing -> SessionEndedPrompt)
