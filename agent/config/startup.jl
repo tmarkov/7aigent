@@ -37,9 +37,10 @@ global db = CodeTree.load("/workspace")
 SevenAigentREPL.bind!("/workspace", db)
 
 if nrow(todo) == 0
-    todo_add!("Read guide files directly")
+    guide_id = todo_add!("Read guide files directly")
     todo_add!("Replace this scaffold with 2-5 task-specific todos")
     todo_add!("Start the first specific task and keep exploration limited to it")
+    todo_start!(guide_id)
 end
 
 global root_nodes = @subset(db.code, :depth .== 1)[!, [:id, :name, :kind, :n_children, :summary]]

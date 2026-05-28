@@ -16,7 +16,7 @@ Evaluate the following before deciding:
 4. **Only task-relevant files changed?** Off-task edits do not count as progress.
 5. **Tests run?** Check `AGENTS.md` for instructions. If tools are unavailable, note it and do not block — commit what's verified.
 6. **Changes committed?** If `git_diff` would show uncommitted changes → **NOT complete**. You must commit before marking complete. Use `git_diff` tool then `git_commit` tool.
-7. **Planning discipline:** Did you finish the planning phase before broad exploration? Is there exactly one current focus, with an `in_progress` todo that matches it? If not, you are **not done**.
+7. **Planning discipline:** Did you finish the planning phase before broad exploration? Is there exactly one current focus, with an `in_progress` leaf todo that matches it? If not, you are **not done**.
 8. **Efficiency issues to correct:** Did you re-read a file after `update_source!` (the diff output already confirmed the edit)? Did you use `read()` or `open()` instead of `update_source!`? Did you call `summarize!` on a broad set instead of a shortlist, dump every chunk of a file because `row.source` was `missing`, or forget to make nullable-column queries missing-safe? If so, note it in feedback so next round avoids these patterns.
 9. **Workflow discipline:** If you did not inspect/create todos for non-trivial work, if the active todo and actual work diverged, or if you ended the round with only broad exploration and no narrowed next target, you are **not done**.
 

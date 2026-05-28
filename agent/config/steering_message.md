@@ -7,7 +7,7 @@
 **Immediate priorities:**
 - Inspect `todo` before broadening the search. If it still contains only generic planning rows, replace them with task-specific rows now and avoid more exploration until you do.
 - If this task is non-trivial and `todo` is empty, add concrete items and start one now.
-- If no todo is `in_progress`, return to the planning phase now.
+- If no leaf todo is `in_progress`, return to the planning phase now.
 - Prompt-mode sessions may end after this round — narrow quickly and aim for one concrete edit, test, or requirements update.
 - Keep `summarize!` batches small (prefer 1-6 nodes). If your table is bigger, filter it first.
 - Make boolean queries missing-safe before `@subset`; nullable columns are common.

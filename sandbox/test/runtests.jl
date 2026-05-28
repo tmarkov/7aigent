@@ -131,6 +131,12 @@ function _capture_stdout(f::Function)::Tuple{String,Any}
     return output, result
 end
 
+function _todo_index(df::AbstractDataFrame, id::Int)::Int
+    idx = findfirst(==(id), df.id)
+    isnothing(idx) && error("Expected todo id $id")
+    return idx
+end
+
 function _node_id(
     db::CodeTreeDB;
     kind::AbstractString,
@@ -397,7 +403,7 @@ end
     @test SevenAigentREPL.pending != SevenAigentREPL.done
 end
 
-@testset "RA30: bind! initialises Main.todo as an empty DataFrame with the correct schema" begin
+@testset "RA30: bind! initialises Main.todo as an empty hierarchical DataFrame with the correct schema" begin
     workspace = _workspace_from_fixture()
     db = CodeTree.load(workspace)
     SevenAigentREPL.bind!(workspace, db)
@@ -406,6 +412,7 @@ end
     @test Main.todo isa DataFrame
     @test nrow(Main.todo) == 0
     @test eltype(Main.todo.id) == Int
+    @test eltype(Main.todo.parent) == Union{Missing, Int}
     @test eltype(Main.todo.description) == String
     @test eltype(Main.todo.status) == SevenAigentREPL.TodoStatus
 end
@@ -414,126 +421,249 @@ end
     workspace = _workspace_from_fixture()
     db = CodeTree.load(workspace)
     SevenAigentREPL.bind!(workspace, db)
-    push!(Main.todo, (id=1, description="old task", status=SevenAigentREPL.pending))
+    push!(Main.todo, (id=1, parent=missing, description="old task", status=SevenAigentREPL.pending))
     @test nrow(Main.todo) == 1
     SevenAigentREPL.bind!(workspace, db)
     @test nrow(Main.todo) == 0
 end
 
-@testset "RA31: todo_add! appends pending rows with auto-incrementing ids" begin
+@testset "RA31: todo_add! appends top-level pending rows and continues from the current max id" begin
     workspace = _workspace_from_fixture()
     _bind_repl_session(workspace)
 
     id1 = SevenAigentREPL.todo_add!("First task")
+    push!(Main.todo, (id=5, parent=missing, description="existing", status=SevenAigentREPL.pending))
     id2 = SevenAigentREPL.todo_add!("Second task")
-    id3 = SevenAigentREPL.todo_add!("Third task")
 
     @test id1 == 1
-    @test id2 == 2
-    @test id3 == 3
+    @test id2 == 6
     @test nrow(Main.todo) == 3
+    @test all(ismissing, Main.todo.parent)
     @test all(==(SevenAigentREPL.pending), Main.todo.status)
     @test Main.todo[1, :description] == "First task"
-    @test Main.todo[2, :description] == "Second task"
+    @test Main.todo[3, :description] == "Second task"
 end
 
-@testset "RA31: todo_add! continues from the current max id" begin
+@testset "RA31: todo_add! inserts child and sibling rows in DataFrame order" begin
     workspace = _workspace_from_fixture()
     _bind_repl_session(workspace)
-    push!(Main.todo, (id=5, description="existing", status=SevenAigentREPL.pending))
-    new_id = SevenAigentREPL.todo_add!("new task")
-    @test new_id == 6
+
+    top1 = SevenAigentREPL.todo_add!("Top 1")
+    child1 = SevenAigentREPL.todo_add!("Child 1"; parent=top1)
+    child2 = SevenAigentREPL.todo_add!("Child 2"; after=child1)
+    top2 = SevenAigentREPL.todo_add!("Top 2")
+
+    @test [row.description for row in eachrow(Main.todo)] == ["Top 1", "Child 1", "Child 2", "Top 2"]
+    @test collect(Main.todo.id) == [top1, child1, child2, top2]
+    @test isequal(collect(Main.todo.parent), Union{Missing, Int}[missing, top1, top1, missing])
 end
 
-@testset "RA31: todo_start! sets the item to in_progress" begin
+@testset "RA31: todo_add! can insert the first child immediately after its parent" begin
     workspace = _workspace_from_fixture()
     _bind_repl_session(workspace)
-    id = SevenAigentREPL.todo_add!("Task to start")
-    SevenAigentREPL.todo_start!(id)
-    @test Main.todo[1, :status] == SevenAigentREPL.in_progress
+
+    parent_id = SevenAigentREPL.todo_add!("Parent task")
+    child_id = SevenAigentREPL.todo_add!("First child"; parent=parent_id, after=parent_id)
+
+    @test [row.description for row in eachrow(Main.todo)] == ["Parent task", "First child"]
+    @test collect(Main.todo.id) == [parent_id, child_id]
+    @test isequal(collect(Main.todo.parent), Union{Missing, Int}[missing, parent_id])
 end
 
-@testset "RA31: todo_start! throws if another item is already in_progress" begin
+@testset "RA31: todo_add! splits the current task into subtasks when adding a child" begin
     workspace = _workspace_from_fixture()
     _bind_repl_session(workspace)
-    id1 = SevenAigentREPL.todo_add!("First")
-    id2 = SevenAigentREPL.todo_add!("Second")
-    SevenAigentREPL.todo_start!(id1)
-    @test_throws ErrorException SevenAigentREPL.todo_start!(id2)
-    @test Main.todo[1, :status] == SevenAigentREPL.in_progress
-    @test Main.todo[2, :status] == SevenAigentREPL.pending
+
+    parent_id = SevenAigentREPL.todo_add!("Investigate failing test")
+    SevenAigentREPL.todo_start!(parent_id)
+    child_id = SevenAigentREPL.todo_add!("Capture repro"; parent=parent_id)
+
+    parent_idx = _todo_index(Main.todo, parent_id)
+    child_idx = _todo_index(Main.todo, child_id)
+    @test Main.todo[parent_idx, :status] == SevenAigentREPL.pending
+    @test Main.todo[child_idx, :parent] == parent_id
+    @test Main.todo[child_idx, :status] == SevenAigentREPL.in_progress
 end
 
-@testset "RA31: todo_start! throws if id does not exist" begin
+@testset "RA31: todo_start! focuses a pending leaf and clears the previous in_progress leaf" begin
     workspace = _workspace_from_fixture()
     _bind_repl_session(workspace)
+
+    parent_id = SevenAigentREPL.todo_add!("Parent task")
+    SevenAigentREPL.todo_start!(parent_id)
+    first_child = SevenAigentREPL.todo_add!("First child"; parent=parent_id)
+    second_child = SevenAigentREPL.todo_add!("Second child"; after=first_child)
+
+    SevenAigentREPL.todo_start!(second_child)
+
+    first_idx = _todo_index(Main.todo, first_child)
+    second_idx = _todo_index(Main.todo, second_child)
+    @test Main.todo[first_idx, :status] == SevenAigentREPL.pending
+    @test Main.todo[second_idx, :status] == SevenAigentREPL.in_progress
+end
+
+@testset "RA31: todo_start! throws for missing, non-leaf, or done targets" begin
+    workspace = _workspace_from_fixture()
+    _bind_repl_session(workspace)
+
+    parent_id = SevenAigentREPL.todo_add!("Parent task")
+    child_id = SevenAigentREPL.todo_add!("Child task"; parent=parent_id)
+
     @test_throws ErrorException SevenAigentREPL.todo_start!(99)
+    @test_throws ErrorException SevenAigentREPL.todo_start!(parent_id)
+
+    SevenAigentREPL.todo_start!(child_id)
+    SevenAigentREPL.todo_next!()
+    @test_throws ErrorException SevenAigentREPL.todo_start!(child_id)
 end
 
-@testset "RA31: todo_done! marks the item as done" begin
+@testset "RA31: todo_next! marks the current leaf done, advances focus, and completes ancestors" begin
     workspace = _workspace_from_fixture()
     _bind_repl_session(workspace)
-    id = SevenAigentREPL.todo_add!("Task to complete")
-    SevenAigentREPL.todo_start!(id)
-    SevenAigentREPL.todo_done!(id)
-    @test Main.todo[1, :status] == SevenAigentREPL.done
+
+    parent_id = SevenAigentREPL.todo_add!("Release feature")
+    SevenAigentREPL.todo_start!(parent_id)
+    child1 = SevenAigentREPL.todo_add!("Build package"; parent=parent_id)
+    child2 = SevenAigentREPL.todo_add!("Run smoke tests"; after=child1)
+    top2 = SevenAigentREPL.todo_add!("Announce release")
+
+    SevenAigentREPL.todo_next!()
+    @test Main.todo[_todo_index(Main.todo, child1), :status] == SevenAigentREPL.done
+    @test Main.todo[_todo_index(Main.todo, child2), :status] == SevenAigentREPL.in_progress
+    @test Main.todo[_todo_index(Main.todo, parent_id), :status] == SevenAigentREPL.pending
+
+    SevenAigentREPL.todo_next!()
+    @test Main.todo[_todo_index(Main.todo, child2), :status] == SevenAigentREPL.done
+    @test Main.todo[_todo_index(Main.todo, parent_id), :status] == SevenAigentREPL.done
+    @test Main.todo[_todo_index(Main.todo, top2), :status] == SevenAigentREPL.in_progress
+
+    SevenAigentREPL.todo_next!()
+    @test Main.todo[_todo_index(Main.todo, top2), :status] == SevenAigentREPL.done
+    @test count(==(SevenAigentREPL.in_progress), Main.todo.status) == 0
 end
 
-@testset "RA31: todo_done! throws if id does not exist" begin
+@testset "RA31: todo_next! throws when there is no current in_progress leaf" begin
     workspace = _workspace_from_fixture()
     _bind_repl_session(workspace)
-    @test_throws ErrorException SevenAigentREPL.todo_done!(99)
+    SevenAigentREPL.todo_add!("Task to track")
+    @test_throws ErrorException SevenAigentREPL.todo_next!()
 end
 
-@testset "RA32: status() returns nothing and prints task summary" begin
+@testset "RA32: status() syncs valid Main.todo edits and renders the current path plus next work" begin
     workspace = _workspace_from_fixture()
     _bind_repl_session(workspace)
-    id1 = SevenAigentREPL.todo_add!("Explore codebase")
-    id2 = SevenAigentREPL.todo_add!("Fix the bug")
-    SevenAigentREPL.todo_start!(id1)
+
+    parent_id = SevenAigentREPL.todo_add!("Plan release")
+    SevenAigentREPL.todo_start!(parent_id)
+    current_id = SevenAigentREPL.todo_add!("Write migration"; parent=parent_id)
+    SevenAigentREPL.todo_add!("Run smoke test"; after=current_id)
+    SevenAigentREPL.todo_add!("Announce release")
+    insert!(
+        Main.todo,
+        3,
+        (id=10, parent=parent_id, description="Review dashboard", status=SevenAigentREPL.pending),
+    )
 
     output, result = _capture_stdout(() -> SevenAigentREPL.status())
 
     @test result === nothing
-    @test occursin("in progress", output)
-    @test occursin("Explore codebase", output)
-    @test occursin("Fix the bug", output)
+    @test occursin("[Tasks:", output)
+    @test occursin("Current path", output)
+    @test occursin("Plan release", output)
+    @test occursin("Write migration", output)
+    @test occursin("Review dashboard", output)
+
+    SevenAigentREPL.todo_start!(10)
+    @test Main.todo[_todo_index(Main.todo, current_id), :status] == SevenAigentREPL.pending
+    @test Main.todo[_todo_index(Main.todo, 10), :status] == SevenAigentREPL.in_progress
 end
 
-@testset "RA32: status() does not throw when Main.todo is overwritten with non-DataFrame" begin
+@testset "RA32: status() reports duplicate ids and missing parent references without losing the last good state" begin
     workspace = _workspace_from_fixture()
     _bind_repl_session(workspace)
-    id1 = SevenAigentREPL.todo_add!("Task to track")
-    # Simulate the model accidentally overwriting Main.todo with a non-DataFrame
-    Core.eval(Main, :(todo = "not a dataframe"))
-    # status() should still work because it reads from the session, not Main.todo
+
+    SevenAigentREPL.todo_add!("Original task")
+    Core.eval(Main, :(
+        todo = DataFrame(
+            id = [1, 1, 2],
+            parent = Union{Missing, Int}[missing, missing, 99],
+            description = ["Original task", "Duplicate task", "Orphan child"],
+            status = [SevenAigentREPL.pending, SevenAigentREPL.pending, SevenAigentREPL.pending],
+        )
+    ))
+
     output, result = _capture_stdout(() -> SevenAigentREPL.status())
+
     @test result === nothing
-    @test occursin("Task to track", output)
-end
+    @test occursin("duplicate", lowercase(output))
+    @test occursin("parent", lowercase(output))
 
-@testset "RA32: status() is silent when no session is active" begin
-    SevenAigentREPL._session_ref[] = nothing
-    output, result = _capture_stdout(() -> SevenAigentREPL.status())
-    @test result === nothing
-    @test isempty(output)
-end
-
-@testset "RA32: todo mutations sync Main.todo for display; status() reads session state" begin
-    workspace = _workspace_from_fixture()
-    _bind_repl_session(workspace)
-    SevenAigentREPL.todo_add!("Task A")
-    SevenAigentREPL.todo_add!("Task B")
-    SevenAigentREPL.todo_start!(1)
-
-    # After mutations, Main.todo should reflect the current state (for REPL display)
-    @test Main.todo isa DataFrame
-    @test nrow(Main.todo) == 2
-
-    # Even if Main.todo is overwritten, status() still reads from the session
     Core.eval(Main, :(todo = nothing))
-    output, _ = _capture_stdout(() -> SevenAigentREPL.status())
-    @test occursin("Task A", output)
+    SevenAigentREPL.todo_add!("Recovered task")
+    @test [row.description for row in eachrow(Main.todo)] == ["Original task", "Recovered task"]
+end
+
+@testset "RA32: status() reports parent cycles" begin
+    workspace = _workspace_from_fixture()
+    _bind_repl_session(workspace)
+    Core.eval(Main, :(
+        todo = DataFrame(
+            id = [1, 2],
+            parent = Union{Missing, Int}[2, 1],
+            description = ["A", "B"],
+            status = [SevenAigentREPL.pending, SevenAigentREPL.pending],
+        )
+    ))
+
+    output, result = _capture_stdout(() -> SevenAigentREPL.status())
+    @test result === nothing
+    @test occursin("cycle", lowercase(output))
+end
+
+@testset "RA32: status() reports multiple in_progress rows and non-leaf current work" begin
+    workspace = _workspace_from_fixture()
+    _bind_repl_session(workspace)
+    Core.eval(Main, :(
+        todo = DataFrame(
+            id = [1, 2],
+            parent = Union{Missing, Int}[missing, missing],
+            description = ["A", "B"],
+            status = [SevenAigentREPL.in_progress, SevenAigentREPL.in_progress],
+        )
+    ))
+
+    multi_output, multi_result = _capture_stdout(() -> SevenAigentREPL.status())
+    @test multi_result === nothing
+    @test occursin("in_progress", multi_output)
+
+    Core.eval(Main, :(
+        todo = DataFrame(
+            id = [1, 2],
+            parent = Union{Missing, Int}[missing, 1],
+            description = ["Parent", "Child"],
+            status = [SevenAigentREPL.in_progress, SevenAigentREPL.pending],
+        )
+    ))
+
+    leaf_output, leaf_result = _capture_stdout(() -> SevenAigentREPL.status())
+    @test leaf_result === nothing
+    @test occursin("leaf", lowercase(leaf_output))
+end
+
+@testset "RA32: status() reports non-DataFrame todo values and is silent when no session is active" begin
+    workspace = _workspace_from_fixture()
+    _bind_repl_session(workspace)
+    SevenAigentREPL.todo_add!("Task to track")
+
+    Core.eval(Main, :(todo = "not a dataframe"))
+    invalid_output, invalid_result = _capture_stdout(() -> SevenAigentREPL.status())
+    @test invalid_result === nothing
+    @test occursin("dataframe", lowercase(invalid_output))
+
+    SevenAigentREPL._session_ref[] = nothing
+    silent_output, silent_result = _capture_stdout(() -> SevenAigentREPL.status())
+    @test silent_result === nothing
+    @test isempty(silent_output)
 end
 
 @testset "RA14: non-leaf targets use the leftmost leaf descendant as the primary witness" begin

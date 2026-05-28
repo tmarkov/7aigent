@@ -262,30 +262,62 @@ three values: `pending`, `in_progress`, and `done`. The type and all three value
 are exported from the module.
 
 **RA30** — `bind!(workspace, db)` unconditionally initialises a variable named
-`todo` in the `Main` module as an empty `DataFrame` with three columns: `id` of
-element type `Int`, `description` of element type `String`, and `status` of
-element type `TodoStatus`. Any existing value of `Main.todo` is overwritten. On
-session resumption, the persisted value of `todo` is subsequently restored by the
+`todo` in the `Main` module as an empty `DataFrame` with four columns:
+
+- `id` of element type `Int`;
+- `parent` of element type `Union{Missing, Int}`;
+- `description` of element type `String`;
+- `status` of element type `TodoStatus`.
+
+Any existing value of `Main.todo` is overwritten. The REPL session also stores a
+validated copy of that table as its last known-good todo state. On session
+resumption, the persisted value of `todo` is subsequently restored by the
 deserialization step (A31 step 4) after `startup.jl` has run.
 
 **RA31** — The REPL API module exports the following helper functions for
 managing the todo list:
 
-- `todo_add!(description::String)::Int` — appends a new row to `Main.todo` with
-  the given description, status `pending`, and an `id` equal to one more than the
-  current maximum `id` in the table (or `1` if the table is empty). Returns the
-  new id.
-- `todo_start!(id::Int)::Nothing` — finds the row with the given `id` and sets
-  its `status` to `in_progress`. Throws an `ErrorException` if no row with that
-  `id` exists, or if any other row already has status `in_progress`.
-- `todo_done!(id::Int)::Nothing` — finds the row with the given `id` and sets
-  its `status` to `done`. Throws an `ErrorException` if no row with that `id`
-  exists.
+- `todo_add!(description::String; parent::Union{Int,Missing}=missing, after::Union{Int,Missing}=missing, start::Bool=false)::Int`
+  validates the current todo table, inserts a new row with status `pending`, and
+  returns its id. The id is one more than the current maximum id (or `1` if the
+  table is empty). Ids are stable handles and need not remain sequential after
+  insertion; display order comes from DataFrame row order. With no placement
+  arguments the new row is appended as a top-level task. With `parent` only it is
+  appended as that parent's last child. With `after` only it is inserted as the
+  next sibling of `after`, inheriting `after`'s parent. With both `parent` and
+  `after` it is inserted as a child of `parent` immediately after `after`, where
+  `after` must be either `parent` itself or one of that parent's existing direct
+  children. If the new row is added as a child of the current `in_progress` item,
+  that is treated as splitting the current task into subtasks: the previous row
+  reverts to `pending` and the new child becomes the sole `in_progress` leaf.
+  Setting `start=true` likewise makes the new row the sole `in_progress` leaf.
+- `todo_start!(id::Int)::Nothing` validates the current todo table, throws an
+  `ErrorException` if `id` does not exist, names a non-leaf row, or names a row
+  whose status is `done`, and otherwise makes that row the sole `in_progress`
+  leaf. Any previous `in_progress` row reverts to `pending`.
+- `todo_next!()::Nothing` validates the current todo table, throws an
+  `ErrorException` unless exactly one `in_progress` leaf exists, marks that leaf
+  `done`, recursively marks any ancestors `done` whose direct children are all
+  `done`, and then moves focus to the next `pending` leaf in DataFrame row order
+  if one exists. If no pending leaf remains, it leaves the table with no
+  `in_progress` row.
+
+All helper mutations update both the session-owned todo state and the REPL-visible
+`Main.todo` table.
 
 **RA32** — The REPL API module exports a `status()::Nothing` function. When
-called, it reads the current value of `Main.todo` and prints a concise summary of
-the task list state to stdout, then returns `nothing`. If `Main.todo` is not
-defined or is not a `DataFrame`, `status()` prints nothing and returns normally.
-`status()` must not throw under any circumstances and must not modify any state.
-The specific output format is at the discretion of the implementation; it is
-consumed as the `{{julia_state}}` substitution value by the runner (A47).
+called, it validates the current value of `Main.todo` before rendering it. If no
+REPL session is active, `status()` prints nothing and returns normally. If
+`Main.todo` is a `DataFrame` and validation succeeds, the validated table replaces
+the session-owned last known-good todo state before rendering. If `Main.todo` is
+not a `DataFrame` or validation fails, `status()` prints concise validation
+errors and leaves the session-owned last known-good todo state unchanged.
+Validation must detect at least duplicate ids, parent references to missing ids,
+parent cycles, more than one `in_progress` row, and any `in_progress` row that is
+not a leaf; implementations may report additional schema or type errors. For
+valid tables, `status()` prints task counts and a tree-structured summary
+optimised for the runner's `{{julia_state}}` insertion: it must show the current
+path to the active leaf plus nearby next pending work, or the next pending path
+when nothing is currently `in_progress`. `status()` must not throw under any
+circumstances and must not modify state except for synchronising a validated
+`Main.todo` table into the session-owned last known-good state.

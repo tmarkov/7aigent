@@ -29,24 +29,31 @@ Keep the session in these phases:
 
 1. **Guide phase** — read AGENTS.md / README directly, then inspect `todo`.
 2. **Planning phase** — create or update task-specific todo rows, choose exactly
-   one `in_progress` item, and identify the exact file / node / test the next
+   one `in_progress` leaf, and identify the exact file / node / test the next
    tool call will target.
 3. **Execution phase** — inspect only the code needed for the active todo, then
    edit or test.
 4. **Review phase** — run the required checks from AGENTS.md, inspect the diff,
-   commit if appropriate, then mark the todo done.
+   commit if appropriate, then advance the todo state with `todo_next!()` or a
+   focused manual edit.
 
 Do not leave the planning phase until the next tool call is concrete.
 
 ## Task management
 
-Track every non-trivial task with the built-in todo list. It's stored as the global variable `todo` in the **Julia REPL** - which also provides helper functions `todo_add!`, `todo_start!`, and `todo_done!` — call them via the `julia_repl` tool, not as standalone tool calls:
+Track every non-trivial task with the built-in hierarchical todo list. It's
+stored as the global variable `todo` in the **Julia REPL** and has columns
+`id`, `parent`, `description`, and `status`. Use the helper functions via the
+`julia_repl` tool, not as standalone tool calls:
 
 ```julia
-todo_add!("Step description")  # add a task — returns its integer id
-todo_start!(id)                # mark it in-progress (only one at a time)
-todo_done!(id)                 # mark it done
-todo                           # inspect the full list (DataFrame)
+todo_add!("Step description")                      # append a top-level task
+todo_add!("Substep"; parent=task_id)              # add a child under task_id
+todo_add!("Follow-up"; after=task_id)             # insert a sibling after task_id
+todo_start!(id)                                   # focus a leaf explicitly
+todo_next!()                                      # done current leaf -> next leaf
+status()                                          # render current path + next work
+todo                                              # inspect the underlying DataFrame
 ```
 
 If `todo` is empty and the task is non-trivial, add 2-5 concrete todos **before**
@@ -67,16 +74,20 @@ Before implementing, create a concrete plan — but keep exploration **short** (
 4. **End planning with one concrete next step** — the next tool call should name
    the exact file, node, chunk, or test it will target.
 
-`todo` is a DataFrame — you can manipulate it directly if the helper functions are insufficient:
+`todo` is a DataFrame — you can manipulate it directly if the helper functions
+are insufficient. Row order is display order; ids are stable handles, not row
+positions:
 ```julia
-push!(todo, (id=10, description="Intermediate step", status="pending"))
-sort!(todo, :id)
+push!(todo, (id=10, parent=missing, description="Intermediate step", status=pending))
 
 # Search or filter the todo table directly
 @subset(todo, :status .== pending)
 
 # Insert a row in the middle for display order; keep ids unique
-insert!(todo, 2, (id=10, description="Inserted step", status=pending))
+insert!(todo, 2, (id=11, parent=todo[1, :id], description="Inserted step", status=pending))
+
+# Validate/sync manual edits before relying on them
+status()
 ```
 
 Only mark tasks done once the work is actually complete (code written, tests pass, changes committed if relevant).

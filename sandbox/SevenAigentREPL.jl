@@ -10,7 +10,7 @@ using CodeTree: CodeTreeDB
 
 export llm_show_dataframe, summarize!
 export TodoStatus, pending, in_progress, done
-export todo_add!, todo_start!, todo_done!, status
+export todo_add!, todo_start!, todo_next!, status
 
 const SUMMARY_COMM_TARGET = "7aigent.summary"
 const SUMMARY_INPUT_PROMPT_PREFIX = "7aigent.summary.reply:"
@@ -69,20 +69,21 @@ include("SevenAigentREPL/Todo.jl")
     bind!(workspace, db) -> Nothing
 
 Initialise the REPL session for the given `workspace` and `db`.
-Resets the todo list and clears any custom summary transport.
+Resets the todo list and its last known-good session state, and clears any
+custom summary transport.
 """
 function bind!(workspace::AbstractString, db::CodeTreeDB)::Nothing
     workspace_path = abspath(String(workspace))
     cfg = _load_summary_config(workspace_path)
-    df = DataFrame(id=Int[], description=String[], status=TodoStatus[])
+    df = _empty_todo_df()
     _session_ref[] = ReplSession(
         workspace_path,
         db,
         cfg,
-        df,
+        copy(df),
     )
     _summary_transport_ref[] = nothing
-    Core.eval(Main, :(todo = $df))
+    Core.eval(Main, :(todo = $(copy(df))))
     return nothing
 end
 
