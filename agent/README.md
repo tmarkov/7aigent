@@ -18,6 +18,22 @@ On first run it bootstraps `.7aigent/`, creates `.7aigent/state/`, and if it
 finds a stale `state/nogit` alongside `.git`, it asks whether to halt or to
 re-trust the current git metadata and proceed.
 
+Common invocations:
+
+```sh
+# Show help
+7aigent --help
+
+# Start an interactive session
+7aigent /path/to/workspace
+
+# Run a one-shot prompt-mode session
+7aigent /path/to/workspace -p "Inspect failing tests"
+
+# Resume a session and give it an immediate task
+7aigent /path/to/workspace resume 3 --prompt "Continue from the saved state"
+```
+
 `7aigent mcp <port>` is still not wired to a live MCP server implementation.
 
 See [`../design/agent-requirements.md`](../design/agent-requirements.md) for the full specification.

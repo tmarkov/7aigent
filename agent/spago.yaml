@@ -17,6 +17,7 @@ package:
     - node-readline
     - node-streams
     - node-http
+    - optparse
     - argonaut-core
     - argonaut-codecs
     - ordered-collections

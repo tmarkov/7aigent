@@ -630,6 +630,18 @@ remaining arguments are then parsed as the command in the normal way (A40–A43)
 If no path argument is present the workspace defaults to the current working
 directory (preserving the existing behaviour described in A40–A43).
 
+**A44a** — `7aigent` and `7aigent resume <session-id>` accept an optional
+initial prompt flag: `-p <prompt>` or `--prompt <prompt>`. When present, the
+runner uses the supplied prompt instead of reading an interactive line from
+stdin for that round. The generated CLI usage/help text and parse errors must
+show the prompt flag as part of the supported interface.
+
+```
+7aigent -p "Inspect failing tests"
+7aigent /path/to/project --prompt "Inspect failing tests"
+7aigent /path/to/project resume 3 -p "Continue from the saved state"
+```
+
 ---
 
 ### Turn Steering

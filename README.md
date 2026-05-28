@@ -94,6 +94,18 @@ pytest sandbox/test/
 
 ```sh
 nix build .#agent
+
+# Show CLI help
+nix run .#agent -- --help
+
+# Start an interactive session in a workspace
+nix run .#agent -- /path/to/workspace
+
+# Run a one-shot prompt-mode session
+nix run .#agent -- /path/to/workspace -p "Inspect failing tests"
+
+# Resume a session and give it an immediate task
+nix run .#agent -- /path/to/workspace resume 3 --prompt "Continue from the saved state"
 ```
 
 ### All checks

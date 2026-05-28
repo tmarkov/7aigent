@@ -23,6 +23,7 @@
             "node-readline",
             "node-streams",
             "nonempty",
+            "optparse",
             "ordered-collections",
             "parallel",
             "prelude",
@@ -957,6 +958,16 @@
         "unsafe-coerce"
       ]
     },
+    "exitcodes": {
+      "type": "registry",
+      "version": "4.0.0",
+      "integrity": "sha256-xBl4aFSEQ05Owp1ZvO6OxxvLK3LVzU35RSbj79SsePQ=",
+      "dependencies": [
+        "enums",
+        "maybe",
+        "prelude"
+      ]
+    },
     "foldable-traversable": {
       "type": "registry",
       "version": "6.0.0",
@@ -1504,6 +1515,22 @@
         "prelude"
       ]
     },
+    "open-memoize": {
+      "type": "registry",
+      "version": "6.2.0",
+      "integrity": "sha256-yJLuVYX8FocHIJ+6q7efH/Pj4S+e1Y57DZ5Dn7qf4ww=",
+      "dependencies": [
+        "either",
+        "integers",
+        "lazy",
+        "lists",
+        "maybe",
+        "partial",
+        "prelude",
+        "strings",
+        "tuples"
+      ]
+    },
     "options": {
       "type": "registry",
       "version": "7.0.0",
@@ -1515,6 +1542,40 @@
         "maybe",
         "newtype",
         "prelude",
+        "tuples"
+      ]
+    },
+    "optparse": {
+      "type": "registry",
+      "version": "5.0.1",
+      "integrity": "sha256-2btDjHPRR0uujUQJuZAN9AzvVoXe7yG6IwnY5evERhQ=",
+      "dependencies": [
+        "arrays",
+        "bifunctors",
+        "control",
+        "effect",
+        "either",
+        "enums",
+        "exists",
+        "exitcodes",
+        "foldable-traversable",
+        "free",
+        "integers",
+        "lazy",
+        "lists",
+        "maybe",
+        "newtype",
+        "node-buffer",
+        "node-process",
+        "node-streams",
+        "nonempty",
+        "numbers",
+        "open-memoize",
+        "partial",
+        "prelude",
+        "strings",
+        "tailrec",
+        "transformers",
         "tuples"
       ]
     },

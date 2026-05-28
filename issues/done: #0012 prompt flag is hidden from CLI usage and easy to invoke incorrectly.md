@@ -52,3 +52,12 @@ Choose one of these and document it clearly:
 2. Keep `-p` only, but update the usage text and README examples to show it.
 3. Detect the common `nix run .#agent /path -- "task"` mistake and print a
    targeted hint about `nix run .#agent -- /path -p "task"`.
+
+## Resolution
+
+Fixed.
+
+The CLI now uses `optparse`, exposes `-p` and `--prompt` in generated usage and
+help text, and prints a targeted hint for the common prompt-as-positional
+mistake. The requirements and README examples were updated to document the
+supported prompt-mode interface.
