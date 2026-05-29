@@ -99,6 +99,15 @@ swap `db` to a replacement `CodeTreeDB`.
 was created or updated during that call. Result rows preserve the caller's
 requested target order after filtering to those newly summarized targets.
 
+**RA33** — For any non-empty `summarize!` call, the REPL API prints concise
+informational progress to standard output: a startup line with total target and
+batch counts, one line before and one line after each batch, and a completion
+line. When the requested rows look like a mixed descendant sweep (for example,
+files mixed with non-file rows, or a large chunk-heavy selection), `summarize!`
+may additionally print a brief advisory note. These messages are informational
+only: they must not reject, reorder, or otherwise change selection, batching,
+evidence construction, or summary application.
+
 **RA8** — `summarize!` summarizes **only the explicitly requested ids**. It may
 split the request into multiple LLM batches, but it must not recursively
 pre-summarize omitted children merely to support a requested parent.
@@ -227,7 +236,7 @@ next batch begins.
 
 ```toml
 [summaries]
-max_targets_per_batch = 16
+max_targets_per_batch = 12
 max_prompt_chars = 12000
 max_children_per_target = 24
 max_witness_chars = 400

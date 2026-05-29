@@ -210,7 +210,7 @@ end
     cfg = SevenAigentREPL.summary_config()
 
     @test isa(db, CodeTreeDB)
-    @test cfg.max_targets_per_batch == 16
+    @test cfg.max_targets_per_batch == 12
     @test cfg.max_prompt_chars == 12000
     @test cfg.max_children_per_target == 24
     @test cfg.max_witness_chars == 400
@@ -370,6 +370,33 @@ end
     @test length(requests) == 2
     @test requests[1].target_ids == [docs_id]
     @test requests[2].target_ids == [compute_stats_id, search_sorted_id]
+end
+
+@testset "RA33 + RA9: summarize! prints progress and descendant-sweep advisory output" begin
+    workspace = _workspace_from_fixture()
+    _write_summary_config!(workspace; max_targets_per_batch = 2)
+    db = _bind_repl_session(workspace)
+
+    docs_id = _node_id(db; kind = "file", name = "api.md", file = "docs/api.md")
+    search_sorted_id = _node_id(db; kind = "function", name = "search_sorted", file = "julia/core.jl")
+    compute_stats_id = _node_id(db; kind = "function", name = "compute_stats", file = "julia/core.jl")
+
+    SevenAigentREPL.set_summary_transport!(request ->
+        Dict(id => "Summary for $(id)." for id in request.target_ids)
+    )
+
+    output, result = _capture_stdout() do
+        SevenAigentREPL.summarize!([compute_stats_id, docs_id, search_sorted_id])
+    end
+
+    @test nrow(result) == 3
+    @test occursin("summarize!: starting 3 targets across 2 batches.", output)
+    @test occursin("summarize!: advisory: selection mixes file and non-file rows;", output)
+    @test occursin("summarize!: batch 1/2 starting (1 target).", output)
+    @test occursin("summarize!: batch 1/2 done (1 update).", output)
+    @test occursin("summarize!: batch 2/2 starting (2 targets).", output)
+    @test occursin("summarize!: batch 2/2 done (2 updates).", output)
+    @test occursin("summarize!: completed 3 targets across 2 batches; 3 updates.", output)
 end
 
 @testset "RA13-RA18 + RA20 + RA21: root evidence promotes README and records overflow metadata" begin

@@ -455,6 +455,32 @@ function _truncate_text(text::AbstractString, max_chars::Int)::String
     return text[1:max_chars] * "..."
 end
 
+function _count_phrase(
+    count::Int,
+    singular::String,
+    plural::String = singular * "s",
+)::String
+    return "$(count) " * (count == 1 ? singular : plural)
+end
+
+function _selection_advisory(
+    tree_index::TreeIndex,
+    ordered_ids::Vector{String},
+)::Union{String,Missing}
+    kinds = [string(_row(tree_index, id).kind) for id in ordered_ids]
+    n_files = count(==("file"), kinds)
+    n_chunks = count(==("chunk"), kinds)
+    n_targets = length(kinds)
+
+    if 0 < n_files < n_targets
+        return "summarize!: advisory: selection mixes file and non-file rows; descendant sweeps can yield broad summaries."
+    end
+    if n_targets >= 6 && n_chunks * 2 >= n_targets
+        return "summarize!: advisory: selection is chunk-heavy; descendant sweeps can yield broad summaries."
+    end
+    return missing
+end
+
 function _request_summaries(request)::Dict{String,String}
     transport = _summary_transport_ref[]
     if !isnothing(transport)
@@ -567,4 +593,3 @@ function _wireify(value)
         return value
     end
 end
-

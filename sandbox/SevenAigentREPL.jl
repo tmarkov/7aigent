@@ -43,7 +43,7 @@ struct SummaryConfig
     max_readme_chars::Int
 end
 
-const DEFAULT_SUMMARY_CONFIG = SummaryConfig(16, 12000, 24, 400, 3000)
+const DEFAULT_SUMMARY_CONFIG = SummaryConfig(12, 12000, 24, 400, 3000)
 
 mutable struct ReplSession
     workspace::String
@@ -174,21 +174,61 @@ function summarize!(ids; keywords = String[])::DataFrame
     tree_index = _build_tree_index(session.db)
     normalized_keywords = _normalize_keywords(keywords)
     batches = _partition_targets(tree_index, ordered_ids, normalized_keywords, session.summary_config)
+    println(
+        "summarize!: starting ",
+        _count_phrase(length(ordered_ids), "target"),
+        " across ",
+        _count_phrase(length(batches), "batch", "batches"),
+        ".",
+    )
+    advisory = _selection_advisory(tree_index, ordered_ids)
+    if !ismissing(advisory)
+        println(advisory)
+    end
 
     updated = Set{String}()
-    for batch_ids in batches
+    for (batch_index, batch_ids) in enumerate(batches)
+        println(
+            "summarize!: batch ",
+            batch_index,
+            "/",
+            length(batches),
+            " starting (",
+            _count_phrase(length(batch_ids), "target"),
+            ").",
+        )
         request = _build_batch_request(tree_index, batch_ids, normalized_keywords, session; request_id = string(uuid4()))
         response = _request_summaries(request)
+        batch_updates = 0
         for id in batch_ids
             summary_text = response[id]
             if !_summary_equals(_current_summary(session.db, id), summary_text)
                 _set_summary!(session.db, id, summary_text)
                 push!(updated, id)
+                batch_updates += 1
             end
         end
+        println(
+            "summarize!: batch ",
+            batch_index,
+            "/",
+            length(batches),
+            " done (",
+            _count_phrase(batch_updates, "update"),
+            ").",
+        )
     end
 
     result_ids = [id for id in ordered_ids if id in updated]
+    println(
+        "summarize!: completed ",
+        _count_phrase(length(ordered_ids), "target"),
+        " across ",
+        _count_phrase(length(batches), "batch", "batches"),
+        "; ",
+        _count_phrase(length(result_ids), "update"),
+        ".",
+    )
     return DataFrame(
         id = result_ids,
         name = [_row(tree_index, id).name for id in result_ids],
