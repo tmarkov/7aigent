@@ -62,6 +62,33 @@ function _is_markdown_list_item(line::AbstractString)::Bool
     return occursin(r"^\s*(?:[-+*]|\d+[.)])\s+", line)
 end
 
+function _markdown_list_indent(line::AbstractString)::Int
+    m = match(r"^(\s*)(?:[-+*]|\d+[.)])\s+", line)
+    isnothing(m) && return 0
+    return length(only(m.captures))
+end
+
+function _markdown_list_family(line::AbstractString)::Symbol
+    stripped = lstrip(line)
+    if occursin(r"^\d+[.)]\s+", stripped)
+        return :ordered
+    end
+    return :unordered
+end
+
+function _is_markdown_list_block_item(
+    base_indent::Int,
+    base_family::Symbol,
+    line::AbstractString,
+)::Bool
+    _is_markdown_list_item(line) || return false
+
+    indent = _markdown_list_indent(line)
+    indent < base_indent && return false
+    indent > base_indent && return true
+    return _markdown_list_family(line) == base_family
+end
+
 function _is_markdown_list_continuation(line::AbstractString)::Bool
     return occursin(r"^\s{2,}\S", line)
 end
@@ -119,16 +146,19 @@ function _scan_markdown_blocks(
 
         if _is_markdown_list_item(lines[i])
             line_start = i
+            base_indent = _markdown_list_indent(lines[i])
+            base_family = _markdown_list_family(lines[i])
             i += 1
             while i <= length(lines)
-                if _is_markdown_list_item(lines[i]) || _is_markdown_list_continuation(lines[i])
+                if _is_markdown_list_block_item(base_indent, base_family, lines[i]) ||
+                   _is_markdown_list_continuation(lines[i])
                     i += 1
                     continue
                 end
 
                 if isempty(strip(lines[i]))
                     if i < length(lines) && (
-                        _is_markdown_list_item(lines[i + 1]) ||
+                        _is_markdown_list_block_item(base_indent, base_family, lines[i + 1]) ||
                         _is_markdown_list_continuation(lines[i + 1])
                     )
                         i += 1

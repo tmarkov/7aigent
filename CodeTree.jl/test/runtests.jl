@@ -710,6 +710,37 @@ end
     end
 end
 
+@testset "R13: Markdown ordered list immediately followed by a bullet list does not crash load()" begin
+    tmp = _fresh_tmp_codebase()
+    try
+        list_md = joinpath(tmp, "docs", "mixed-list-markers.md")
+        write(list_md, join([
+            "# Mixed List Markers",
+            "",
+            "1. First ordered item",
+            "2. Second ordered item",
+            "- First bullet item",
+            "- Second bullet item",
+            "",
+        ], '\n'))
+
+        db = load(tmp, TEST_CONFIG; detail_threshold = 0)
+        list_rows = sort(filter(r -> isequal(r.file, "docs/mixed-list-markers.md"), db.code), :line_start)
+
+        @test any(r -> r.kind == "function" && r.line_start == 1 && r.line_end == 1, eachrow(list_rows))
+        @test any(
+            r -> r.kind == "chunk" &&
+                 r.line_start == 2 &&
+                 r.line_end == 6 &&
+                 occursin("1. First ordered item", something(r.source, "")) &&
+                 occursin("- First bullet item", something(r.source, "")),
+            eachrow(list_rows),
+        )
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
 @testset "R21a + R21b: Markdown symbols belong only to the leaf that contains the span" begin
     tmp = _fresh_tmp_codebase()
     try
