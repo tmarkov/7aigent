@@ -11,7 +11,7 @@ import Test.CompactionSpec (compactionSpec)
 import Test.ConfigSpec (configSpec)
 import Test.ControllerSpec (controllerSpec)
 import Test.GitCommitSpec (gitCommitSpec)
-import Test.GitDiffSpec (gitDiffSpec)
+import Test.GitStageSpec (gitStageSpec)
 import Test.InterruptionSpec (interruptionSpec)
 import Test.JuliaDefsSpec (juliaDefsSpec)
 import Test.JupyterSpec (jupyterSpec)
@@ -41,7 +41,7 @@ main = launchAff_ $ runSpec [ consoleReporter ] do
   configSpec
   controllerSpec
   gitCommitSpec
-  gitDiffSpec
+  gitStageSpec
   interruptionSpec
   juliaDefsSpec
   jupyterSpec

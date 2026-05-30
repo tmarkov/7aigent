@@ -315,12 +315,22 @@ Use `raw"..."` or `raw"""..."""` for replacement strings containing `$` (PureScr
 
 ## Committing
 
-`git_diff` and `git_commit` are **direct tool calls** — call them the same way you call `julia_repl`, not via `run()` in the REPL.
+`git_stage` and `git_commit` are **direct tool calls** — call them the same
+way you call `julia_repl`, not via `run()` in the REPL.
 
-- **`git_diff`** — review all changes and get hunk IDs (no parameters)
-- **`git_commit`** — commit specific hunks or all changes with a message
+Use Julia for the Git-aware read surface:
 
-Always run `git_diff` before committing to verify only task-relevant files are included. Commit selectively by hunk ID if off-task files appear in the diff.
+- inspect `db.code.git_status`, `db.code.git_has_staged`, and `db.code.git_has_unstaged`
+- use `git_file_status(db)` for changed-file status
+- use `git_diff(db, selectors; phase=:all|:staged|:unstaged)` for selector-scoped diffs
+
+Then use the host write tools:
+
+- **`git_stage`** — stage `"all"` or a selector list
+- **`git_commit`** — commit `"staged"`, `"all"`, or a selector list with a message
+
+Always inspect the current Git state in Julia before committing, then keep the
+final stage/commit selection scoped to task-relevant selectors or file paths.
 
 ## Codebase overview
 

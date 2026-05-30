@@ -41,6 +41,6 @@
 - **Explore:** `@subset` + `summarize!` — never `get_source` for exploration
 - **Plan:** leave planning only when the next tool call names the exact file/node/test it will target
 - **Edit:** `update_source!(db, id, "old text" => "new text")` — only for files you're changing right now.
-- **Commit:** `git_diff` tool → `git_commit` tool (direct tool calls)
+- **Commit:** Julia Git view (`db.code` / `git_file_status(db)` / `git_diff(db, ...)`) → `git_stage` / `git_commit` tool
 
 > ⚠️ Use `raw"..."` for replacement strings with `$`. Follow AGENTS.md workflow: requirements → tests → implementation → verify → commit.

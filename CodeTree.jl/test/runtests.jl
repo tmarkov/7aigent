@@ -1573,3 +1573,188 @@ end
     # It should appear with a specific kind (call or var_ref depending on context)
     @test all(k -> k ∈ ("call", "var_ref"), qs_syms.kind)
 end
+
+function _git(repo_root::String, args::Vararg{String})::Nothing
+    cmd = Cmd(Cmd(["git", args...]); dir=repo_root)
+    run(pipeline(cmd; stdout=devnull, stderr=devnull); wait=true)
+    return nothing
+end
+
+function _replace_in_file!(path::String, old::String, new::String)::Nothing
+    src = read(path, String)
+    occursin(old, src) || error("Could not find replacement target '$old' in $path")
+    write(path, replace(src, old => new; count=1))
+    return nothing
+end
+
+@testset "R39: git overlay columns default to clean and track staged + unstaged state per node" begin
+    tmp = _tmp_codebase()
+    try
+        db = load(tmp, TEST_CONFIG)
+
+        @test :git_status ∈ propertynames(db.code)
+        @test :git_has_staged ∈ propertynames(db.code)
+        @test :git_has_unstaged ∈ propertynames(db.code)
+        @test all(==("clean"), db.code.git_status)
+        @test all(==(false), db.code.git_has_staged)
+        @test all(==(false), db.code.git_has_unstaged)
+
+        utils_path = joinpath(tmp, "julia", "utils.jl")
+        _replace_in_file!(utils_path, "return x", "return x + 1")
+        _git(tmp, "add", "julia/utils.jl")
+        _replace_in_file!(utils_path, "return \"\$label: \$value\"",
+                          "return \"[\$label]: \$value\"")
+
+        reload(db)
+
+        clamp = only(filter(r -> isequal(r.file, "julia/utils.jl") &&
+                                 isequal(r.name, "clamp_value"), db.code))
+        format = only(filter(r -> isequal(r.file, "julia/utils.jl") &&
+                                  isequal(r.name, "format_result"), db.code))
+        file_row = only(filter(r -> isequal(r.id, "julia/utils.jl"), db.code))
+        module_row = only(filter(r -> isequal(r.id, "julia"), db.code))
+        root_row = only(filter(r -> isequal(r.kind, "codebase"), db.code))
+
+        @test clamp.git_status == "modified"
+        @test clamp.git_has_staged
+        @test !clamp.git_has_unstaged
+        @test format.git_status == "modified"
+        @test !format.git_has_staged
+        @test format.git_has_unstaged
+        @test file_row.git_status == "modified"
+        @test file_row.git_has_staged
+        @test file_row.git_has_unstaged
+        @test module_row.git_status == "modified"
+        @test root_row.git_status == "modified"
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R39 + R40 + R42: deleted files stay out of db.code and surface through git_file_status" begin
+    tmp = _tmp_codebase()
+    try
+        db = load(tmp, TEST_CONFIG)
+        rm(joinpath(tmp, "src", "main.cpp"))
+
+        reload(db)
+
+        @test "src/main.cpp" ∉ Set(collect(skipmissing(db.code.file)))
+
+        statuses = CodeTree.git_file_status(db)
+        deleted = only(filter(r -> isequal(r.path, "src/main.cpp"), statuses))
+        @test deleted.status == "deleted"
+        @test deleted.is_indexed == false
+
+        src_module = only(filter(r -> isequal(r.id, "src"), db.code))
+        root_row = only(filter(r -> isequal(r.kind, "codebase"), db.code))
+        @test src_module.git_status == "modified"
+        @test root_row.git_status == "modified"
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R40: git_file_status phase filters expose staged, unstaged, and untracked files" begin
+    tmp = _tmp_codebase()
+    try
+        db = load(tmp, TEST_CONFIG)
+
+        utils_path = joinpath(tmp, "julia", "utils.jl")
+        core_path = joinpath(tmp, "julia", "core.jl")
+        _replace_in_file!(utils_path, "return x", "return x + 1")
+        _git(tmp, "add", "julia/utils.jl")
+        _replace_in_file!(core_path, "return sort(v)", "return reverse(sort(v))")
+        write(joinpath(tmp, "julia", "new_helper.jl"),
+              "function added_helper()\n    return 7\nend\n")
+
+        reload(db)
+
+        all_status = CodeTree.git_file_status(db)
+        staged_status = CodeTree.git_file_status(db; phase=:staged)
+        unstaged_status = CodeTree.git_file_status(db; phase=:unstaged)
+
+        utils_row = only(filter(r -> isequal(r.path, "julia/utils.jl"), all_status))
+        core_row = only(filter(r -> isequal(r.path, "julia/core.jl"), all_status))
+        new_row = only(filter(r -> isequal(r.path, "julia/new_helper.jl"), all_status))
+
+        @test utils_row.status == "modified"
+        @test utils_row.git_has_staged
+        @test !utils_row.git_has_unstaged
+        @test core_row.status == "modified"
+        @test !core_row.git_has_staged
+        @test core_row.git_has_unstaged
+        @test new_row.status == "untracked"
+        @test new_row.db_file == "julia/new_helper.jl"
+        @test new_row.git_has_unstaged
+
+        @test Set(staged_status.path) == Set(["julia/utils.jl"])
+        @test Set(unstaged_status.path) == Set(["julia/core.jl", "julia/new_helper.jl"])
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R41 + R42: git_diff selects one node, whole files, and added-file node selectors normalize to file diffs" begin
+    tmp = _tmp_codebase()
+    try
+        db = load(tmp, TEST_CONFIG)
+
+        utils_path = joinpath(tmp, "julia", "utils.jl")
+        _replace_in_file!(utils_path, "return x", "return x + 1")
+        _replace_in_file!(utils_path, "return \"\$label: \$value\"",
+                          "return \"[\$label]: \$value\"")
+        write(joinpath(tmp, "julia", "new_helper.jl"),
+              "function added_helper()\n    return 7\nend\n")
+
+        reload(db)
+
+        clamp = only(filter(r -> isequal(r.file, "julia/utils.jl") &&
+                                 isequal(r.name, "clamp_value"), db.code))
+        added_helper = only(filter(r -> isequal(r.file, "julia/new_helper.jl") &&
+                                        isequal(r.name, "added_helper"), db.code))
+
+        clamp_patch = CodeTree.git_diff(db, clamp.id)
+        utils_patch = CodeTree.git_diff(db, "julia/utils.jl")
+        added_node_patch = CodeTree.git_diff(db, added_helper.id)
+        added_file_patch = CodeTree.git_diff(db, "julia/new_helper.jl")
+
+        @test occursin("return x + 1", clamp_patch)
+        @test !occursin("[\$label]: \$value", clamp_patch)
+        @test occursin("return x + 1", utils_patch)
+        @test occursin("[\$label]: \$value", utils_patch)
+        @test added_node_patch == added_file_patch
+        @test occursin("added_helper", added_node_patch)
+        @test CodeTree.git_diff(db, clamp.id; phase=:staged) == ""
+
+        err = @test_throws Exception CodeTree.git_diff(db, "does/not/exist.jl")
+        @test occursin("unknown", lowercase(sprint(showerror, err.value)))
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R39 + R40 + R41 + R43: non-git workspaces keep clean overlays and git APIs fail informatively" begin
+    tmp = mktempdir("/tmp")
+    try
+        _copy_fixture_tree!(TEST_CODEBASE, tmp)
+        withenv(
+            "GIT_CEILING_DIRECTORIES" => dirname(tmp),
+            "GIT_DIR" => joinpath(tmp, ".missing-git-dir"),
+            "GIT_WORK_TREE" => tmp,
+        ) do
+            db = load(tmp, TEST_CONFIG)
+
+            @test all(==("clean"), db.code.git_status)
+            @test all(==(false), db.code.git_has_staged)
+            @test all(==(false), db.code.git_has_unstaged)
+
+            status_err = @test_throws Exception CodeTree.git_file_status(db)
+            diff_err = @test_throws Exception CodeTree.git_diff(db, "julia/utils.jl")
+            @test occursin("git", lowercase(sprint(showerror, status_err.value)))
+            @test occursin("git", lowercase(sprint(showerror, diff_err.value)))
+        end
+    finally
+        rm(tmp; recursive=true)
+    end
+end

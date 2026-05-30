@@ -288,3 +288,12 @@ selection for the non-text or no-current-node cases above.
   `HEAD -> worktree` surface;
 - indexing the Git index as a second CodeTree snapshot;
 - arbitrary partial selection smaller than the current node granularity.
+
+## Closed in session
+
+❯ copilot         
+  ╭─╮╭─╮   Changes   +2763 -771
+  ╰─╯╰─╯   Requests  1 Premium (1h 32m 22s)
+  █ ▘▝ █   Tokens    ↑ 36.6m • ↓ 184.5k • 35.8m (cached) • 121.6k (reasoning)
+   ▔▔▔▔    Resume    copilot --resume=c937d9e6-9479-42b7-8987-e286b010ad4b
+

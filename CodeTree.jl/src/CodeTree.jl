@@ -22,9 +22,11 @@ include("symbols.jl")
 include("cache.jl")
 include("load.jl")
 include("update_source.jl")
+include("git.jl")
 
 # Public API exports
 export CodeTreeDB, load, reload, get_source, update_source!
+export git_file_status, git_diff
 export LanguageConfig, LanguageEntry, NodeMapping, DEFAULT_CONFIG, merge_config
 export classify_node, language_for_file
 export discover_files

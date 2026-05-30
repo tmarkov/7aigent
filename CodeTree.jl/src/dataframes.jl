@@ -34,11 +34,25 @@ struct CodeTree <: AbstractDataFrame
 end
 
 function CodeTree(df::DataFrame)
+    _ensure_git_overlay_columns!(df)
     return CodeTree(
         df,
         _summary_baseline_from_df(df),
         Dict{String,Union{String,Missing}}(),
     )
+end
+
+function _ensure_git_overlay_columns!(df::DataFrame)::Nothing
+    if :git_status ∉ propertynames(df)
+        df[!, :git_status] = fill("clean", nrow(df))
+    end
+    if :git_has_staged ∉ propertynames(df)
+        df[!, :git_has_staged] = fill(false, nrow(df))
+    end
+    if :git_has_unstaged ∉ propertynames(df)
+        df[!, :git_has_unstaged] = fill(false, nrow(df))
+    end
+    return nothing
 end
 
 DataFrames.nrow(ct::CodeTree)::Int     = nrow(getfield(ct, :_df))

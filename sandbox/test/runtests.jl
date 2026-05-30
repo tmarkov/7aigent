@@ -197,7 +197,7 @@ end
 
     markdown_render = repr(MIME("text/markdown"), db.code)
 
-    @test occursin("rows x 16 columns DataFrame", markdown_render)
+    @test occursin("rows x 19 columns DataFrame", markdown_render)
     @test occursin("| Row | id :: String |", markdown_render)
     @test !occursin("MethodError", markdown_render)
 end

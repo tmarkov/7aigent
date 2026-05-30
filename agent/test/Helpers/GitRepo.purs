@@ -6,6 +6,7 @@ module Test.Helpers.GitRepo
   , stageFile
   , addUntrackedFile
   , commitAll
+  , gitOutput
   ) where
 
 import Prelude
@@ -20,11 +21,16 @@ import Agent.Types (WorkspacePath(..))
 import Test.Helpers.Workspace (withWorkspace)
 
 foreign import execSync :: String -> String -> Unit
+foreign import execOutputSync :: String -> String -> String
 
 -- | Run a shell command synchronously in a given directory.
 runGit :: WorkspacePath -> String -> Aff Unit
 runGit (WorkspacePath dir) cmd =
   liftEffect $ pure (execSync cmd dir)
+
+gitOutput :: WorkspacePath -> String -> Aff String
+gitOutput (WorkspacePath dir) cmd =
+  liftEffect $ pure (execOutputSync cmd dir)
 
 -- | Initialise a temp git repo with an initial empty commit.
 withGitRepo :: forall a. (WorkspacePath -> Aff a) -> Aff a

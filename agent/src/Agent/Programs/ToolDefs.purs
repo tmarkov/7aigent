@@ -32,19 +32,24 @@ toolDefinitions =
               }
             ]
       }
-    , { name: GitDiff
-      , description:
-            "Show the current git diff with hunk IDs."
-      , parameters: []
-      }
-    , { name: GitCommit
-      , description:
-            "Commit changes to the repository."
-      , parameters:
+    , { name: GitStage
+       , description:
+            "Stage all current changes or the selected CodeTree-backed selectors."
+       , parameters:
             [ { name: "what"
               , description:
-                    "Which hunks to commit: 'all' or "
-                    <> "a list of hunk IDs."
+                    "Which current changes to stage: 'all' or a list of selectors."
+              , required: true
+              }
+            ]
+       }
+    , { name: GitCommit
+       , description:
+            "Commit changes to the repository."
+       , parameters:
+            [ { name: "what"
+              , description:
+                    "Which changes to commit: 'staged', 'all', or a list of selectors."
               , required: true
               }
             , { name: "message"

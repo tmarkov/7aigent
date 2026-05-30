@@ -145,6 +145,7 @@ function _update_source!(
         db._hashes[file_rel] = new_hash
         write(abs_path, new_file_src)
         _update_cache_for_file!(db, file_rel_typed, new_file_src, new_hash, new_code_rows, new_sym_rows)
+        _refresh_git_overlay!(db)
     catch e
         # R35: rollback all in-memory state
         empty!(code_df); append!(code_df, old_code_df)
@@ -692,6 +693,7 @@ function _replace_file_in_db!(db::CodeTreeDB, file_rel::FilePath, new_src::Strin
     new_hash = bytes2hex(SHA.sha256(new_src))
     db._buffer[file_rel.val] = new_src
     db._hashes[file_rel.val] = new_hash
+    _refresh_git_overlay!(db)
     return nothing
 end
 

@@ -123,7 +123,7 @@ juliaDefsSpec = do
 
     it "A29: no julia_repl calls → empty" do
       let events =
-            [ EvtToolCall { timestamp: Timestamp "t1", toolName: GitDiff, toolCallId: ToolCallId "tc1", input: "" }
+            [ EvtToolCall { timestamp: Timestamp "t1", toolName: GitStage, toolCallId: ToolCallId "tc1", input: "{\"what\":\"all\"}" }
             ]
       extractDefs events `shouldEqual` []
 

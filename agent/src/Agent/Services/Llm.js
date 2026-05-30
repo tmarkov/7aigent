@@ -21,8 +21,8 @@ function encodeToolName(name) {
   switch (toolNameTag(name)) {
     case "JuliaRepl":
       return "julia_repl";
-    case "GitDiff":
-      return "git_diff";
+    case "GitStage":
+      return "git_stage";
     case "GitCommit":
       return "git_commit";
     case "UnknownToolName":
@@ -73,7 +73,7 @@ function encodeTool(td) {
   return {
     type: "function",
     function: {
-      name: td.name,
+      name: encodeToolName(td.name),
       description: td.description,
       parameters: {
         type: "object",

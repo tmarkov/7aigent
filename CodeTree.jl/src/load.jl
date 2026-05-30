@@ -150,6 +150,7 @@ function load(
         hashes,
     )
     extract_symbols!(db)
+    _refresh_git_overlay!(db)
 
     # --- Persist cache (R24, R25) ---
     # Build a node_id → file lookup from the code DataFrame.
@@ -269,6 +270,7 @@ function _rows_to_dataframe(rows::Vector{CodeRow})::DataFrame
         signature=Union{String,Missing}[], file=Union{String,Missing}[],
         line_start=Union{Int,Missing}[], line_end=Union{Int,Missing}[],
         n_lines=Union{Int,Missing}[], n_children=Int[],
+        git_status=String[], git_has_staged=Bool[], git_has_unstaged=Bool[],
     )
 
     n = length(rows)
@@ -289,6 +291,9 @@ function _rows_to_dataframe(rows::Vector{CodeRow})::DataFrame
         line_end      = Vector{Union{Int,Missing}}(undef, n),
         n_lines       = Vector{Union{Int,Missing}}(undef, n),
         n_children    = Vector{Int}(undef, n),
+        git_status    = Vector{String}(undef, n),
+        git_has_staged = Vector{Bool}(undef, n),
+        git_has_unstaged = Vector{Bool}(undef, n),
     )
 
     for (i, row) in enumerate(rows)
@@ -308,6 +313,9 @@ function _rows_to_dataframe(rows::Vector{CodeRow})::DataFrame
         cols.line_end[i]      = row.line_end
         cols.n_lines[i]       = row.n_lines
         cols.n_children[i]    = row.n_children
+        cols.git_status[i]    = "clean"
+        cols.git_has_staged[i] = false
+        cols.git_has_unstaged[i] = false
     end
 
     return DataFrame(
@@ -327,5 +335,8 @@ function _rows_to_dataframe(rows::Vector{CodeRow})::DataFrame
         line_end      = cols.line_end,
         n_lines       = cols.n_lines,
         n_children    = cols.n_children,
+        git_status    = cols.git_status,
+        git_has_staged = cols.git_has_staged,
+        git_has_unstaged = cols.git_has_unstaged,
     )
 end

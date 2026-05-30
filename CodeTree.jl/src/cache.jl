@@ -361,7 +361,7 @@ the directory is not a git repository or git is unavailable.
 """
 function _current_commit_hash(root_path::String)::Union{String,Missing}
     try
-        result = readchomp(Cmd(`git rev-parse HEAD`; dir=root_path))
+        result = readchomp(pipeline(Cmd(`git rev-parse HEAD`; dir=root_path); stderr=devnull))
         return result
     catch
         return missing

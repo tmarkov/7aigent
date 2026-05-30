@@ -57,7 +57,7 @@ newtype Timestamp = Timestamp String
 
 data ToolName
   = JuliaRepl
-  | GitDiff
+  | GitStage
   | GitCommit
   | UnknownToolName String
 
@@ -367,13 +367,13 @@ renderTimestamp (Timestamp timestamp) = timestamp
 
 renderToolName :: ToolName -> String
 renderToolName JuliaRepl = "julia_repl"
-renderToolName GitDiff = "git_diff"
+renderToolName GitStage = "git_stage"
 renderToolName GitCommit = "git_commit"
 renderToolName (UnknownToolName name) = name
 
 toolNameFromString :: String -> ToolName
 toolNameFromString "julia_repl" = JuliaRepl
-toolNameFromString "git_diff" = GitDiff
+toolNameFromString "git_stage" = GitStage
 toolNameFromString "git_commit" = GitCommit
 toolNameFromString other = UnknownToolName other
 

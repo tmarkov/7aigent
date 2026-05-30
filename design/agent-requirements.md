@@ -118,11 +118,16 @@ spawn. If the user chooses to proceed, the runner removes
 **A3** — The runner exposes three tools to the LLM:
 
 - **`julia_repl`**: executes a Julia expression in the persistent sandbox
-  kernel and returns its output.
-- **`git_diff`**: returns the current diff of the workspace with each hunk
-  annotated by a stable ID. Runs on the host with read access to `.git`.
-- **`git_commit`**: stages and commits a selected set of hunks to the
-  workspace git repository. Runs on the host with full `.git` write access.
+  kernel and returns its output. This is also the primary Git-aware read
+  surface: the model inspects `db.code.git_status`, `git_file_status(db)`, and
+  `git_diff(db, selectors; phase=...)` through Julia rather than through a
+  separate host-side diff tool.
+- **`git_stage`**: stages a selected subset of the current workspace delta (or
+  all current changes) in the workspace git repository. Runs on the host with
+  `.git` write access.
+- **`git_commit`**: commits either the current index, the full current
+  workspace delta, or a selected subset of the current workspace delta. Runs on
+  the host with full `.git` write access.
 
 **A4** — `julia_repl` takes a single string argument: the Julia source to
 execute. The runner sends an `execute_request` to the Jupyter shell channel
@@ -130,30 +135,40 @@ and collects all `stream`, `execute_result`, `display_data`, and `error`
 messages from the iopub channel until `execute_reply` is received. The
 concatenated output is returned as the tool result.
 
-**A5** — `git_diff` takes no arguments. It returns the diff of the workspace
-against HEAD, covering both staged changes (index vs HEAD) and unstaged changes
-(working tree vs index) to tracked files, plus all untracked files. Staged and
-unstaged hunks for the same file may be interleaved in source order. Each hunk
-in the output is annotated with a sequential ID (`H1`, `H2`, …); staged hunks
-are additionally marked `[staged]` and unstaged hunks `[unstaged]`. Untracked
-files appear as "new file" additions and are each treated as a single
-`[unstaged]` hunk. The IDs are invalidated by any subsequent `julia_repl` call
-or `git_diff` call.
+**A5** — `git_stage` takes one required field:
+
+- `what`: either the string `"all"` or a non-empty list of selectors. A
+  selector is either a current `db.code.id` or a repo-relative path from
+  `git_file_status(db)`.
+
+`git_stage("all")` stages all current changes in the workspace, including
+untracked files and deletions. `git_stage([selector, ...])` stages exactly the
+selected current changes while preserving the exact content and
+staged-vs-unstaged placement of every unselected change, or fails atomically.
+Selectors have no `phase` argument: they always refer to the selector's full
+current change across staged and unstaged state. File-path selectors always
+mean the whole file change. Empty effective selections and selections
+containing unmerged files fail informatively with no repository mutation.
 
 **A6** — `git_commit` takes:
 
-- `what`: either the string `"all"` (stage all current changes, including
-  untracked files) or a non-empty list of hunk IDs from the most recent
-  `git_diff` output (e.g. `["H1", "H3"]`).
+- `what`: one of `"staged"`, `"all"`, or a non-empty list of selectors.
 - `message`: the commit subject line.
 - `body` (optional): the commit message body.
 
-The runner stages exactly the specified hunks (or all changes if `"all"`),
-commits with the given message, and returns a summary of what was committed,
-or an error message if the operation failed. If any hunk ID in the list is
-absent from the most recent `git_diff` output (stale, never assigned, or
-invalidated), `git_commit` fails immediately with an informative error listing
-the unrecognised IDs; no staging or commit is performed.
+`git_commit("staged")` commits the current index as-is. `git_commit("all")`
+commits the full current workspace delta vs `HEAD`. `git_commit([selector,
+...])` commits exactly the selected current changes using the same selector
+semantics as `git_stage`. Empty effective selections, `"staged"` with no staged
+changes, "nothing to commit" situations, and selections containing unmerged
+files fail informatively with no repository mutation. Binary, deleted,
+non-indexed, and metadata-only changes remain stageable/committable by file
+path even when Julia cannot render them as text.
+
+**A6a** — Before executing `julia_repl`, `git_stage`, or selector-based
+`git_commit`, the runner refreshes the persistent workspace view enough that
+external worktree/index/HEAD changes are visible on the next tool call without
+the model needing to call `load()`, `reload()`, or a separate refresh action.
 
 ---
 
@@ -188,7 +203,7 @@ with LLM generation and tool execution.
 - If a tool is running: interrupt it and prompt the user for new input.
   - For `julia_repl`: send an `interrupt_request` to the Jupyter control
     channel and wait for the kernel to recover (per S18–S19).
-  - For `git_diff` or `git_commit`: send SIGINT to the host-side tool
+  - For `git_stage` or `git_commit`: send SIGINT to the host-side tool
     process and wait for it to exit.
 
 The interrupted turn is recorded in the session log as an `escape` event
@@ -204,7 +219,7 @@ The interrupted turn is recorded in the session log as an `escape` event
    appended to the output text.
    - For `julia_repl`: send an `interrupt_request` to the Jupyter control
      channel and wait for the kernel to recover (per S18–S19).
-   - For `git_diff` or `git_commit`: send SIGINT to the host-side tool
+    - For `git_stage` or `git_commit`: send SIGINT to the host-side tool
      process and wait for it to exit.
 3. Serialize the Julia REPL state to the session directory (A28–A30).
 4. Write a `session_end` event to the session log (A25).

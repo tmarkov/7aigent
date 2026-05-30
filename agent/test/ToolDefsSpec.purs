@@ -27,13 +27,13 @@ toolDefsSpec = do
         Nothing ->
           fail "julia_repl tool not found in definitions"
 
-    it "A3: git_diff tool is defined with no parameters" do
-      case findTool "git_diff" of
+    it "A3: git_stage tool has the required 'what' parameter" do
+      case findTool "git_stage" of
         Just tool -> do
-          renderToolName tool.name `shouldEqual` "git_diff"
-          Array.length tool.parameters `shouldEqual` 0
+          renderToolName tool.name `shouldEqual` "git_stage"
+          hasRequiredParam tool "what" `shouldEqual` true
         Nothing ->
-          fail "git_diff tool not found in definitions"
+          fail "git_stage tool not found in definitions"
 
     it "A3: git_commit tool has required 'what' and 'message', optional 'body'" do
       case findTool "git_commit" of

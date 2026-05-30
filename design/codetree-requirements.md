@@ -44,6 +44,15 @@ These architectural decisions are requirements, not implementation details.
   `count` occurrences with `repl`, re-indexes the changed file, and prints a
   unified diff to stdout. Updates both `db.code` and `db.symbols` together.
 
+- **`git_file_status(db; phase=:all) -> DataFrame`** — returns the current
+  git-scoped changed-file surface for the workspace rooted at `db.root`, with
+  repo-relative path selectors plus per-file staged/unstaged flags.
+
+- **`git_diff(db, selector_or_selectors; phase=:all) -> String`** — returns a
+  unified diff for the selected current node ids and/or file-path selectors.
+  This Git-aware read API is layered on top of a normal `CodeTreeDB`; loading,
+  reloading, and source updates still work outside git repositories.
+
 ---
 
 ## Requirements
@@ -70,6 +79,9 @@ These architectural decisions are requirements, not implementation details.
 | `line_end` | Int? | Last line in the file |
 | `n_lines` | Int? | Stored for query convenience; must always equal `line_end - line_start + 1`. Any code path that sets `line_start` or `line_end` must update `n_lines` accordingly. |
 | `n_children` | Int | Number of direct children |
+| `git_status` | String | Session-scoped Git overlay for `HEAD -> worktree`: `clean` or `modified` for the node's current span/subtree |
+| `git_has_staged` | Bool | Session-scoped Git overlay: whether any part of the node/subtree differs in `HEAD -> index` |
+| `git_has_unstaged` | Bool | Session-scoped Git overlay: whether any part of the node/subtree differs in `index -> worktree` |
 
 Node kinds: `codebase`, `module`, `file`, `class`, `function`, `loop`,
 `conditional`, `try`, `with`, `import`, `variable`, `type`, `comment`,
@@ -439,3 +451,100 @@ prints a warning to stdout listing every match location before applying the
 replacement. Match locations are reported as `line L` for `String` patterns
 and `line L, chars M:N` (1-based character range within that line) for
 `Regex` patterns. Only the first `count` occurrences are replaced.
+
+---
+
+### Git-aware Change Selection
+
+**R39** — `db.code` always exposes the Git overlay columns `git_status`,
+`git_has_staged`, and `git_has_unstaged` from R1. They are read-only,
+session-scoped overlays:
+
+- In a non-git workspace they read as `clean`, `false`, `false` for every row.
+- In a git workspace they describe the current workspace delta scoped to
+  `db.root`.
+- For leaf rows they describe the leaf's own current span.
+- For non-leaf rows they aggregate over the row's current span, including its
+  declaration chunk and descendants.
+- For `file`, `module`, and `codebase` rows, the aggregate also includes
+  changed file-level entries under the subtree that have no useful current
+  descendant node representation (for example deleted, binary, unmerged,
+  metadata-only, or non-indexed file changes).
+- Newly added or untracked current nodes count as `git_status = "modified"`.
+- These overlay values are never persisted into the SQLite cache.
+
+**R40** — `git_file_status(db; phase=:all)` returns one row per changed file
+in scope with these columns:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `path` | String | Primary repo-relative file selector |
+| `db_file` | String | The same file path relative to `db.root` (the same base as `db.code.file`) |
+| `old_path` | String? | Previous repo-relative path for rename/copy cases in the requested phase |
+| `status` | String | `modified`, `added`, `deleted`, `renamed`, `copied`, `type_changed`, `untracked`, or `unmerged` for the requested phase |
+| `is_binary` | Bool | Whether the requested-phase change is binary |
+| `is_indexed` | Bool | Whether the current worktree file participates in `db.code` |
+| `git_has_staged` | Bool | Whether this file currently has staged changes |
+| `git_has_unstaged` | Bool | Whether this file currently has unstaged changes |
+
+Phase semantics:
+
+- `phase=:all` means `HEAD -> worktree`.
+- `phase=:staged` means `HEAD -> index` and returns only files with staged
+  changes.
+- `phase=:unstaged` means `index -> worktree` and returns only files with
+  unstaged changes.
+- `git_has_staged` and `git_has_unstaged` always describe the full current
+  repository state, not just the filtered row set.
+
+Invalid phase values throw an informative `ArgumentError`. If `db.root` is not
+inside a git repository, `git_file_status` throws an informative error instead
+of pretending the repository exists.
+
+**R41** — `git_diff(db, selector; phase=:all)` and
+`git_diff(db, selectors; phase=:all)` are Git-aware read APIs over the same
+workspace scope. A selector is either:
+
+1. a current `db.code.id`; or
+2. a repo-relative `path` returned by `git_file_status(db)`.
+
+If a selector string matches a current `db.code.id`, it is interpreted as a
+node selector; otherwise it is interpreted as a file-path selector. `git_diff`
+must:
+
+- accept mixed node-id and file-path selectors;
+- return a valid unified diff for the selected node/file or for the normalized
+  union of selected nodes/files;
+- order output deterministically by repo-relative path, then source order
+  within each file;
+- return `""` for a known selector whose selected region is clean in the
+  requested phase;
+- error on unknown selectors;
+- deduplicate overlapping selectors cleanly;
+- treat file-path selectors as whole-file selectors even when the file is
+  indexed;
+- error informatively on invalid `phase` values and on non-git workspaces;
+- fail informatively if any selected change is binary or unmerged, naming the
+  offending selectors instead of fabricating textual diff content.
+
+**R42** — Selector normalization is node-atomic at current-node granularity:
+
+- Selecting a current node means selecting all requested-phase changes whose
+  current lines fall within that node's current span.
+- `file` node ids and explicit file-path selectors both mean the whole current
+  file change.
+- `module` and `codebase` selectors expand to the union of changed files in the
+  selected subtree, plus any in-scope changed file-path entries there that have
+  no useful current node representation.
+- Newly added or untracked descendant node selectors normalize to the
+  containing file selection.
+- Deleted files have no current node row and therefore must be selected by file
+  path, not by node id.
+
+**R43** — Git overlay state is fresh and non-persistent:
+
+- `load`, `reload`, and `update_source!` refresh the in-memory Git overlay
+  after their normal code-tree work completes.
+- The overlay is never written into the SQLite cache.
+- The implementation may refresh internal Git-overlay state before other
+  higher-level tool calls, but no explicit model-facing refresh API exists.

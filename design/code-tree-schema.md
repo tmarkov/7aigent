@@ -128,6 +128,11 @@ CREATE TABLE code (
 );
 ```
 
+`db.code` also exposes three **session-scoped Git overlay columns** in memory:
+`git_status`, `git_has_staged`, and `git_has_unstaged`. They are part of the
+live Julia/DataFrame API but are **not persisted** into the SQLite cache or the
+on-disk `code` table above.
+
 ### Node Kinds
 
 Code structure is classified into these kinds, which map across languages:
@@ -219,6 +224,15 @@ codebase:chess
   - `n_children == 0` indicates a leaf (show source directly)
   - Used in UI rendering decisions
   - Quick way to know if a node is expandable
+
+- **`git_status`, `git_has_staged`, `git_has_unstaged`**: live Git-overlay
+  status for the node's current span/subtree
+  - `git_status` is `clean` or `modified` for the current `HEAD -> worktree`
+    delta
+  - `git_has_staged` tracks `HEAD -> index`
+  - `git_has_unstaged` tracks `index -> worktree`
+  - These values are queryable like normal columns but remain session-scoped and
+    non-persistent
 
 ---
 

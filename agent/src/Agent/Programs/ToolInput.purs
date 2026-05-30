@@ -1,6 +1,7 @@
 module Agent.Programs.ToolInput
     ( summarizeToolInput
     , parseJuliaCodeInput
+    , parseGitStageInput
     , parseGitCommitInput
     ) where
 
@@ -16,6 +17,10 @@ import Foreign.Object as FO
 
 import Agent.Types (ToolName(..))
 
+type GitStageInput =
+    { what :: String
+    }
+
 type GitCommitInput =
     { what :: String
     , message :: String
@@ -29,7 +34,10 @@ summarizeToolInput JuliaRepl input =
         kept = Array.take 10 ls
         more = Array.length ls > 10
     in String.joinWith "\n" kept <> if more then "\n..." else ""
-summarizeToolInput GitDiff _ = ""
+summarizeToolInput GitStage input =
+    let parsed = parseGitStageInput input
+        what = map _.what parsed
+    in "what: " <> fromMaybe "all" what
 summarizeToolInput GitCommit input =
     let parsed = parseGitCommitInput input
         msg = map _.message parsed
@@ -44,6 +52,13 @@ parseJuliaCodeInput input =
         obj <- parseJsonObject input
         val <- FO.lookup "code" obj
         J.toString val
+
+parseGitStageInput :: String -> Maybe GitStageInput
+parseGitStageInput input = do
+    obj <- parseJsonObject input
+    whatJson <- FO.lookup "what" obj
+    let what = fromMaybe (J.stringify whatJson) (J.toString whatJson)
+    pure { what }
 
 parseGitCommitInput :: String -> Maybe GitCommitInput
 parseGitCommitInput input = do

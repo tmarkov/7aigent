@@ -26,7 +26,10 @@ function discover_files(root::AbstractString)::Vector{String}
 
     # Try git first (R5): honours .gitignore and includes untracked files.
     git_result = try
-        out = readchomp(`git -C $abs_root ls-files --cached --others --exclude-standard`)
+        out = readchomp(pipeline(
+            `git -C $abs_root ls-files --cached --others --exclude-standard`;
+            stderr=devnull,
+        ))
         isempty(out) ? String[] : split(out, '\n')
     catch
         nothing
@@ -34,7 +37,13 @@ function discover_files(root::AbstractString)::Vector{String}
 
     if !isnothing(git_result)
         # Filter out .7aigent/ subtree (cache dir, never indexed).
-        return filter(p -> !startswith(p, ".7aigent/") && p != ".7aigent", git_result)
+        return filter(git_result) do rel_path
+            if startswith(rel_path, ".7aigent/") || rel_path == ".7aigent"
+                return false
+            end
+            abs_path = joinpath(abs_root, rel_path)
+            return (isfile(abs_path) || islink(abs_path)) && !_is_binary_file(abs_path)
+        end
     end
 
     # Fallback: walk the directory tree manually while still honouring nested

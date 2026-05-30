@@ -37,8 +37,8 @@ sampleHistory = mkHistory [ systemMsg "sys", userMsg "hello" ]
 juliaToolCall :: ToolCall
 juliaToolCall = { name: JuliaRepl, input: "1+1", id: ToolCallId "tc1" }
 
-gitDiffToolCall :: ToolCall
-gitDiffToolCall = { name: GitDiff, input: "", id: ToolCallId "tc2" }
+gitStageToolCall :: ToolCall
+gitStageToolCall = { name: GitStage, input: "{\"what\":\"all\"}", id: ToolCallId "tc2" }
 
 gitCommitToolCall :: ToolCall
 gitCommitToolCall = { name: GitCommit, input: "{}", id: ToolCallId "tc3" }
@@ -96,8 +96,8 @@ interruptionSpec = do
       let result = handleEscape state
       hasAction InterruptJulia result `shouldEqual` true
 
-    it "A11: git_diff → sends SIGINT to tool process" do
-      let state = ExecutingTool sampleHistory gitDiffToolCall ""
+    it "A11: git_stage → sends SIGINT to tool process" do
+      let state = ExecutingTool sampleHistory gitStageToolCall ""
       let result = handleEscape state
       hasAction InterruptHostProcess result `shouldEqual` true
 
@@ -138,8 +138,8 @@ interruptionSpec = do
       -- in the tool result recorded in history
       toolResultContains "\n[interrupted]" result `shouldEqual` true
 
-    it "A12: git_diff → SIGINT to process" do
-      let state = ExecutingTool sampleHistory gitDiffToolCall ""
+    it "A12: git_stage → SIGINT to process" do
+      let state = ExecutingTool sampleHistory gitStageToolCall ""
       let result = handleSigint state (SessionId 1)
       hasAction InterruptHostProcess result `shouldEqual` true
 
