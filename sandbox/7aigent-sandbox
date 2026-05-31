@@ -420,7 +420,10 @@ interrupt_runner() {
             kill -INT "$RUNNER_PID" 2>/dev/null || true
             ;;
         runsc)
-            @runsc@ kill --signal INT "$CONTAINER_ID" 2>/dev/null || true
+            # S18: send SIGINT to the container.  Under gvisor systrap the
+            # signal may not reach Julia (known platform limitation); bwrap
+            # works reliably via direct kill.
+            @runsc@ --rootless kill "$CONTAINER_ID" INT 2>/dev/null || true
             ;;
     esac
 }

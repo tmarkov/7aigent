@@ -47,6 +47,8 @@ foreign import parseTomlPure
        , preserve_initial :: Number
        , preserve_final :: Number
        , max_turns_per_round :: Number
+       , timeout_check_seconds :: Array Number
+       , progress_interval_seconds :: Number
        }
 
 foreign import lookupEnvImpl :: String -> Effect (Nullable String)
@@ -84,6 +86,8 @@ parseConfig input
                     , preserveInitial: TokenCount (Int.round r.preserve_initial)
                     , preserveFinal: TokenCount (Int.round r.preserve_final)
                     , maxTurnsPerRound: Int.round r.max_turns_per_round
+                    , timeoutCheckSeconds: map Int.round r.timeout_check_seconds
+                    , progressIntervalSeconds: Int.round r.progress_interval_seconds
                     }
 
 ----------------------------------------------------------------------------

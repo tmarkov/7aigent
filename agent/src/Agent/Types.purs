@@ -148,6 +148,8 @@ type Config =
   , preserveInitial :: TokenCount
   , preserveFinal :: TokenCount
   , maxTurnsPerRound :: Int
+  , timeoutCheckSeconds :: Array Int
+  , progressIntervalSeconds :: Int
   }
 
 -- | A tool call issued by the LLM within a conversation turn.

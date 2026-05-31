@@ -109,15 +109,12 @@ callLlm config apiKey (ConversationHistory h) onToken = go 0
                     }
                 })
             Left err ->
-                case classifyApiError err of
-                    Just apiErr ->
-                        case retryDecision apiErr attempt config.maxApiRetries of
-                            Retry ms -> do
-                                delay (Milliseconds (Int.toNumber ms))
-                                go (attempt + 1)
-                            GiveUp _ ->
-                                pure (Left (LlmApiError err.message))
-                    Nothing ->
+                let apiErr = classifyApiError err
+                in case retryDecision apiErr attempt config.maxApiRetries of
+                    Retry ms -> do
+                        delay (Milliseconds (Int.toNumber ms))
+                        go (attempt + 1)
+                    GiveUp _ ->
                         pure (Left (LlmApiError err.message))
 
     runOnce = makeAff \resolve -> do
@@ -147,10 +144,10 @@ callLlm config apiKey (ConversationHistory h) onToken = go 0
 
     classifyApiError err =
         case toMaybe err.statusCode of
-            Just status -> Just (HttpStatus status)
-            Nothing | err.isTimeout -> Just NetworkTimeout
-            Nothing | looksLikeTimeout err.message -> Just NetworkTimeout
-            Nothing -> Nothing
+            Just status -> HttpStatus status
+            Nothing | err.isTimeout -> NetworkTimeout
+            Nothing | looksLikeTimeout err.message -> NetworkTimeout
+            Nothing -> NetworkError
 
     looksLikeTimeout message =
         let lowered = String.toLower message
@@ -185,15 +182,12 @@ callLlmJson config apiKey (ConversationHistory h) = go 0
                     }
                 })
             Left err ->
-                case classifyApiError err of
-                    Just apiErr ->
-                        case retryDecision apiErr attempt config.maxApiRetries of
-                            Retry ms -> do
-                                delay (Milliseconds (Int.toNumber ms))
-                                go (attempt + 1)
-                            GiveUp _ ->
-                                pure (Left (LlmApiError err.message))
-                    Nothing ->
+                let apiErr = classifyApiError err
+                in case retryDecision apiErr attempt config.maxApiRetries of
+                    Retry ms -> do
+                        delay (Milliseconds (Int.toNumber ms))
+                        go (attempt + 1)
+                    GiveUp _ ->
                         pure (Left (LlmApiError err.message))
 
     runOnce = makeAff \resolve -> do
@@ -209,10 +203,10 @@ callLlmJson config apiKey (ConversationHistory h) = go 0
 
     classifyApiError err =
         case toMaybe err.statusCode of
-            Just status -> Just (HttpStatus status)
-            Nothing | err.isTimeout -> Just NetworkTimeout
-            Nothing | looksLikeTimeout' err.message -> Just NetworkTimeout
-            Nothing -> Nothing
+            Just status -> HttpStatus status
+            Nothing | err.isTimeout -> NetworkTimeout
+            Nothing | looksLikeTimeout' err.message -> NetworkTimeout
+            Nothing -> NetworkError
 
     looksLikeTimeout' message =
         let lowered = String.toLower message

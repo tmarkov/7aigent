@@ -3,10 +3,16 @@
 -- |
 -- | These tests address AP6 (testing the decision but not the outcome) for:
 -- | A1 (ReACT loop orchestration), A2 (startup sequence ordering),
--- | A3 (tool dispatch), A8 (terminal display), A19 (startup execution),
+-- | A3 (tool dispatch), A8 (terminal display), A9 (large output handling),
+-- | A13 (EOF teardown), A18 (LLM error recovery), A19 (startup execution),
 -- | A20 (startup error → exit), A20a (sandbox crash → exit),
--- | A28 (serialization execution), A31 (resume def replay),
--- | A48 (round lifecycle via controller).
+-- | A23 (template error → exit), A28 (serialization execution),
+-- | A29 (julia_defs.jl written), A31 (resume def replay),
+-- | A32 (deserialization failure → warning + continue),
+-- | A33 (compaction trigger), A34 (post-compaction overflow),
+-- | A36 (compaction call properties), A37a (turn budget enforcement),
+-- | A38 (API key failures), A39 (config errors), A41 (session listing),
+-- | A46 (steering message injection), A48 (round lifecycle via controller).
 module Test.ControllerSpec (controllerSpec) where
 
 import Prelude
@@ -1530,6 +1536,117 @@ controllerSpec = do
                 logText <- readWorkspaceFile ws ".7aigent/sessions/1/log.jsonl"
                 logText `shouldSatisfy`
                     (not <<< String.contains (String.Pattern "Turn status"))
+
+    describe "A18: LLM error recovery at controller level" do
+        it "A18: LLM error in interactive mode → error printed, user re-prompted, session continues" do
+            withTestSessionCustom
+                { llmResponses:
+                    [ Left "Connection refused"
+                    , Right (textLlmResult "Recovered!")
+                    , Right reflectionComplete
+                    ]
+                , execResponses: [ "", "" ]
+                , execDetailedResponses:
+                    [ { output: "", hadError: false }
+                    , { output: "", hadError: false }
+                    ]
+                , readLineResponses: [ "first attempt", "second attempt", "" ]
+                , configToml: testConfigToml
+                , prompt: Nothing
+                } \_ calls ws -> do
+                    calls `shouldSatisfy`
+                        (Array.any (\c -> case c of
+                            CallPrintErr s ->
+                                String.contains (String.Pattern "LLM error") s
+                                    && String.contains (String.Pattern "Connection refused") s
+                            _ -> false))
+                    let readLineCalls = Array.filter (\c -> c == CallReadLine) calls
+                    Array.length readLineCalls `shouldSatisfy` (_ >= 2)
+                    calls `shouldSatisfy`
+                        (Array.any (\c -> c == CallExit 0))
+
+                    logText <- readWorkspaceFile ws ".7aigent/sessions/1/log.jsonl"
+                    logText `shouldSatisfy`
+                        (String.contains (String.Pattern "\"type\":\"session_end\""))
+
+        it "A18: LLM error in single-shot mode → error printed, session ends with error" do
+            withTestSessionCustom
+                { llmResponses: [ Left "500 Internal Server Error" ]
+                , execResponses: [ "", "" ]
+                , execDetailedResponses:
+                    [ { output: "", hadError: false }
+                    , { output: "", hadError: false }
+                    ]
+                , readLineResponses: []
+                , configToml: testConfigToml
+                , prompt: Just "do something"
+                } \_ calls ws -> do
+                    calls `shouldSatisfy`
+                        (Array.any (\c -> case c of
+                            CallPrintErr s ->
+                                String.contains (String.Pattern "LLM error") s
+                            _ -> false))
+                    calls `shouldSatisfy`
+                        (Array.any (\c -> c == CallExit 1))
+
+                    logText <- readWorkspaceFile ws ".7aigent/sessions/1/log.jsonl"
+                    logText `shouldSatisfy`
+                        (\text ->
+                            String.contains (String.Pattern "\"type\":\"session_end\"") text
+                                && String.contains (String.Pattern "\"reason\":\"error\"") text)
+
+    describe "A32: deserialization failure during resume" do
+        it "A32: definition replay warning → printed to stderr, session continues normally" do
+            withWorkspace \ws -> do
+                writeWorkspaceFile ws ".7aigent/config.toml" testConfigToml
+                writeWorkspaceFile ws ".7aigent/system_prompt.md" minimalSystemPrompt
+                writeWorkspaceFile ws ".7aigent/startup.jl" "# startup"
+                let sessionLog = String.joinWith "\n"
+                        [ "{\"type\":\"session_start\",\"id\":1,\"timestamp\":\"2025-01-01T00:00:00Z\",\"workspace\":\"/tmp\",\"model\":\"test-model\",\"resumed_from\":null}"
+                        , "{\"type\":\"system_prompt\",\"timestamp\":\"2025-01-01T00:00:00Z\",\"content\":\"You are a test agent.\"}"
+                        , "{\"type\":\"user_message\",\"timestamp\":\"2025-01-01T00:00:00Z\",\"content\":\"define stuff\"}"
+                        , "{\"type\":\"llm_response\",\"timestamp\":\"2025-01-01T00:00:00Z\",\"content\":\"done\"}"
+                        , "{\"type\":\"session_end\",\"timestamp\":\"2025-01-01T00:00:00Z\",\"reason\":\"eof\"}"
+                        ]
+                writeSessionLog ws (sidFromInt 1) sessionLog
+                writeWorkspaceFile ws ".7aigent/sessions/1/julia_defs.jl"
+                    "struct OldType\n    x::Int\nend"
+
+                liftEffect setTestEnv
+                { svc, state } <- liftEffect $ mkMockServices
+                    { llmResponses: [ Right (textLlmResult "Resumed OK"), Right reflectionComplete ]
+                    , execResponses:
+                        [ "Warning: failed to replay definition: UndefVarError: OldType not defined"
+                        , ""  -- using CodeTree
+                        , ""  -- startup.jl
+                        , ""  -- getJuliaState
+                        , ""  -- serialize
+                        ]
+                    , execDetailedResponses:
+                        [ { output: "", hadError: false }
+                        , { output: "", hadError: false }
+                        ]
+                    , readLineResponses: []
+                    , streamingChunks: []
+                    , spawnResult: Right mockSandboxHandle
+                    , connectResult: Right mockKernelHandle
+                    }
+                _ <- attempt $ runResumeSession svc ws (sidFromInt 1) (Just "continue")
+                calls <- liftEffect $ getCalls state
+                liftEffect unsetTestEnv
+
+                calls `shouldSatisfy`
+                    (Array.any (\c -> case c of
+                        CallPrintErr s ->
+                            String.contains (String.Pattern "Warning") s
+                                && String.contains (String.Pattern "failed") (String.toLower s)
+                        _ -> false))
+                calls `shouldSatisfy`
+                    (Array.any (\c -> case c of
+                        CallLlm _ -> true
+                        _ -> false))
+                calls `shouldSatisfy`
+                    (Array.any (\c -> c == CallExit 0))
 
 -- ---------------------------------------------------------------------------
 -- Predicates for filtering call records

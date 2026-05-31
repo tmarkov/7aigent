@@ -5,7 +5,7 @@ let
   workspacePath = "/tmp/workspace";
 
   mkConfig =
-    maxApiRetries:
+    { maxApiRetries, timeoutChecks ? "timeout_check_seconds = [3, 7, 14]", progressInterval ? "progress_interval_seconds = 2" }:
     pkgs.writeText "agent-config-${toString maxApiRetries}.toml" ''
       api_endpoint = "http://localhost:9999/v1/chat/completions"
       model = "mock-model"
@@ -17,10 +17,12 @@ let
       preserve_initial = 50
       preserve_final = 50
       max_turns_per_round = 5
+      ${timeoutChecks}
+      ${progressInterval}
     '';
 
-  defaultConfig = mkConfig 3;
-  singleRetryConfig = mkConfig 1;
+  defaultConfig = mkConfig { maxApiRetries = 3; };
+  singleRetryConfig = mkConfig { maxApiRetries = 1; };
 
   systemPrompt = pkgs.writeText "system_prompt.md" ''
     You are a deterministic VM-test assistant.
@@ -378,7 +380,7 @@ pkgs.testers.nixosTest {
             f"cp {shlex.quote(STARTUP_JL)} {shlex.quote(WORKSPACE + '/.7aigent/startup.jl')}",
             "Failed to install startup.jl",
         )
-        run("rm -f /tmp/*.log /tmp/*.json /tmp/mcp.pid /tmp/mcp.log")
+        run("rm -f /tmp/*.log /tmp/*.json /tmp/*.jsonl /tmp/mcp.pid")
 
     def wait_for_http(url, expected_code, timeout=60):
         deadline = time.time() + timeout
@@ -456,7 +458,7 @@ pkgs.testers.nixosTest {
     reset_workspace(DEFAULT_CONFIG)
     rc, out = run_agent(
         prompt="__RETRY_COUNT__2 hello after retries",
-        timeout_seconds=45,
+        timeout_seconds=90,
         log_path="/tmp/a18-success.log",
     )
     assert rc == 0, out
@@ -482,7 +484,7 @@ pkgs.testers.nixosTest {
             "__ALWAYS_429__ fail after state",
             "__TOOL_CALL__println(x)",
         ],
-        timeout_seconds=45,
+        timeout_seconds=90,
         log_path="/tmp/a18-exhausted.log",
     )
     assert rc == 0, out
@@ -509,15 +511,16 @@ pkgs.testers.nixosTest {
     assert any("41" in output for output in tool_results), tool_results
 
     # A14 + A15 + A17: periodic timeout checks with preserved conversation history.
+    # Config uses timeout_check_seconds = [3, 7, 14], so sleep(12) triggers all 3.
     reset_workspace(DEFAULT_CONFIG)
     timeout_prompt = (
         "__TOOL_CALL__begin; "
-        "println(\"started\"); flush(stdout); sleep(125); println(\"done\"); "
+        "println(\"started\"); flush(stdout); sleep(12); println(\"done\"); "
         "end"
     )
     rc, out = run_agent(
         prompt=timeout_prompt,
-        timeout_seconds=210,
+        timeout_seconds=60,
         log_path="/tmp/a14.log",
     )
     assert rc == 0, out
@@ -525,16 +528,16 @@ pkgs.testers.nixosTest {
     assert len(timeout_checks) == 3, timeout_checks
     tool_request = request_entries(kind="tool-call")[0]
     offsets = [entry["timestamp"] - tool_request["timestamp"] for entry in timeout_checks]
-    assert 25 <= offsets[0] <= 60, offsets
+    assert 1 <= offsets[0] <= 12, offsets
     check_gaps = [
         timeout_checks[1]["timestamp"] - timeout_checks[0]["timestamp"],
         timeout_checks[2]["timestamp"] - timeout_checks[1]["timestamp"],
     ]
-    assert 20 <= check_gaps[0] <= 45, check_gaps
-    assert 50 <= check_gaps[1] <= 75, check_gaps
+    assert 2 <= check_gaps[0] <= 12, check_gaps
+    assert 4 <= check_gaps[1] <= 16, check_gaps
     for entry in timeout_checks:
         text = entry["last_user"]
-        assert "sleep(125)" in text, text
+        assert "sleep(12)" in text, text
         assert "started" in text, text
         assert "Should I interrupt this execution?" in text, text
         assert entry["model"] == "mock-model", entry
@@ -546,22 +549,23 @@ pkgs.testers.nixosTest {
     timeout_response_events = [event for event in session_log if event.get("type") == "timeout_response"]
     assert len(timeout_check_events) == 3, timeout_check_events
     assert len(timeout_response_events) == 3, timeout_response_events
-    assert [event["elapsed_seconds"] for event in timeout_check_events] == [30, 60, 120], timeout_check_events
+    assert [event["elapsed_seconds"] for event in timeout_check_events] == [3, 7, 14], timeout_check_events
     assert all(event["interrupt"] is False for event in timeout_response_events), timeout_response_events
     assert "Should I interrupt this execution?" in out, out
     assert "no" in out.lower(), out
     assert "FINAL_TOOL_OUTPUT:" in out and "done" in out, out
 
     # A16: "yes" timeout response interrupts execution and returns partial output.
+    # First timeout check at 3s; sleep(8) keeps it alive long enough.
     reset_workspace(DEFAULT_CONFIG)
     interrupt_prompt = (
         "__TOOL_CALL__begin; "
-        "println(\"partial\"); flush(stdout); sleep(35); println(\"too-late\"); "
+        "println(\"partial\"); flush(stdout); sleep(8); println(\"too-late\"); "
         "end # __INTERRUPT_YES__"
     )
     rc, out = run_agent(
         prompt=interrupt_prompt,
-        timeout_seconds=100,
+        timeout_seconds=45,
         log_path="/tmp/a16.log",
     )
     assert rc == 0, out
@@ -615,14 +619,14 @@ pkgs.testers.nixosTest {
     existing_sessions = len(session_dirs())
     slow_result = run_mcp_client(
         "call-tool",
-        "__TOOL_CALL__begin; println(\"mcp-slow\"); flush(stdout); sleep(20); println(\"mcp-done\"); end",
+        "__TOOL_CALL__begin; println(\"mcp-slow\"); flush(stdout); sleep(5); println(\"mcp-done\"); end",
     )
     assert slow_result["result"].get("isError") is False, slow_result
     slow_text = assert_tool_result_text(slow_result["result"], "mcp-done")
     assert "FINAL_TOOL_OUTPUT:" in slow_text, slow_text
     assert slow_result["progress"], slow_result
-    assert slow_result["progress"][0]["progress"] == 15, slow_result
-    assert slow_result["progress"][0]["atMs"] >= 13000, slow_result
+    assert slow_result["progress"][0]["progress"] == 2, slow_result
+    assert slow_result["progress"][0]["atMs"] >= 1500, slow_result
     assert len(session_dirs()) == existing_sessions + 1, session_dirs()
     slow_session_log = latest_session_log()
     logged_types = [event.get("type") for event in slow_session_log]

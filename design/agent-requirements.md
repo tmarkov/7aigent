@@ -269,11 +269,14 @@ continues waiting. There is no hard cap on total wait time.
 
 ### LLM API Error Handling
 
-**A18** — On a transient LLM API error (HTTP 429, 5xx, or network timeout),
-the runner retries with exponential backoff. The maximum number of retries is
-configurable via `max_api_retries` in `config.toml` (A37). If all retries are
-exhausted, the error is displayed on the terminal and the runner re-prompts
-the user for new input. The session continues; no state is lost.
+**A18** — On any LLM API error — HTTP 429, 5xx, network timeout, connection
+refused, DNS failure, connection reset, or any other network error — the
+runner retries with exponential backoff. All errors are considered transient
+because non-transient configuration errors (bad key, wrong endpoint) fail on
+every call regardless, and the retry cost is trivial. The maximum number of
+retries is configurable via `max_api_retries` in `config.toml` (A37). If all
+retries are exhausted, the error is displayed on the terminal and the runner
+re-prompts the user for new input. The session continues; no state is lost.
 
 ---
 

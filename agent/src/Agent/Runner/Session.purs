@@ -1258,7 +1258,8 @@ runMcpServer svc ws (Port port) = do
             exit1 svc
         Right k -> pure k
 
-    liftEffect $ startMcpServerImpl port \message done ->
+    let progressMs = config.progressIntervalSeconds * 1000
+    liftEffect $ startMcpServerImpl port progressMs \message done ->
         launchAff_ do
             result <- attempt (runMcpSession svc ws config apiKey message)
             let ffiResult = case result of

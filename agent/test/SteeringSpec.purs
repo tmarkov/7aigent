@@ -25,9 +25,10 @@ testConfig =
     , preserveInitial: TokenCount 20000
     , preserveFinal: TokenCount 40000
     , maxTurnsPerRound: 5
+    , timeoutCheckSeconds: [30, 60, 120, 240, 480]
+    , progressIntervalSeconds: 15
     }
 
-steeringSpec :: Spec Unit
 steeringSpec = do
 
   ---------------------------------------------------------------------------

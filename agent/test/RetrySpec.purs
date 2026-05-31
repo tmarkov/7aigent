@@ -72,3 +72,20 @@ retrySpec = do
       case retryDecision NetworkTimeout 3 3 of
         GiveUp _ -> pure unit
         Retry _ -> fail "Expected give-up after max retries exhausted"
+
+  describe "A18: network error retry (connection refused, DNS failure, etc.)" do
+
+    it "A18: network error → retry (transient error)" do
+      case retryDecision NetworkError 0 3 of
+        Retry ms -> ms `shouldSatisfy` (_ > 0)
+        GiveUp _ -> fail "Expected retry on NetworkError"
+
+    it "A18: network error retries exhausted → give up" do
+      case retryDecision NetworkError 3 3 of
+        GiveUp _ -> pure unit
+        Retry _ -> fail "Expected give-up after max retries exhausted"
+
+    it "A18: network error backoff increases with attempt" do
+      case retryDecision NetworkError 0 5, retryDecision NetworkError 1 5 of
+        Retry ms1, Retry ms2 -> (ms1 < ms2) `shouldEqual` true
+        _, _ -> fail "Expected both attempts to produce Retry"

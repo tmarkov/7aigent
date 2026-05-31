@@ -1,5 +1,5 @@
 module Agent.Programs.Timeout
-    ( timeoutCheckpoints
+    ( defaultTimeoutCheckSeconds
     , isCheckDue
     , buildTimeoutCheckRequest
     , interpretTimeoutResponse
@@ -22,15 +22,22 @@ instance Show TimeoutDecision where
     show (ScheduleNext n) =
         "(ScheduleNext " <> show n <> ")"
 
-timeoutCheckpoints :: Array Int
-timeoutCheckpoints = [30, 60, 120, 240, 480]
+defaultTimeoutCheckSeconds :: Array Int
+defaultTimeoutCheckSeconds = [30, 60, 120, 240, 480]
 
-isCheckDue :: Int -> Int -> Boolean
-isCheckDue elapsed lastCheckAt =
-    nextTimeoutCheckpointAfter lastCheckAt <= elapsed
+isCheckDue :: Array Int -> Int -> Int -> Boolean
+isCheckDue schedule elapsed lastCheckAt =
+    nextCheckpointAfter schedule lastCheckAt <= elapsed
 
-nextTimeoutCheckpointAfter :: Int -> Int
-nextTimeoutCheckpointAfter lastCheckAt = go 30
+nextCheckpointAfter :: Array Int -> Int -> Int
+nextCheckpointAfter schedule lastCheckAt =
+    case Array.find (_ > lastCheckAt) schedule of
+        Just cp -> cp
+        Nothing ->
+            -- Beyond the explicit schedule: keep doubling from the last entry
+            case Array.last schedule of
+                Nothing  -> lastCheckAt + 30
+                Just top -> go (top * 2)
   where
     go checkpoint
         | checkpoint > lastCheckAt = checkpoint

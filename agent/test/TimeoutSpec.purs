@@ -9,7 +9,7 @@ import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (shouldEqual, shouldSatisfy, fail)
 
 import Agent.Programs.Timeout
-  ( timeoutCheckpoints
+  ( defaultTimeoutCheckSeconds
   , isCheckDue
   , buildTimeoutCheckRequest
   , interpretTimeoutResponse
@@ -26,36 +26,45 @@ timeoutSpec = do
 
   describe "A14: timeout check schedule" do
 
-    it "A14: checkpoints follow doubling pattern starting at 30s" do
-      let first5 = Array.take 5 timeoutCheckpoints
+    it "A14: default checkpoints follow doubling pattern starting at 30s" do
+      let first5 = Array.take 5 defaultTimeoutCheckSeconds
       first5 `shouldEqual` [30, 60, 120, 240, 480]
 
-    it "A14: 30s elapsed → first check is due" do
-      isCheckDue 30 0 `shouldEqual` true
+    it "A14: 30s elapsed → first check is due (default schedule)" do
+      isCheckDue defaultTimeoutCheckSeconds 30 0 `shouldEqual` true
 
-    it "A14: 29s elapsed → no check due yet" do
-      isCheckDue 29 0 `shouldEqual` false
+    it "A14: 29s elapsed → no check due yet (default schedule)" do
+      isCheckDue defaultTimeoutCheckSeconds 29 0 `shouldEqual` false
 
     it "A14: 59s elapsed, last check at 30s → no check due" do
-      isCheckDue 59 30 `shouldEqual` false
+      isCheckDue defaultTimeoutCheckSeconds 59 30 `shouldEqual` false
 
     it "A14: 60s elapsed, last check at 30s → second check due" do
-      isCheckDue 60 30 `shouldEqual` true
+      isCheckDue defaultTimeoutCheckSeconds 60 30 `shouldEqual` true
 
     it "A14: 120s elapsed, last check at 60s → third check due" do
-      isCheckDue 120 60 `shouldEqual` true
+      isCheckDue defaultTimeoutCheckSeconds 120 60 `shouldEqual` true
 
     it "A14: 240s elapsed, last check at 120s → fourth check due" do
-      isCheckDue 240 120 `shouldEqual` true
+      isCheckDue defaultTimeoutCheckSeconds 240 120 `shouldEqual` true
 
     it "A14: 959s elapsed, last check at 480s → no fifth-doubling check yet" do
-      isCheckDue 959 480 `shouldEqual` false
+      isCheckDue defaultTimeoutCheckSeconds 959 480 `shouldEqual` false
 
     it "A14: 960s elapsed, last check at 480s → next doubled check is due" do
-      isCheckDue 960 480 `shouldEqual` true
+      isCheckDue defaultTimeoutCheckSeconds 960 480 `shouldEqual` true
 
     it "A14: 1920s elapsed, last check at 960s → schedule keeps doubling" do
-      isCheckDue 1920 960 `shouldEqual` true
+      isCheckDue defaultTimeoutCheckSeconds 1920 960 `shouldEqual` true
+
+    it "A14: custom schedule [2, 4, 8] → first check at 2s" do
+      isCheckDue [2, 4, 8] 2 0 `shouldEqual` true
+
+    it "A14: custom schedule [2, 4, 8] → 1s elapsed → no check" do
+      isCheckDue [2, 4, 8] 1 0 `shouldEqual` false
+
+    it "A14: custom schedule [2, 4, 8] → doubles beyond explicit entries" do
+      isCheckDue [2, 4, 8] 16 8 `shouldEqual` true
 
   ---------------------------------------------------------------------------
   -- A15: interrupt check request construction

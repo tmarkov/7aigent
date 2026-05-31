@@ -10,11 +10,13 @@ import Data.Int (pow)
 data ApiError
     = HttpStatus Int
     | NetworkTimeout
+    | NetworkError
 
 derive instance Eq ApiError
 instance Show ApiError where
     show (HttpStatus n) = "(HttpStatus " <> show n <> ")"
     show NetworkTimeout = "NetworkTimeout"
+    show NetworkError = "NetworkError"
 
 data RetryDecision
     = Retry Int
@@ -41,3 +43,4 @@ isTransient :: ApiError -> Boolean
 isTransient (HttpStatus 429) = true
 isTransient (HttpStatus n) = n >= 500 && n < 600
 isTransient NetworkTimeout = true
+isTransient NetworkError = true

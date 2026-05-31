@@ -38,9 +38,9 @@ handleMcpResult (McpSuccess output) =
 handleMcpResult (McpFailure err) =
     { isError: true, content: err }
 
-isProgressDue :: Int -> Boolean
-isProgressDue elapsed =
-    elapsed > 0 && mod elapsed 15 == 0
+isProgressDue :: Int -> Int -> Boolean
+isProgressDue interval elapsed =
+    elapsed > 0 && mod elapsed interval == 0
 
 -- | Extract the content of the last AssistantMessage in the conversation
 -- | history. Returns Nothing if there is no assistant message.
@@ -55,9 +55,11 @@ extractFinalMessage (ConversationHistory h) =
 -- | FFI: start the MCP HTTP server on the given port.
 -- | For each `run` tool invocation, `onToolCall` is called with the message
 -- | and a continuation; the continuation must be called exactly once with the
--- | tool result. Progress notifications are sent every 15 seconds by the JS
--- | side while the continuation is pending.
+-- | tool result. Progress notifications are sent at the configured interval
+-- | (second argument, in milliseconds) by the JS side while the continuation
+-- | is pending.
 foreign import startMcpServerImpl
     :: Int
+    -> Int
     -> (String -> ({ isError :: Boolean, content :: String } -> Effect Unit) -> Effect Unit)
     -> Effect Unit

@@ -1,20 +1,21 @@
 // MCP HTTP server FFI.
 // Uses the @modelcontextprotocol/sdk streamable-HTTP transport.
 //
-// startMcpServerImpl :: Int
+// startMcpServerImpl :: Int -> Int
 //   -> (String -> ({ isError, content } -> Effect Unit) -> Effect Unit)
 //   -> Effect Unit
 //
 // The `onToolCall(message)(done)()` callback runs the agent session.
 // JS calls `done(result)()` when the session completes.
-// While the session is running, JS sends progress notifications every 15 s.
+// While the session is running, JS sends progress notifications at the
+// configured interval (progressIntervalMs, second argument).
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 import { z } from "zod";
 
-export const startMcpServerImpl = (port) => (onToolCall) => () => {
+export const startMcpServerImpl = (port) => (progressIntervalMs) => (onToolCall) => () => {
   const app = createMcpExpressApp();
 
   const makeServer = () => {
@@ -30,11 +31,12 @@ export const startMcpServerImpl = (port) => (onToolCall) => () => {
         },
       },
       async ({ message }, extra) => {
-        // Send progress notifications every 15 seconds while the round runs.
+        // Send progress notifications at the configured interval.
         let elapsed = 0;
+        const intervalSec = Math.max(1, Math.round(progressIntervalMs / 1000));
         const progressToken = extra._meta?.progressToken;
         const timer = setInterval(async () => {
-          elapsed += 15;
+          elapsed += intervalSec;
           try {
             if (progressToken !== undefined) {
               await extra.sendNotification({
@@ -49,7 +51,7 @@ export const startMcpServerImpl = (port) => (onToolCall) => () => {
           } catch (_) {
             // Ignore notification errors — the client may have disconnected.
           }
-        }, 15_000);
+        }, progressIntervalMs);
 
         try {
           const result = await new Promise((resolve, reject) => {

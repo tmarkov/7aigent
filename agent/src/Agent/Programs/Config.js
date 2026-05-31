@@ -26,10 +26,19 @@ export const parseTomlPure = (input) => {
                     output_threshold_chars: 0, max_api_retries: 0,
                     max_tokens_per_turn: 0, compaction_threshold: 0,
                     preserve_initial: 0, preserve_final: 0,
-                    max_turns_per_round: 0
+                    max_turns_per_round: 0,
+                    timeout_check_seconds: [30, 60, 120, 240, 480],
+                    progress_interval_seconds: 15
                 };
             }
         }
+        const tcs = obj.timeout_check_seconds;
+        const timeout_check_seconds = Array.isArray(tcs)
+            ? tcs.map(Number)
+            : [30, 60, 120, 240, 480];
+        const pis = obj.progress_interval_seconds;
+        const progress_interval_seconds =
+            typeof pis === "number" ? pis : 15;
         return {
             success: true,
             error: "",
@@ -42,7 +51,9 @@ export const parseTomlPure = (input) => {
             compaction_threshold: Number(obj.compaction_threshold),
             preserve_initial: Number(obj.preserve_initial),
             preserve_final: Number(obj.preserve_final),
-            max_turns_per_round: Number(obj.max_turns_per_round)
+            max_turns_per_round: Number(obj.max_turns_per_round),
+            timeout_check_seconds,
+            progress_interval_seconds
         };
     } catch (e) {
         return {
@@ -52,7 +63,9 @@ export const parseTomlPure = (input) => {
             output_threshold_chars: 0, max_api_retries: 0,
             max_tokens_per_turn: 0, compaction_threshold: 0,
             preserve_initial: 0, preserve_final: 0,
-            max_turns_per_round: 0
+            max_turns_per_round: 0,
+            timeout_check_seconds: [30, 60, 120, 240, 480],
+            progress_interval_seconds: 15
         };
     }
 };

@@ -314,7 +314,7 @@ runJuliaReplWithTimeoutChecks svc ws sessionId config apiKey kernel sandbox sour
             Nothing -> do
                 delay (Milliseconds 1000.0)
                 let elapsed' = elapsed + 1
-                if isCheckDue elapsed' lastCheckAt then do
+                if isCheckDue config.timeoutCheckSeconds elapsed' lastCheckAt then do
                     partialOutput <- liftEffect $ Ref.read partialRef
                     decision <- runTimeoutCheck elapsed' partialOutput
                     case decision of
@@ -408,13 +408,15 @@ wrapJuliaSourceWithRefresh (RawJulia code) =
 
 workspaceRefreshLines :: Array String
 workspaceRefreshLines =
-    [ "let"
-    , "    __sevenaigent_summary_overrides__ = copy(getfield(db.code, :_summary_overrides))"
-    , "    CodeTree.reload(db)"
-    , "    for (__sevenaigent_id__, __sevenaigent_summary__) in __sevenaigent_summary_overrides__"
-    , "        __sevenaigent_idx__ = findfirst(==(__sevenaigent_id__), db.code.id)"
-    , "        isnothing(__sevenaigent_idx__) && continue"
-    , "        db.code[__sevenaigent_idx__, :summary] = __sevenaigent_summary__"
+    [ "if isdefined(Main, :db)"
+    , "    let"
+    , "        __sevenaigent_summary_overrides__ = copy(getfield(db.code, :_summary_overrides))"
+    , "        CodeTree.reload(db)"
+    , "        for (__sevenaigent_id__, __sevenaigent_summary__) in __sevenaigent_summary_overrides__"
+    , "            __sevenaigent_idx__ = findfirst(==(__sevenaigent_id__), db.code.id)"
+    , "            isnothing(__sevenaigent_idx__) && continue"
+    , "            db.code[__sevenaigent_idx__, :summary] = __sevenaigent_summary__"
+    , "        end"
     , "    end"
     , "end"
     ]

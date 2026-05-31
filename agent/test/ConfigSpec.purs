@@ -103,6 +103,30 @@ configSpec = do
           config.model `shouldEqual` ModelName "test-model"
           config.outputThresholdChars `shouldEqual` 20000
           config.maxApiRetries `shouldEqual` 3
+          config.timeoutCheckSeconds `shouldEqual` [30, 60, 120, 240, 480]
+          config.progressIntervalSeconds `shouldEqual` 15
+        Left err ->
+          fail ("Expected successful parse, got error: " <> show err)
+
+    it "A37: parses custom timeout_check_seconds and progress_interval_seconds" do
+      let toml = String.joinWith "\n"
+            [ "api_endpoint             = \"https://api.example.com/v1\""
+            , "model                    = \"test-model\""
+            , "api_key_env              = \"TEST_API_KEY\""
+            , "output_threshold_chars   = 20000"
+            , "max_api_retries          = 3"
+            , "max_tokens_per_turn      = 200000"
+            , "compaction_threshold     = 150000"
+            , "preserve_initial         = 20000"
+            , "preserve_final           = 40000"
+            , "max_turns_per_round      = 5"
+            , "timeout_check_seconds    = [2, 4, 8]"
+            , "progress_interval_seconds = 3"
+            ]
+      case parseConfig toml of
+        Right config -> do
+          config.timeoutCheckSeconds `shouldEqual` [2, 4, 8]
+          config.progressIntervalSeconds `shouldEqual` 3
         Left err ->
           fail ("Expected successful parse, got error: " <> show err)
 

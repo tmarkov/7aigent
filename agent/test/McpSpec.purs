@@ -77,19 +77,24 @@ mcpSpec = do
 
   describe "A43: MCP progress notification scheduling" do
 
-    it "A43: 15s elapsed → progress notification due" do
-      isProgressDue 15 `shouldEqual` true
+    it "A43: 15s elapsed → progress notification due (default interval)" do
+      isProgressDue 15 15 `shouldEqual` true
 
-    it "A43: 14s elapsed → not due" do
-      isProgressDue 14 `shouldEqual` false
+    it "A43: 14s elapsed → not due (default interval)" do
+      isProgressDue 15 14 `shouldEqual` false
 
     it "A43: 30s elapsed → second notification due" do
-      isProgressDue 30 `shouldEqual` true
+      isProgressDue 15 30 `shouldEqual` true
 
     it "A43: notifications every 15 seconds" do
-      isProgressDue 45 `shouldEqual` true
-      isProgressDue 60 `shouldEqual` true
-      isProgressDue 44 `shouldEqual` false
+      isProgressDue 15 45 `shouldEqual` true
+      isProgressDue 15 60 `shouldEqual` true
+      isProgressDue 15 44 `shouldEqual` false
+
+    it "A43: custom interval 3s → due at 3, 6, 9" do
+      isProgressDue 3 3 `shouldEqual` true
+      isProgressDue 3 6 `shouldEqual` true
+      isProgressDue 3 2 `shouldEqual` false
 
   ---------------------------------------------------------------------------
   -- A43: extractFinalMessage (returns text of the last assistant turn)
