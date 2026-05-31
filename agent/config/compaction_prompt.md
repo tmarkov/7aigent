@@ -15,4 +15,7 @@ changes are preserved, but token usage is reduced.
 {{final_messages}}
 
 Write a concise summary of the middle messages. Focus on: goals discussed,
-findings from tool calls, code written or modified, and any open questions.
+findings from tool calls, completed prerequisite steps that later turns must
+not repeat, the current exact target, code written or modified, Git
+selector/staging/commit decisions that later turns must preserve, and any open
+questions.

@@ -6,17 +6,17 @@
 api_endpoint           = "YOUR_API_ENDPOINT_HERE"
 model                  = "YOUR_MODEL_HERE"
 api_key_env            = "OPENROUTER_API_KEY"
-output_threshold_chars = 20000
+output_threshold_chars = 15000
 max_api_retries        = 5
 max_tokens_per_turn    = 50000
-compaction_threshold   = 150000
-preserve_initial       = 20000
-preserve_final         = 10000
+compaction_threshold   = 120000
+preserve_initial       = 16000
+preserve_final         = 8000
 max_turns_per_round    = 20
 
 [summaries]
-max_targets_per_batch = 8
+max_targets_per_batch = 6
 max_prompt_chars = 9000
-max_children_per_target = 16
+max_children_per_target = 12
 max_witness_chars = 300
 max_readme_chars = 2500

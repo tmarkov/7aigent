@@ -2,27 +2,44 @@
 {{julia_state}}
 
 [message]
-You have finished one round of autonomous work. Reflect on progress, then output a JSON status object.
+You have finished one autonomous round. Reflect using the actual latest tool
+results plus the current Julia status, then output a JSON status object.
 
 **Output format — your entire response must be exactly one of these, with no other text, no markdown, no code fences:**
-- `{"complete": true}` — task is fully done
-- `{"complete": false, "feedback": "..."}` — task is not done; feedback is brief actionable guidance for the next turn
+- `{"complete": true}`
+- `{"complete": false, "feedback": "..."}`
 
-Evaluate the following before deciding:
+Use these rules:
 
-1. **Task complete?** Check carefully against the original request.
-2. **Todos done?** (See [status] above.) Any `pending` or `in_progress` todos → not complete. No todos created for non-trivial work → not complete.
-3. **Files actually written?** `update_source!(db, id, pattern => repl)` is required. If expected file changes are missing → not complete.
-4. **Only task-relevant files changed?** Off-task edits do not count as progress.
-5. **Tests run?** Check `AGENTS.md` for instructions. If tools are unavailable, note it and do not block — commit what's verified.
-6. **Changes committed?** If the Julia Git views would still show uncommitted changes → **NOT complete**. You must commit before marking complete. Inspect in Julia, stage if needed, then use `git_commit`.
-7. **Planning discipline:** Did you explicitly inspect `status()` or `todo` after guide files? Did you finish the planning phase before broad exploration? Does the active `in_progress` leaf name one exact file/node/test (or a short 1-2 candidate comparison) that matches the work you actually did? If not, you are **not done**.
-8. **Efficiency issues to correct:** Did you re-read a file after `update_source!` (the diff output already confirmed the edit)? Did you use `read()` or `open()` instead of `update_source!`? Did you call `summarize!` on a mixed descendant sweep instead of a clean shortlist or file-row survey, interrupt a focused legitimate `summarize!` run just because it printed progress, read a whole Markdown/design doc when the active leaf only needed one section, keep reading adjacent docs or source files to "fully understand" the task even though the active leaf already named one exact requirement/file/symbol, retry a whole-doc read after truncation instead of switching to `show_matches(...)`, `show_md_section(...)`, or `show_lines(...)`, read a whole source file with `read(path, String)` even though tree rows or targeted helpers were enough, dump every child chunk of a file because `row.source` was `missing`, sweep a file by looping over many chunk ids to print source, combine nullable predicates with `.&&` inside `@subset` instead of using separate missing-safe predicates, forget to make nullable-column queries missing-safe, call `status()` again immediately after `todo_next!()` even though `todo_next!()` already printed the updated tree, manually splice `todo` to remove a mistaken pending leaf instead of using `todo_delete!(id)`, or clear a valid todo tree with `empty!(todo)` instead of refining it? If so, note it in feedback so next round avoids these patterns.
-9. **Workflow discipline:** If you did not inspect/create todos for non-trivial work, if the active todo and actual work diverged, if you failed to use the hierarchical todo structure when the task needed it, if you kept an abstract active leaf like "explore architecture" instead of refining it to a concrete file/node/test, if the active leaf named multiple docs/files outside of a short 1-2 candidate comparison, if you appended flat top-level rows while a planning leaf was active instead of refining that leaf, if you refined work into concrete child leaves but then kept browsing under the parent instead of working the first child, or if you ended the round with only broad exploration and no narrowed next target, you are **not done**.
-
-**CRITICAL: If there are file changes that haven't been committed, output `{"complete": false, "feedback": "Stage and commit pending changes"}` — never mark complete with uncommitted work.**
-
-When incomplete, make the feedback point to the next concrete action, ideally
-with the exact file / node / chunk / test to target next.
+1. Base your decision on what already happened in the visible history and
+   `[status]`. Never ask to repeat a prerequisite that is already complete
+   (for example reading the task/issue, listing a directory, or opening a file
+   that was already read).
+2. If any todo is `pending` or `in_progress`, the task is not complete. If the
+   task was non-trivial and no todos were created, it is not complete.
+3. If fewer than 10 tool calls have been made in total, the task is almost
+   certainly not complete — output `{"complete": false}` with concrete next step.
+4. Check `AGENTS.md` for required design/tests/checks. If those are still
+   missing, the task is not complete.
+5. If expected file changes are missing, the task is not complete.
+6. If file changes exist but are not committed, the task is not complete. In
+   that case output exactly
+   `{"complete": false, "feedback": "Stage and commit pending changes"}`.
+7. For Git work, inspect state through Julia selectors
+   (`db.code.git_*`, `git_file_status(db; phase=...)`, `git_diff(...)`) and
+   remember that selector-based `git_stage` / `git_commit` writes have no
+   `phase`.
+8. If the round mostly explored without narrowing to one exact next target,
+   feedback must name the specific file, node, test, or requirement section to
+   target next.
+9. If the round used broad whole-file reads, skipped `db.code` / `db.symbols`,
+   drifted from the active todo, or kept planning without acting, say so
+   briefly and point to the corrected next step.
+10. If the same error repeated 3+ times in the round, feedback must say "stop
+    retrying that approach" and name a concrete alternative (e.g. skip the
+    blocked step and move to the next todo, use direct file I/O instead of a
+    broken REPL function).
+11. Keep feedback short and actionable. Prefer one concrete next action over
+    generic advice like "plan more" or "understand the architecture".
 
 Now output the JSON:
