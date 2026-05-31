@@ -408,6 +408,23 @@ handle_signal() {
     exit 143
 }
 
+# S18: deliver SIGINT to the running sandbox process without tearing down
+# the launcher. Used by the agent for timeout-driven interrupts.
+interrupt_runner() {
+    if [ -z "${RUNNER_PID:-}" ]; then
+        return
+    fi
+
+    case "$RUNNER" in
+        bwrap)
+            kill -INT "$RUNNER_PID" 2>/dev/null || true
+            ;;
+        runsc)
+            @runsc@ kill --signal INT "$CONTAINER_ID" 2>/dev/null || true
+            ;;
+    esac
+}
+
 if [ "$#" -ne 1 ]; then
     usage
 fi
@@ -436,6 +453,7 @@ RUNNER_PID=
 
 trap cleanup EXIT
 trap handle_signal INT TERM
+trap interrupt_runner USR1
 
 mkdir -p "$SOCKETS_DIR" "$BUNDLE_DIR" "$RUNTIME_DIR/git"
 

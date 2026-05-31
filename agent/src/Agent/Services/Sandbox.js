@@ -59,7 +59,14 @@ export const spawnSandboxImpl = (workspacePath) => (onError) => (onSuccess) => (
               done();
             }
           };
-          onSuccess({ kernelJsonPath: trimmed, kill })();
+          // S18: send SIGUSR1 to the sandbox launcher, which forwards
+          // SIGINT to the runner process to interrupt Julia execution.
+          const interrupt = () => {
+            try {
+              proc.kill("SIGUSR1");
+            } catch (_) {}
+          };
+          onSuccess({ kernelJsonPath: trimmed, kill, interrupt })();
           return;
         }
     }

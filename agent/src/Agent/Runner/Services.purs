@@ -37,6 +37,7 @@ type RunnerServices =
     , executeCode        :: Jupyter.KernelHandle -> RawJulia -> (String -> Effect Unit) -> Aff String
     , executeCodeDetailed :: Jupyter.KernelHandle -> RawJulia -> (String -> Effect Unit) -> Aff Jupyter.ExecutionResult
     , interruptKernel    :: Jupyter.KernelHandle -> Aff Unit
+    , interruptSandbox   :: Sandbox.SandboxHandle -> Effect Unit
     , closeKernel        :: Jupyter.KernelHandle -> Effect Unit
     , callLlm            :: Config -> String -> ConversationHistory -> (String -> Effect Unit) -> Aff (Either AppError Llm.CallLlmResult)
     , callLlmJson        :: Config -> String -> ConversationHistory -> Aff (Either AppError Llm.CallLlmResult)
@@ -58,6 +59,7 @@ productionServices =
     , executeCode: Jupyter.executeCode
     , executeCodeDetailed: Jupyter.executeCodeDetailed
     , interruptKernel: Jupyter.interruptKernel
+    , interruptSandbox: Sandbox.interruptSandbox
     , closeKernel: Jupyter.closeKernel
     , callLlm: Llm.callLlm
     , callLlmJson: Llm.callLlmJson

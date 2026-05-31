@@ -207,11 +207,12 @@ the sockets directory and connection file — is removed by the launcher.
 
 ### Interrupt Handling
 
-**S18** — When the agent sends an `interrupt_request` on the Jupyter control
-channel, IJulia delivers a `SIGINT` to the Julia process, which raises
-`InterruptException` in the evaluation thread. This interrupts any running
-Julia expression, including blocking I/O waits (`run(cmd)`, `sleep`, network
-calls made before network isolation was established).
+**S18** — The sandbox launcher accepts `SIGUSR1` as an interrupt signal.
+When the launcher receives `SIGUSR1`, it delivers `SIGINT` to the running
+sandbox process (bwrap: direct signal to the child; runsc: container signal
+mechanism). `SIGINT` raises `InterruptException` in Julia's evaluation
+thread, interrupting any running Julia expression including blocking I/O
+waits (`run(cmd)`, `sleep`, network calls).
 
 **S19** — After an interrupt, the kernel returns to a ready state and accepts
 new `execute_request` messages normally. The agent does not need to restart

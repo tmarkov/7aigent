@@ -54,6 +54,7 @@ mockSandboxHandle :: Sandbox.SandboxHandle
 mockSandboxHandle =
     { kernelJsonPath: "/tmp/mock-kernel.json"
     , kill: \onDone -> onDone unit
+    , interrupt: pure unit
     }
 
 -- | Set the environment variable that readApiKey will look for.

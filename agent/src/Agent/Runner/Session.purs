@@ -375,7 +375,7 @@ startSession svc ws@(WorkspacePath wp) resumedFrom existingHistory resumeState p
     reflectionTmpl  <- loadReflectionTemplate svc ws cleanupSandbox
 
     exitCode <- runUserLoop svc
-        ws sessionId config apiKey kernel steeringTmpl reflectionTmpl
+        ws sessionId config apiKey kernel sandbox steeringTmpl reflectionTmpl
         initHistory Set.empty zeroLlmUsage 0 prompt
 
     -- Cleanup
@@ -503,6 +503,7 @@ runUserLoop
     -> Config
     -> String
     -> Jupyter.KernelHandle
+    -> Sandbox.SandboxHandle
     -> String
     -> String
     -> ConversationHistory
@@ -511,7 +512,7 @@ runUserLoop
     -> Int
     -> Maybe String
     -> Aff Int
-runUserLoop svc ws sessionId config apiKey kernel steeringTemplate reflectionTemplate history knownHunks usageTotals autoTurnsTaken maybePrompt = do
+runUserLoop svc ws sessionId config apiKey kernel sandbox steeringTemplate reflectionTemplate history knownHunks usageTotals autoTurnsTaken maybePrompt = do
     line <- case maybePrompt of
         Just p -> do
             liftEffect $ svc.printLn ("\n> " <> p)
@@ -532,13 +533,13 @@ runUserLoop svc ws sessionId config apiKey kernel steeringTemplate reflectionTem
 
         let history' = addMsg history (UserMessage { content: line })
         roundResult <-
-            runRound svc ws sessionId config apiKey kernel steeringTemplate reflectionTemplate history'
+            runRound svc ws sessionId config apiKey kernel sandbox steeringTemplate reflectionTemplate history'
                 knownHunks usageTotals autoTurnsTaken
         liftEffect $ svc.printLn (renderSessionTokenUsage roundResult.usageTotals)
 
         case roundResult.error, maybePrompt of
             Just err, Nothing | isRecoverableSessionError err ->
-                runUserLoop svc ws sessionId config apiKey kernel steeringTemplate reflectionTemplate
+                runUserLoop svc ws sessionId config apiKey kernel sandbox steeringTemplate reflectionTemplate
                     roundResult.history roundResult.knownHunks roundResult.usageTotals
                     roundResult.autoTurnsTaken Nothing
             Just _, _ -> do
@@ -548,7 +549,7 @@ runUserLoop svc ws sessionId config apiKey kernel steeringTemplate reflectionTem
                 finishSession svc ws sessionId kernel roundResult.history SessionEndedPrompt
                 pure 0
             Nothing, Nothing ->
-                runUserLoop svc ws sessionId config apiKey kernel steeringTemplate reflectionTemplate
+                runUserLoop svc ws sessionId config apiKey kernel sandbox steeringTemplate reflectionTemplate
                     roundResult.history roundResult.knownHunks roundResult.usageTotals
                     roundResult.autoTurnsTaken Nothing
 
@@ -563,6 +564,7 @@ runReactLoop
     -> Config
     -> String
     -> Jupyter.KernelHandle
+    -> Sandbox.SandboxHandle
     -> String
     -> ConversationHistory
     -> TokenCount  -- ^ turn baseline: input tokens from first call of this turn (0 = first call)
@@ -572,7 +574,7 @@ runReactLoop
     -> Int
     -> Int
     -> Aff ReactLoopResult
-runReactLoop svc ws sessionId config apiKey kernel steeringTemplate history turnBaseline lastCallTokens knownHunks usageTotals turnIndex autoTurnsTaken = do
+runReactLoop svc ws sessionId config apiKey kernel sandbox steeringTemplate history turnBaseline lastCallTokens knownHunks usageTotals turnIndex autoTurnsTaken = do
     -- A46: inject ephemeral steering message after the first tool call
     historyForLlm <-
         if turnBaseline == TokenCount 0
@@ -656,7 +658,7 @@ runReactLoop svc ws sessionId config apiKey kernel steeringTemplate history turn
 
                     ExecuteTool tc -> do
                         toolR <- attempt $
-                            doTool svc ws sessionId config apiKey kernel history' tc knownHunks
+                            doTool svc ws sessionId config apiKey kernel sandbox history' tc knownHunks
                         case toolR of
                             Left err -> do
                                 let errMsg = message err
@@ -669,12 +671,12 @@ runReactLoop svc ws sessionId config apiKey kernel steeringTemplate history turn
                                     }
                             Right toolResult ->
                                 handleCompletedToolStep ContinueAfterTool
-                                    svc ws sessionId config apiKey kernel steeringTemplate
+                                    svc ws sessionId config apiKey kernel sandbox steeringTemplate
                                     newBaseline r.inputTokens usageTotals' turnIndex autoTurnsTaken toolResult
 
                     ExecuteToolThenCompact tc -> do
                         toolR <- attempt $
-                            doTool svc ws sessionId config apiKey kernel history' tc knownHunks
+                            doTool svc ws sessionId config apiKey kernel sandbox history' tc knownHunks
                         case toolR of
                             Left err -> do
                                 let errMsg = message err
@@ -687,12 +689,12 @@ runReactLoop svc ws sessionId config apiKey kernel steeringTemplate history turn
                                     }
                             Right toolResult ->
                                 handleCompletedToolStep CompactAfterTool
-                                    svc ws sessionId config apiKey kernel steeringTemplate
+                                    svc ws sessionId config apiKey kernel sandbox steeringTemplate
                                     newBaseline r.inputTokens usageTotals' turnIndex autoTurnsTaken toolResult
 
                     ExecuteToolThenEndTurn tc -> do
                         toolR <- attempt $
-                            doTool svc ws sessionId config apiKey kernel history' tc knownHunks
+                            doTool svc ws sessionId config apiKey kernel sandbox history' tc knownHunks
                         case toolR of
                             Left err -> do
                                 let errMsg = message err
@@ -705,7 +707,7 @@ runReactLoop svc ws sessionId config apiKey kernel steeringTemplate history turn
                                     }
                             Right toolResult ->
                                 handleCompletedToolStep EndTurnAfterTool
-                                    svc ws sessionId config apiKey kernel steeringTemplate
+                                    svc ws sessionId config apiKey kernel sandbox steeringTemplate
                                     newBaseline r.inputTokens usageTotals' turnIndex autoTurnsTaken toolResult
 
 handleCompletedToolStep
@@ -716,6 +718,7 @@ handleCompletedToolStep
     -> Config
     -> String
     -> Jupyter.KernelHandle
+    -> Sandbox.SandboxHandle
     -> String
     -> TokenCount
     -> TokenCount
@@ -724,11 +727,11 @@ handleCompletedToolStep
     -> Int
     -> { history :: ConversationHistory, hunks :: Set HunkId, toolInterrupted :: Boolean }
     -> Aff ReactLoopResult
-handleCompletedToolStep postMode svc ws sessionId config apiKey kernel steeringTemplate turnBaseline
+handleCompletedToolStep postMode svc ws sessionId config apiKey kernel sandbox steeringTemplate turnBaseline
     currentRequestTokens usageTotals turnIndex autoTurnsTaken toolResult =
     case toolStepDecision postMode toolResult.toolInterrupted of
         ContinueTurn ->
-            runReactLoop svc ws sessionId config apiKey kernel steeringTemplate toolResult.history
+            runReactLoop svc ws sessionId config apiKey kernel sandbox steeringTemplate toolResult.history
                 turnBaseline currentRequestTokens toolResult.hunks usageTotals turnIndex autoTurnsTaken
 
         CompactAndContinueTurn -> do
@@ -752,7 +755,7 @@ handleCompletedToolStep postMode svc ws sessionId config apiKey kernel steeringT
                         , error: Just err
                         }
                 Right compacted ->
-                    runReactLoop svc ws sessionId config apiKey kernel steeringTemplate
+                    runReactLoop svc ws sessionId config apiKey kernel sandbox steeringTemplate
                         compacted.history
                         (TokenCount 0) (TokenCount 0) toolResult.hunks
                         compacted.usageTotals turnIndex autoTurnsTaken
@@ -927,6 +930,7 @@ runRound
     -> Config
     -> String
     -> Jupyter.KernelHandle
+    -> Sandbox.SandboxHandle
     -> String
     -> String
     -> ConversationHistory
@@ -934,11 +938,11 @@ runRound
     -> Llm.LlmUsage
     -> Int
     -> Aff RoundResult
-runRound svc ws sessionId config apiKey kernel steeringTemplate reflectionTemplate history knownHunks usageTotals autoTurnsTaken =
+runRound svc ws sessionId config apiKey kernel sandbox steeringTemplate reflectionTemplate history knownHunks usageTotals autoTurnsTaken =
     go history knownHunks usageTotals autoTurnsTaken 1
   where
     go hist hunks usage auto turnIndex = do
-        loopResult <- runReactLoop svc ws sessionId config apiKey kernel steeringTemplate hist
+        loopResult <- runReactLoop svc ws sessionId config apiKey kernel sandbox steeringTemplate hist
             (TokenCount 0) (TokenCount 0) hunks usage turnIndex auto
 
         case loopResult.error of
@@ -1204,7 +1208,7 @@ runMcpSession svc ws@(WorkspacePath wp) config apiKey message = do
                                                     (SystemMessage { content: systemPrompt }))
                                                 (UserMessage { content: message })
 
-                                    roundResult <- runRound svc ws sessionId config apiKey kernel
+                                    roundResult <- runRound svc ws sessionId config apiKey kernel s
                                         steeringTmpl reflectionTmpl initHistory
                                         Set.empty zeroLlmUsage 0
 

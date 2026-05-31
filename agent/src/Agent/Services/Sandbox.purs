@@ -3,6 +3,7 @@ module Agent.Services.Sandbox
     ( SandboxHandle
     , spawnSandbox
     , killSandbox
+    , interruptSandbox
     ) where
 
 import Prelude
@@ -15,12 +16,13 @@ import Agent.Types (WorkspacePath(..), AppError(..))
 type SandboxHandle =
     { kernelJsonPath :: String
     , kill           :: (Unit -> Effect Unit) -> Effect Unit
+    , interrupt      :: Effect Unit
     }
 
 foreign import spawnSandboxImpl
     :: String
     -> (String -> Effect Unit)
-    -> ({ kernelJsonPath :: String, kill :: (Unit -> Effect Unit) -> Effect Unit } -> Effect Unit)
+    -> ({ kernelJsonPath :: String, kill :: (Unit -> Effect Unit) -> Effect Unit, interrupt :: Effect Unit } -> Effect Unit)
     -> Effect Unit
 
 -- | Spawn the sandbox for the given workspace. Resolves with the path to
@@ -36,3 +38,7 @@ killSandbox :: SandboxHandle -> Aff Unit
 killSandbox sandbox = makeAff \resolve -> do
     sandbox.kill (\_ -> resolve (Right unit))
     pure nonCanceler
+
+-- | Send SIGINT to the sandbox runner process to interrupt execution (S18).
+interruptSandbox :: SandboxHandle -> Effect Unit
+interruptSandbox sandbox = sandbox.interrupt

@@ -62,6 +62,7 @@ import Agent.Programs.ToolInput
 import Agent.Programs.ToolOutput (processToolOutput)
 import Agent.Runner.Services (RunnerServices)
 import Agent.Services.Jupyter (KernelHandle)
+import Agent.Services.Sandbox (SandboxHandle)
 
 foreign import decodeHexUtf8 :: String -> String
 
@@ -87,11 +88,12 @@ doTool
     -> Config
     -> String
     -> KernelHandle
+    -> SandboxHandle
     -> ConversationHistory
     -> ToolCall
     -> Set HunkId
     -> Aff { history :: ConversationHistory, hunks :: Set HunkId, toolInterrupted :: Boolean }
-doTool svc ws sessionId config apiKey kernel history tc knownHunks = do
+doTool svc ws sessionId config apiKey kernel sandbox history tc knownHunks = do
     ts <- Timestamp <$> liftEffect svc.nowIso
     writeLogEvent ws sessionId (EvtToolCall
         { timestamp: ts
@@ -105,7 +107,7 @@ doTool svc ws sessionId config apiKey kernel history tc knownHunks = do
         liftEffect $ svc.printLn inputSummary
 
     { output: rawOut, hunks: hunks', toolInterrupted } <-
-        dispatchTool svc ws sessionId config apiKey kernel tc knownHunks
+        dispatchTool svc ws sessionId config apiKey kernel sandbox tc knownHunks
 
     let proc = processToolOutput config.outputThresholdChars rawOut
     liftEffect $ svc.printLn proc.displayText
@@ -128,10 +130,11 @@ dispatchTool
     -> Config
     -> String
     -> KernelHandle
+    -> SandboxHandle
     -> ToolCall
     -> Set HunkId
     -> Aff { output :: String, hunks :: Set HunkId, toolInterrupted :: Boolean }
-dispatchTool svc ws sessionId config apiKey kernel tc knownHunks =
+dispatchTool svc ws sessionId config apiKey kernel sandbox tc knownHunks =
     case tc.name of
         JuliaRepl -> do
             let code = parseJuliaCodeInput tc.input
@@ -142,6 +145,7 @@ dispatchTool svc ws sessionId config apiKey kernel tc knownHunks =
                 config
                 apiKey
                 kernel
+                sandbox
                 (RawJulia code)
             pure
                 { output: result.output
@@ -278,9 +282,10 @@ runJuliaReplWithTimeoutChecks
     -> Config
     -> String
     -> KernelHandle
+    -> SandboxHandle
     -> RawJulia
     -> Aff { output :: String, toolInterrupted :: Boolean }
-runJuliaReplWithTimeoutChecks svc ws sessionId config apiKey kernel source = do
+runJuliaReplWithTimeoutChecks svc ws sessionId config apiKey kernel sandbox source = do
     partialRef <- liftEffect $ Ref.new ""
     resultRef <- liftEffect $ Ref.new Nothing
     errorRef <- liftEffect $ Ref.new Nothing
@@ -314,7 +319,7 @@ runJuliaReplWithTimeoutChecks svc ws sessionId config apiKey kernel source = do
                     decision <- runTimeoutCheck elapsed' partialOutput
                     case decision of
                         Interrupt -> do
-                            svc.interruptKernel kernel
+                            liftEffect $ svc.interruptSandbox sandbox
                             interruptedOutput <- liftEffect $ Ref.read partialRef
                             pure
                                 { output: interruptedOutput <> "\n[interrupted]"

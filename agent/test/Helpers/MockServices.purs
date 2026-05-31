@@ -44,6 +44,7 @@ data CallRecord
     | CallExecuteCode String
     | CallExecuteCodeDetailed String
     | CallInterruptKernel
+    | CallInterruptSandbox
     | CallCloseKernel
     | CallLlm String
     | CallLlmJson String
@@ -62,6 +63,7 @@ instance showCallRecord :: Show CallRecord where
     show (CallExecuteCode c) = "CallExecuteCode(" <> c <> ")"
     show (CallExecuteCodeDetailed c) = "CallExecuteCodeDetailed(" <> c <> ")"
     show CallInterruptKernel = "CallInterruptKernel"
+    show CallInterruptSandbox = "CallInterruptSandbox"
     show CallCloseKernel = "CallCloseKernel"
     show (CallLlm purpose) = "CallLlm(" <> purpose <> ")"
     show (CallLlmJson purpose) = "CallLlmJson(" <> purpose <> ")"
@@ -191,6 +193,7 @@ mkMockServices opts = do
                             Nothing -> pure { output: result, hadError: false }
             , interruptKernel: \_ -> do
                 liftEffect $ record CallInterruptKernel
+            , interruptSandbox: \_ -> record CallInterruptSandbox
             , closeKernel: \_ -> record CallCloseKernel
             , callLlm: \config _ history onChunk -> do
                 liftEffect $ record (CallLlm "stream")
