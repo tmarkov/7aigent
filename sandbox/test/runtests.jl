@@ -854,6 +854,179 @@ end
     @test_throws ErrorException SevenAigentREPL.todo_delete!(99)
 end
 
+function _ranking_workspace()::String
+    workspace = mktempdir()
+    mkpath(joinpath(workspace, ".7aigent", "state"))
+    mkpath(joinpath(workspace, "julia"))
+
+    write(
+        joinpath(workspace, "julia", "ranking.jl"),
+        # Five functions inside a module: one with a summary (from comment
+        # absorption), one large, two small same-sized, one containing "sort".
+        # Chunk nodes fill the gaps, providing kind-diversity for RA18 criterion 3.
+        """
+        module Ranking
+
+        # Documented helper.
+        function documented(x)
+            return x
+        end
+
+        function large_undocumented(x)
+            a = x + 1
+            b = a + 2
+            c = b + 3
+            d = c + 4
+            e = d + 5
+            f = e + 6
+            g = f + 7
+            return g
+        end
+
+        function small_first(x)
+            return x
+        end
+
+        function small_second(y)
+            return y
+        end
+
+        function sort_helper(items)
+            return sort(items)
+        end
+
+        end
+        """,
+    )
+
+    run(pipeline(Cmd(`git init`; dir=workspace); stdout=devnull, stderr=devnull); wait=true)
+    run(pipeline(Cmd(`git add -A`; dir=workspace); stdout=devnull, stderr=devnull); wait=true)
+    run(
+        pipeline(
+            Cmd(`git -c user.email=x@x -c user.name=x commit -m init`; dir=workspace);
+            stdout=devnull,
+            stderr=devnull,
+        );
+        wait=true,
+    )
+    return workspace
+end
+
+@testset "RA18: child ranking criteria 2–6 — summary, kind priority, n_lines, sibling_order" begin
+    workspace = _ranking_workspace()
+    _write_summary_config!(workspace; max_children_per_target = 4)
+    db = _bind_repl_session(workspace)
+    code_df = _code_df(db)
+
+    module_id = _node_id(db; kind = "module", name = "Ranking")
+    all_children = collect(filter(
+        r -> !ismissing(r.parent) && r.parent == module_id, eachrow(code_df),
+    ))
+
+    # Enough children for overflow with max_children=4
+    @test length(all_children) > 4
+
+    # Identify the function children
+    documented_id = _node_id(db; kind = "function", name = "documented")
+    big_id = _node_id(db; kind = "function", name = "large_undocumented")
+    first_id = _node_id(db; kind = "function", name = "small_first")
+    second_id = _node_id(db; kind = "function", name = "small_second")
+    helper_id = _node_id(db; kind = "function", name = "sort_helper")
+
+    # Criterion 2 prerequisite: documented has a summary from comment absorption
+    @test !ismissing(only(filter(r -> r.id == documented_id, eachrow(code_df))).summary)
+    # The other functions have no documentation-derived summary
+    @test ismissing(only(filter(r -> r.id == big_id, eachrow(code_df))).summary)
+    @test ismissing(only(filter(r -> r.id == first_id, eachrow(code_df))).summary)
+
+    # Criterion 5 prerequisite: large_undocumented has more lines than small_first
+    big_lines = only(filter(r -> r.id == big_id, eachrow(code_df))).n_lines
+    small_lines = only(filter(r -> r.id == first_id, eachrow(code_df))).n_lines
+    @test big_lines > small_lines
+
+    captured = Ref{Any}(nothing)
+    SevenAigentREPL.set_summary_transport!(request -> begin
+        captured[] = request
+        return Dict(module_id => "summary")
+    end)
+    SevenAigentREPL.summarize!([module_id])
+    target = only(captured[].evidence.targets)
+    child_ids = target.child_ids
+
+    # Criterion 2: documented (has summary) ranks first
+    @test first(child_ids) == documented_id
+
+    # Criterion 3: all selected children are functions — chunks are ranked last
+    for cid in child_ids
+        @test only(filter(r -> r.id == cid, eachrow(code_df))).kind != "chunk"
+    end
+    # And at least one chunk exists among the omitted
+    @test any(r -> r.kind == "chunk", all_children)
+
+    # Criterion 5: large_undocumented (more lines) ranks above small_first
+    @test big_id in child_ids
+    @test first_id in child_ids
+    @test findfirst(==(big_id), child_ids) < findfirst(==(first_id), child_ids)
+
+    # Criterion 6: small_second selected over sort_helper (earlier sibling order)
+    # — both are unsummarised functions of similar size; sibling_order is the tiebreaker
+    @test second_id in child_ids
+    @test !(helper_id in child_ids)
+end
+
+@testset "RA21: case-insensitive keyword matching promotes children with more matches" begin
+    workspace = _ranking_workspace()
+    _write_summary_config!(workspace; max_children_per_target = 4)
+
+    # Baseline without keywords — sort_helper is omitted (latest sibling among equal-sized functions)
+    db = _bind_repl_session(workspace)
+    module_id = _node_id(db; kind = "module", name = "Ranking")
+    helper_id = _node_id(db; kind = "function", name = "sort_helper")
+    second_id = _node_id(db; kind = "function", name = "small_second")
+
+    baseline_req = Ref{Any}(nothing)
+    SevenAigentREPL.set_summary_transport!(req -> begin
+        baseline_req[] = req
+        Dict(module_id => "s")
+    end)
+    SevenAigentREPL.summarize!([module_id])
+    baseline_children = only(baseline_req[].evidence.targets).child_ids
+    @test !(helper_id in baseline_children)
+    @test second_id in baseline_children
+
+    # With keywords=["SORT"] — uppercase tests case-insensitivity (RA21).
+    # sort_helper's source contains lowercase "sort" and should now be promoted.
+    db2 = _bind_repl_session(workspace)
+    module_id2 = _node_id(db2; kind = "module", name = "Ranking")
+    helper_id2 = _node_id(db2; kind = "function", name = "sort_helper")
+    second_id2 = _node_id(db2; kind = "function", name = "small_second")
+
+    keyword_req = Ref{Any}(nothing)
+    SevenAigentREPL.set_summary_transport!(req -> begin
+        keyword_req[] = req
+        Dict(module_id2 => "s")
+    end)
+    SevenAigentREPL.summarize!([module_id2]; keywords = ["SORT"])
+    kw_children = only(keyword_req[].evidence.targets).child_ids
+
+    # sort_helper now included — keyword match outranks sibling_order
+    @test helper_id2 in kw_children
+    # small_second displaced — it has no keyword match and later sibling_order than small_first
+    @test !(second_id2 in kw_children)
+
+    # Deterministic: running the same call again produces the same ordering
+    db3 = _bind_repl_session(workspace)
+    module_id3 = _node_id(db3; kind = "module", name = "Ranking")
+    repeat_req = Ref{Any}(nothing)
+    SevenAigentREPL.set_summary_transport!(req -> begin
+        repeat_req[] = req
+        Dict(module_id3 => "s")
+    end)
+    SevenAigentREPL.summarize!([module_id3]; keywords = ["SORT"])
+    repeat_children = only(repeat_req[].evidence.targets).child_ids
+    @test repeat_children == kw_children
+end
+
 @testset "RA14: non-leaf targets use the leftmost leaf descendant as the primary witness" begin
     workspace = _workspace_from_fixture()
     db = _bind_repl_session(workspace)

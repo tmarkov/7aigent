@@ -522,3 +522,130 @@ class TestSummaryRPC:
             f"Expected SummaryConfig in result: {result!r}"
         )
 
+    def test_summary_comm_round_trip(self, running_kernel):
+        """RA22: summarize! exchanges summaries via Jupyter comm_open / input_reply.
+
+        Exercises the real comm transport (no mock) end-to-end:
+          1. Julia sends comm_open with the summary request payload.
+          2. Julia sends input_request (readprompt) to solicit the response.
+          3. Python sends input_reply with encoded summaries.
+          4. Julia processes the response and applies the summary to db.code.
+
+        Related: issue #11 covers interrupt delivery (SIGINT), which is a
+        separate protocol path from the comm-based summary RPC tested here.
+        """
+        import base64
+
+        km = running_kernel.client
+
+        # Create a small file in the workspace (S10: workspace is rw).
+        result, err = execute_and_collect(
+            km,
+            'write("_ra22_test.jl", '
+            '"function ra22_hello()\\n    return 42\\nend\\n"); '
+            '"ok"',
+            timeout=15,
+        )
+        assert err == "", f"Failed to create test file: {err}"
+
+        # Load CodeTree (fallback discovery — git is not in the sandbox)
+        # and bind a fresh session with no mock transport.
+        result, err = execute_and_collect(
+            km,
+            """
+            begin
+                _ra22_db = CodeTree.load(".")
+                SevenAigentREPL.bind!(".", _ra22_db)
+                SevenAigentREPL.clear_summary_transport!()
+                _ra22_rows = filter(
+                    r -> r.name == "ra22_hello",
+                    eachrow(getfield(_ra22_db.code, :_df)),
+                )
+                isempty(_ra22_rows) ? "NOT_FOUND" : string(first(_ra22_rows).id)
+            end
+            """,
+            timeout=60,
+        )
+        if err or "NOT_FOUND" in result:
+            # Clean up and skip — CodeTree fallback discovery may not find
+            # files in every sandbox configuration.
+            execute_and_collect(km, 'rm("_ra22_test.jl"; force=true)')
+            pytest.skip(
+                f"CodeTree could not discover test file: "
+                f"result={result!r} err={err!r}"
+            )
+
+        node_id = result.strip().strip('"')
+
+        # Start summarize! — this triggers the comm protocol.
+        msg_id = km.execute(f'summarize!(["{node_id}"])')
+
+        # Wait for the input_request that proves comm_open was sent and
+        # readprompt is blocking for our reply.
+        try:
+            stdin_msg = km.get_stdin_msg(timeout=120)
+        except Exception as exc:
+            # Drain any error on iopub before failing.
+            _, iopub_err = execute_and_collect(km, '"drain"', timeout=5)
+            pytest.fail(
+                f"No input_request within 120 s (RA22 comm path): {exc}"
+            )
+
+        prompt = stdin_msg["content"]["prompt"]
+        assert prompt.startswith("7aigent.summary.reply:"), (
+            f"Unexpected prompt prefix: {prompt!r}"
+        )
+
+        # Construct response in the stdin-based format expected by
+        # _coerce_stdin_response: "ok\n<id>\t<base64 summary>"
+        summary_text = "RA22 integration test summary."
+        summary_b64 = base64.b64encode(summary_text.encode()).decode()
+        km.input(f"ok\n{node_id}\t{summary_b64}")
+
+        # Collect execution result (summarize! should complete now).
+        exec_result = ""
+        exec_err = ""
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            try:
+                msg = km.get_iopub_msg(timeout=1)
+            except Exception:
+                continue
+            if msg.get("parent_header", {}).get("msg_id") != msg_id:
+                continue
+            mt = msg["msg_type"]
+            if mt in ("execute_result", "display_data"):
+                exec_result += msg["content"]["data"].get("text/plain", "")
+            elif mt == "stream":
+                exec_result += msg["content"]["text"]
+            elif mt == "error":
+                exec_err = "\n".join(msg["content"]["traceback"])
+            elif (
+                mt == "status"
+                and msg["content"]["execution_state"] == "idle"
+            ):
+                break
+
+        assert exec_err == "", f"summarize! failed over comm: {exec_err}"
+
+        # Verify the summary was applied to db.code
+        verify_result, verify_err = execute_and_collect(
+            km,
+            f"""
+            begin
+                _ra22_row = only(filter(
+                    r -> r.id == "{node_id}",
+                    eachrow(getfield(_ra22_db.code, :_df)),
+                ))
+                string(_ra22_row.summary)
+            end
+            """,
+        )
+        assert verify_err == "", f"Verification failed: {verify_err}"
+        assert "RA22 integration test summary" in verify_result, (
+            f"Summary not applied via comm: {verify_result!r}"
+        )
+
+        # Clean up
+        execute_and_collect(km, 'rm("_ra22_test.jl"; force=true)')
+
