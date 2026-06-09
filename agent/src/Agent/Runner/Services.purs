@@ -41,6 +41,7 @@ type RunnerServices =
     , closeKernel        :: Jupyter.KernelHandle -> Effect Unit
     , callLlm            :: Config -> String -> ConversationHistory -> (String -> Effect Unit) -> Aff (Either AppError Llm.CallLlmResult)
     , callLlmJson        :: Config -> String -> ConversationHistory -> Aff (Either AppError Llm.CallLlmResult)
+    , setLlmRequestLogPath :: String -> Effect Unit
     , printLn            :: String -> Effect Unit
     , printStr           :: String -> Effect Unit
     , printErr           :: String -> Effect Unit
@@ -63,6 +64,7 @@ productionServices =
     , closeKernel: Jupyter.closeKernel
     , callLlm: Llm.callLlm
     , callLlmJson: Llm.callLlmJson
+    , setLlmRequestLogPath: Llm.setLlmRequestLogPath
     , printLn: Terminal.printLn
     , printStr: Terminal.printStr
     , printErr: Terminal.printErr

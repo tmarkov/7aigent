@@ -346,6 +346,8 @@ concurrently.
 **A25** — Each session directory contains:
 
 - `log.jsonl` — append-only event log, one JSON object per line.
+- `llm-requests.jsonl` — append-only debug log of every LLM API request
+  payload, one JSON object per line (A51).
 - `julia_state.jls` — serialized Julia REPL globals (written on SIGINT or
   EOF, A28).
 - `julia_defs.jl` — Julia definition expressions extracted from the session
@@ -772,3 +774,25 @@ Based on the parsed result:
   written to the log as a `user_message` event. A new turn begins.
 - If `complete` is `false` and `max_turns_per_round` turns have been used: the
   round ends (A48) regardless of feedback.
+
+---
+
+### LLM Request Debug Log
+
+**A51** — For debugging purposes, each session directory contains
+`llm-requests.jsonl`: an append-only log of the exact request body sent to the
+LLM API. One JSON object is written per line before each HTTP request is
+dispatched. Each entry contains:
+
+- `timestamp` — ISO 8601 date/time.
+- `endpoint` — the full API endpoint URL.
+- The complete request body: `model`, `messages` (the full encoded messages
+  array), `tools` (if present), `stream`, `stream_options`, and
+  `response_format` (if present).
+
+This covers every LLM API call made by the runner: main conversation calls,
+compaction calls, timeout-check calls, reflection calls, and REPL-summary
+calls. The API key (transmitted as an HTTP header) is never included. The
+file is strictly write-only — the runner never reads or parses it. It exists
+purely as a debugging aid and is not used for session resumption (cf.
+`log.jsonl` per A26).

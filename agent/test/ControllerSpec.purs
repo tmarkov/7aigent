@@ -1648,6 +1648,60 @@ controllerSpec = do
                 calls `shouldSatisfy`
                     (Array.any (\c -> c == CallExit 0))
 
+    describe "A51: LLM request debug log" do
+        it "A51: request log entry is recorded for main conversation LLM call" do
+            withTestSession
+                { llmResponses: [ Right (textLlmResult "Hello!"), Right reflectionComplete ]
+                , execResponses: ["", "", ""]
+                , readLineResponses: []
+                } \_ calls -> do
+                    let logEntries = Array.filter isLlmRequestLog calls
+                    Array.length logEntries `shouldSatisfy` \n -> n >= 2
+
+        it "A51: request log entry contains expected fields" do
+            withTestSession
+                { llmResponses: [ Right (textLlmResult "Hello!"), Right reflectionComplete ]
+                , execResponses: ["", "", ""]
+                , readLineResponses: []
+                } \_ calls -> do
+                    case Array.head (Array.filter isLlmRequestLog calls) of
+                        Just (CallLlmRequestLog entry) -> do
+                            String.contains (String.Pattern "\"timestamp\"") entry
+                                `shouldEqual` true
+                            String.contains (String.Pattern "\"endpoint\"") entry
+                                `shouldEqual` true
+                            String.contains (String.Pattern "\"model\"") entry
+                                `shouldEqual` true
+                            String.contains (String.Pattern "\"stream\"") entry
+                                `shouldEqual` true
+                        _ -> fail "Expected CallLlmRequestLog"
+
+        it "A51: reflection call also produces a request log entry with response_format" do
+            withTestSession
+                { llmResponses: [ Right (textLlmResult "Hello!"), Right reflectionComplete ]
+                , execResponses: ["", "", ""]
+                , readLineResponses: []
+                } \_ calls -> do
+                    let logEntries = Array.filter isLlmRequestLog calls
+                    case Array.last logEntries of
+                        Just (CallLlmRequestLog entry) ->
+                            String.contains (String.Pattern "\"response_format\"") entry
+                                `shouldEqual` true
+                        _ -> fail "Expected at least one request log entry"
+
+        it "A51: multi-turn session produces request log entry per LLM call" do
+            withTestSession
+                { llmResponses:
+                    [ Right (juliaToolLlmResult "1 + 1")
+                    , Right (textLlmResult "Result: 2")
+                    , Right reflectionComplete
+                    ]
+                , execResponses: ["", ""]
+                , readLineResponses: []
+                } \_ calls -> do
+                    let logEntries = Array.filter isLlmRequestLog calls
+                    Array.length logEntries `shouldEqual` 3
+
 -- ---------------------------------------------------------------------------
 -- Predicates for filtering call records
 -- ---------------------------------------------------------------------------
@@ -1675,3 +1729,7 @@ isCallLlm _ = false
 isCallLlmJson :: CallRecord -> Boolean
 isCallLlmJson (CallLlmJson _) = true
 isCallLlmJson _ = false
+
+isLlmRequestLog :: CallRecord -> Boolean
+isLlmRequestLog (CallLlmRequestLog _) = true
+isLlmRequestLog _ = false

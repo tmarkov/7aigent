@@ -287,6 +287,10 @@ startSession svc ws@(WorkspacePath wp) resumedFrom existingHistory resumeState p
 
     -- A24: allocate session ID
     sessionId <- allocateSessionId ws
+    -- A51: set LLM request debug log path
+    let SessionId sidNum = sessionId
+    liftEffect $ svc.setLlmRequestLogPath
+        (wp <> "/.7aigent/sessions/" <> show sidNum <> "/llm-requests.jsonl")
 
     -- A2: spawn sandbox
     liftEffect $ svc.printStr "Starting sandbox... "

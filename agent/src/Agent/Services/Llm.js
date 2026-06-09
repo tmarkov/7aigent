@@ -1,5 +1,6 @@
 import * as https from "node:https";
 import * as http from "node:http";
+import * as fs from "node:fs";
 
 // ---------------------------------------------------------------------------
 // Message encoding for the OpenAI Chat Completions API
@@ -99,6 +100,29 @@ function looksLikeTimeout(err) {
 // LLM calls can legitimately take several minutes for long outputs, so this is set
 // conservatively. The inactivity timeout (req.setTimeout) handles truly dead connections.
 const LLM_WALL_CLOCK_TIMEOUT_MS = 300000; // 5 minutes
+
+let requestLogPath = null;
+
+export function setLlmRequestLogPath(path) {
+  return () => {
+    requestLogPath = path;
+  };
+}
+
+function writeRequestLogEntry(jsonLine) {
+  if (!requestLogPath) return;
+  try {
+    fs.appendFileSync(requestLogPath, jsonLine + "\n");
+  } catch (_) {}
+}
+
+export function writeLlmRequestLogEntry(jsonLine) {
+  return () => writeRequestLogEntry(jsonLine);
+}
+
+function writeRequestLog(entry) {
+  writeRequestLogEntry(JSON.stringify(entry));
+}
 
 function streamChatCompletion(endpoint, apiKey, body, onToken, onError, onComplete) {
   let url;
@@ -222,6 +246,7 @@ function streamChatCompletion(endpoint, apiKey, body, onToken, onError, onComple
     clearTimeout(wallClockTimer);
     onError(mkError(err.message, null, looksLikeTimeout(err)));
   });
+  writeRequestLog({ timestamp: new Date().toISOString(), endpoint, ...body });
   req.write(payload);
   req.end();
 }

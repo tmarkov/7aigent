@@ -5,6 +5,8 @@ module Agent.Services.Llm
     , CallLlmResult
     , callLlm
     , callLlmJson
+    , setLlmRequestLogPath
+    , writeLlmRequestLogEntry
     ) where
 
 import Prelude
@@ -79,6 +81,10 @@ foreign import callJsonLlmImpl
     -> (StreamError -> Effect Unit)
     -> (LlmResult -> Effect Unit)
     -> Effect Unit
+
+foreign import setLlmRequestLogPath :: String -> Effect Unit
+
+foreign import writeLlmRequestLogEntry :: String -> Effect Unit
 
 -- | Call the LLM with the current conversation history. Streams tokens via
 -- | the terminal as they arrive, then resolves with the full LlmResponse.

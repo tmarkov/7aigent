@@ -31,6 +31,8 @@ import Agent.Types
     , Config
     , ConversationHistory
     , TokenCount(..)
+    , ApiEndpoint(..)
+    , ModelName(..)
     )
 import Agent.Runner.Services (RunnerServices)
 import Agent.Services.Jupyter as Jupyter
@@ -48,6 +50,8 @@ data CallRecord
     | CallCloseKernel
     | CallLlm String
     | CallLlmJson String
+    | CallLlmRequestLog String
+    | CallSetLlmRequestLogPath String
     | CallPrintLn String
     | CallPrintStr String
     | CallPrintErr String
@@ -67,6 +71,8 @@ instance showCallRecord :: Show CallRecord where
     show CallCloseKernel = "CallCloseKernel"
     show (CallLlm purpose) = "CallLlm(" <> purpose <> ")"
     show (CallLlmJson purpose) = "CallLlmJson(" <> purpose <> ")"
+    show (CallLlmRequestLog entry) = "CallLlmRequestLog(" <> entry <> ")"
+    show (CallSetLlmRequestLogPath path) = "CallSetLlmRequestLogPath(" <> path <> ")"
     show (CallPrintLn s) = "CallPrintLn(" <> s <> ")"
     show (CallPrintStr s) = "CallPrintStr(" <> s <> ")"
     show (CallPrintErr s) = "CallPrintErr(" <> s <> ")"
@@ -198,6 +204,11 @@ mkMockServices opts = do
             , callLlm: \config _ history onChunk -> do
                 liftEffect $ record (CallLlm "stream")
                 liftEffect $ Ref.modify_ (_ <> [{ kind: "stream", config, history }]) llmInvocations
+                -- A51: write request debug log entry
+                let (ApiEndpoint ep) = config.apiEndpoint
+                let (ModelName mdl) = config.model
+                let logEntry = "{\"timestamp\":\"2025-01-01T00:00:00Z\",\"endpoint\":\"" <> ep <> "\",\"model\":\"" <> mdl <> "\",\"stream\":true,\"stream_options\":{\"include_usage\":true}}"
+                liftEffect $ record (CallLlmRequestLog logEntry)
                 -- A7: invoke the streaming callback with scripted chunks
                 chunks <- liftEffect $ popChunks streamingChunks
                 liftEffect $ for_ chunks onChunk
@@ -208,10 +219,16 @@ mkMockServices opts = do
             , callLlmJson: \config _ history -> do
                 liftEffect $ record (CallLlmJson "json")
                 liftEffect $ Ref.modify_ (_ <> [{ kind: "json", config, history }]) llmInvocations
+                -- A51: write request debug log entry
+                let (ApiEndpoint ep) = config.apiEndpoint
+                let (ModelName mdl) = config.model
+                let logEntry = "{\"timestamp\":\"2025-01-01T00:00:00Z\",\"endpoint\":\"" <> ep <> "\",\"model\":\"" <> mdl <> "\",\"stream\":true,\"stream_options\":{\"include_usage\":true},\"response_format\":{\"type\":\"json_object\"}}"
+                liftEffect $ record (CallLlmRequestLog logEntry)
                 r <- liftEffect $ popLlm llmResponses (Left "no more LLM JSON responses")
                 pure $ case r of
                     Left e -> Left (LlmApiError e)
                     Right v -> Right v
+            , setLlmRequestLogPath: \path -> record (CallSetLlmRequestLogPath path)
             , printLn: \s -> record (CallPrintLn s)
             , printStr: \s -> record (CallPrintStr s)
             , printErr: \s -> record (CallPrintErr s)
