@@ -80,6 +80,7 @@ printed to the terminal for each file or directory created (e.g.
 | `.7aigent/summary_message.md` | `config/summary_message.md` |
 | `.7aigent/steering_message.md` | `config/steering_message.md` |
 | `.7aigent/reflection_prompt.md` | `config/reflection_prompt.md` |
+| `.7aigent/stdin_prompt.md` | `config/stdin_prompt.md` |
 | `.7aigent/startup.jl` | `config/startup.jl` |
 
 After placing any missing files, the runner proceeds to validate `config.toml`
@@ -131,9 +132,12 @@ spawn. If the user chooses to proceed, the runner removes
 
 **A4** — `julia_repl` takes a single string argument: the Julia source to
 execute. The runner sends an `execute_request` to the Jupyter shell channel
-and collects all `stream`, `execute_result`, `display_data`, and `error`
-messages from the iopub channel until `execute_reply` is received. The
-concatenated output is returned as the tool result.
+with `allow_stdin = true` and collects all `stream`, `execute_result`,
+`display_data`, and `error` messages from the iopub channel until execution
+completes. The concatenated output is returned as the tool result. If the
+kernel sends an `input_request` on the stdin channel, the runner services it
+per the Julia REPL Input Requests section below before the execution is
+considered complete.
 
 **A5** — `git_stage` takes one required field:
 
@@ -267,6 +271,113 @@ continues waiting. There is no hard cap on total wait time.
 
 ---
 
+
+### Julia REPL Input Requests
+
+When the Jupyter kernel sends an `input_request` message on the stdin channel,
+it blocks until it receives an `input_reply`. The runner must service such
+requests so that supported interactive execution can complete normally.
+
+**A52** — During a `julia_repl` tool call, the runner monitors the Jupyter
+stdin channel (S8). When an `input_request` arrives, the runner services the
+request while continuing to drain and accumulate iopub messages belonging to
+the execution. Execution completion waits until the input request has been
+resolved and the kernel has completed the execution.
+
+Input requests whose prompt begins with the reserved summary transport prefix
+`7aigent.summary.reply:` are serviced by the summary RPC defined in A20b and
+`repl-api-requirements.md`. They are not sent to the stdin LLM flow in
+A53–A56.
+
+**A52a** — When an `input_request` arrives, the runner pauses the timeout
+check schedule (A14–A17). Any pending timeout check is cancelled. After the
+`input_reply` is sent and the kernel resumes execution, the runner starts a
+fresh timeout check schedule from the first interval (30 s).
+
+**A53 — Stdin prompt template**
+
+The stdin prompt is read from `.7aigent/stdin_prompt.md` in the workspace
+directory. The file uses the same `{{keyword}}` substitution syntax as A21.
+At session start, the runner reads and validates this template; any
+unrecognised `{{keyword}}` causes the runner to exit with an informative
+error (same rule as A23). The supported keywords are:
+
+| Keyword | Replaced with |
+|---|---|
+| `{{julia_source}}` | The Julia source being executed |
+| `{{elapsed_time}}` | Elapsed time since execution started |
+| `{{output_so_far}}` | The tool output accumulated so far from the iopub message types listed in A4 |
+| `{{prompt}}` | The `prompt` string from the `input_request` |
+| `{{password}}` | `"true"` if `password` was set to `true` in the `input_request`, otherwise `"false"` (Jupyter protocol convention for secret input) |
+| `{{json_schema}}` | The JSON schema for structured output (see below), serialized as a pretty-printed JSON string |
+
+The runner substitutes all keywords into the template and sends the resulting
+text as the user-role message in an out-of-band LLM call. The call uses the
+same configured model as the main session but is **not** appended to the
+conversation history. The request prompt is displayed on the terminal. Each
+attempt is written to the session log as a `stdin_request` event (A26).
+
+**A53a** — The stdin LLM call requests a JSON-object response from the API.
+The runner validates the returned object against this schema:
+
+```json
+{"type": "object", "properties": {"value": {"type": "string", "description": "The text to send to the REPL as input"}, "interrupt": {"type": "boolean", "description": "Set to true to interrupt execution instead of providing input"}}, "required": ["value", "interrupt"], "additionalProperties": false}
+```
+
+The pretty-printed form of this same schema is the guaranteed substitution
+value for `{{json_schema}}`.
+
+**A54 — Stdin response handling**
+
+The runner attempts to parse the LLM response as a JSON object with `value`
+(string) and `interrupt` (boolean) fields and rejects values with missing,
+extra, or incorrectly typed fields. If validation succeeds:
+
+- If `interrupt` is `true`: the runner sends an `interrupt_request` on the
+  control channel (per A16). The accumulated output so far, with
+  `\n[interrupted]` appended, is returned as the tool result. The pending
+  timeout schedule (A52a) is cancelled.
+- If `interrupt` is `false`: the runner sends an `input_reply` to the stdin
+  channel with `content.value` set to `value`. If `password` is `false`, the
+  sent value is appended to the accumulated output using JSON string encoding,
+  as `\n[input: <json-string>]`. If `password` is `true`, the value is not
+  displayed, logged, or included in the tool result; the accumulated output is
+  instead appended with `\n[input: <hidden>]`. The runner then starts a fresh
+  timeout check schedule (A52a).
+
+**A54a** — If the LLM response cannot be parsed as valid JSON, or the parsed
+object does not validate against the schema in A53a, the runner retries the
+stdin LLM call using the same template, schema, and out-of-band semantics.
+Parse/validation failures and API-level errors share one retry budget. The
+runner makes one initial attempt followed by at most `max_api_retries` retries
+(A18); every failed attempt consumes one retry from that budget. Each attempt
+is logged as a separate `stdin_request` event, and a `token_usage` event is
+written for every attempt that returns token counts.
+
+**A54b** — If the initial attempt and all permitted retries fail without a
+valid JSON response (whether due to parse failures, API errors, or a mix of
+both), the runner sends an `interrupt_request` on the control channel instead
+of supplying input. The accumulated output is appended with
+`\n[interrupted: stdin response unavailable]` and returned as the tool result.
+
+**A55** — A single `julia_repl` execution may trigger multiple sequential
+`input_request`/`input_reply` cycles (e.g. `readline()` inside a loop). The
+runner services each request in turn, making a separate out-of-band LLM call
+for each one, until all input requests are satisfied and the execution
+completes. The timeout check schedule is paused at the start of each
+input-request cycle and restarted fresh after each `input_reply`.
+
+**A56** — Each `input_request` handled through A53–A55 is assigned a
+one-based sequence number within its `julia_repl` tool execution. Every stdin
+LLM attempt is logged as a `stdin_request` event with the fields listed in
+A26 and is not part of the conversation history. A successful non-password
+input reply records the value sent to the kernel. A password input reply and a
+successful interrupt decision record `value = null`. Failed attempts record
+the applicable API, parse, or validation error, with both `value` and
+`interrupt` set to null.
+
+---
+
 ### LLM API Error Handling
 
 **A18** — On any LLM API error — HTTP 429, 5xx, network timeout, connection
@@ -318,6 +429,14 @@ workspace directory. The file is a Markdown template: occurrences of
 literal `{` or `}` may appear freely in the template without escaping; only
 `{{...}}` triggers substitution.
 
+This substitution rule applies to every runner-owned Markdown template. A
+template may contain any subset of its supported keywords. Every supported
+keyword has a defined substitution value whenever it appears; there is no
+unavailable-value state. A value may legitimately be an empty string when its
+keyword definition says so. A supported keyword omitted from the template has
+no effect. An unrecognised `{{keyword}}` is an error under the validation rule
+for that template.
+
 **A22** — The supported placeholders are:
 
 | Keyword                    | Replaced with                                                                 |
@@ -368,15 +487,16 @@ concurrently.
 | `reflection`       | `timestamp`, `turn_index` (1-based turn number within current round), `auto_turns_taken` (rounds auto-continued so far this session), `complete` (bool), `feedback` (string or null) |
 | `timeout_check`    | `timestamp`, `elapsed_seconds`, `partial_output`                                           |
 | `timeout_response` | `timestamp`, `interrupt` (bool)                                                            |
+| `stdin_request`    | `timestamp`, `tool_call_id`, `sequence` (1-based), `attempt` (1-based), `elapsed_seconds`, `prompt`, `password` (bool), `value` (string or null), `interrupt` (bool or null), `error` (string or null) |
 | `escape`           | `timestamp`                                                                                |
 | `sigint`           | `timestamp`                                                                                |
 | `session_end`      | `timestamp`, `reason` (`"eof"`, `"sigint"`, `"error"`)                                    |
 
 A `token_usage` event is written after every LLM API call that includes token
 counts — including the main conversation, compaction calls, timeout-check
-calls, reflection calls, and REPL-summary calls. The session totals accumulate
-across all such calls. After each turn, the runner also displays the cumulative
-session token counts on the terminal.
+calls, reflection calls, REPL-summary calls, and stdin-response calls. The
+session totals accumulate across all such calls. After each turn, the runner
+also displays the cumulative session token counts on the terminal.
 
 A `llm_query` event is written whenever the runner issues an internal LLM query
 on behalf of the Julia REPL rather than the main conversation loop. The event's
@@ -791,8 +911,8 @@ dispatched. Each entry contains:
   `response_format` (if present).
 
 This covers every LLM API call made by the runner: main conversation calls,
-compaction calls, timeout-check calls, reflection calls, and REPL-summary
-calls. The API key (transmitted as an HTTP header) is never included. The
-file is strictly write-only — the runner never reads or parses it. It exists
-purely as a debugging aid and is not used for session resumption (cf.
-`log.jsonl` per A26).
+compaction calls, timeout-check calls, reflection calls, REPL-summary calls,
+and stdin-response calls. The API key (transmitted as an HTTP header) is never
+included. The file is strictly write-only — the runner never reads or parses
+it. It exists purely as a debugging aid and is not used for session resumption
+(cf. `log.jsonl` per A26).
