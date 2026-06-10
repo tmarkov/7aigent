@@ -385,8 +385,8 @@ controllerSpec = do
                     let jsonCalls = Array.filter isCallLlmJson calls
                     Array.length jsonCalls `shouldSatisfy` (_ >= 2)
 
-    describe "A47: julia_state resolution uses correct expression" do
-        it "A47: getJuliaState sends the ans-preserving SevenAigentREPL.status() wrapper" do
+    describe "A47: julia_state resolution uses status output without displaying ans" do
+        it "A47: status execution preserves ans and suppresses its display result" do
             withTestSessionCustom
                 { llmResponses:
                     [ Right (juliaToolLlmResult "1 + 1")
@@ -403,18 +403,12 @@ controllerSpec = do
                 , configToml: testConfigToml
                 , prompt: Just "test prompt"
                 } \_ calls _ -> do
-                    -- A47 requires the expression to contain both the ans
-                    -- preservation wrapper and SevenAigentREPL.status()
                     calls `shouldSatisfy`
                         (Array.any (\c -> case c of
                             CallExecuteCode code ->
-                                String.contains (String.Pattern "SevenAigentREPL.status()") code
-                                && String.contains (String.Pattern "_ans") code
-                                && String.contains (String.Pattern "isdefined(Main, :ans)") code
+                                isSuppressedStatusCall code
                             CallExecuteCodeDetailed code ->
-                                String.contains (String.Pattern "SevenAigentREPL.status()") code
-                                && String.contains (String.Pattern "_ans") code
-                                && String.contains (String.Pattern "isdefined(Main, :ans)") code
+                                isSuppressedStatusCall code
                             _ -> false))
 
     describe "A28: serialization snippet executed on session end" do
@@ -1721,6 +1715,14 @@ isExecuteCode _ = false
 isExecuteCodeDetailed :: CallRecord -> Boolean
 isExecuteCodeDetailed (CallExecuteCodeDetailed _) = true
 isExecuteCodeDetailed _ = false
+
+isSuppressedStatusCall :: String -> Boolean
+isSuppressedStatusCall code =
+    String.contains (String.Pattern "SevenAigentREPL.status()") code
+        && String.contains (String.Pattern "Main.ans") code
+        && case String.stripSuffix (String.Pattern ";") (String.trim code) of
+            Just _ -> true
+            Nothing -> false
 
 isCallLlm :: CallRecord -> Boolean
 isCallLlm (CallLlm _) = true

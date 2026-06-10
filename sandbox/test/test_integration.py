@@ -504,8 +504,8 @@ class TestExecuteRequestFlow:
 
 class TestJuliaState:
     """
-    A47: SevenAigentREPL.status() reports correct state, and Main.ans
-    is preserved across calls that use the ans-preserving wrapper.
+    A47: Julia-state resolution returns only SevenAigentREPL.status() output
+    while preserving Main.ans.
     """
 
     def test_status_returns_string(self, running_kernel):
@@ -521,21 +521,37 @@ class TestJuliaState:
         assert err == "", f"Unexpected error: {err}"
         assert len(result.strip()) > 0, "status() returned empty string"
 
-    def test_ans_preserved_after_status(self, running_kernel):
-        """A47: Main.ans is not clobbered by status() wrapper."""
+    def test_status_output_excludes_preserved_ans(self, running_kernel):
+        """A47: state text excludes the preserved Main.ans display value."""
         km = running_kernel.client
-        # Set ans to a known value
-        execute_and_collect(km, "42")
-        # Call the ans-preserving wrapper (same as getJuliaState in Session.purs)
-        execute_and_collect(km, """begin
-  local _ans = isdefined(Main, :ans) ? Main.ans : nothing
-  SevenAigentREPL.status()
-  _ans
-end""")
-        # Verify ans is still 42
-        result, err = execute_and_collect(km, "Main.ans")
+        sentinel = "A47_ANS_MUST_NOT_APPEAR_IN_STATUS"
+        _, err = execute_and_collect(
+            km,
+            "global _a47_sentinel = Ref("
+            f"{json.dumps(sentinel)}"
+            "); _a47_sentinel",
+        )
+        assert err == "", f"Failed to establish Main.ans: {err}"
+
+        result, err = execute_and_collect(km, """
+begin
+    local previous_ans = isdefined(Main, :ans) ? Main.ans : nothing
+    SevenAigentREPL.status()
+    previous_ans
+end;
+""")
+
         assert err == "", f"Unexpected error: {err}"
-        assert "42" in result, f"Expected ans=42, got: {result!r}"
+        assert "[Tasks:" in result, f"Expected status output, got: {result!r}"
+        assert sentinel not in result, (
+            f"Preserved ans leaked into status output: {result!r}"
+        )
+
+        result, err = execute_and_collect(
+            km, "Main.ans === Main._a47_sentinel"
+        )
+        assert err == "", f"Unexpected error: {err}"
+        assert "true" in result, f"Expected identical preserved ans, got: {result!r}"
 
 
 # ── A20b: summary RPC via handleSummaryComm ──────────────────────────────────
@@ -690,4 +706,3 @@ class TestSummaryRPC:
 
         # Clean up
         execute_and_collect(km, 'rm("_ra22_test.jl"; force=true)')
-

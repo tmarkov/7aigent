@@ -777,8 +777,9 @@ handleCompletedToolStep postMode svc ws sessionId config apiKey kernel sandbox s
 -- A47: Julia state for steering and compaction
 -- ---------------------------------------------------------------------------
 
--- | Execute `SevenAigentREPL.status()` in an ans-preserving wrapper and return
--- | its stdout output. Returns empty string on any error.
+-- | Print `SevenAigentREPL.status()` while preserving the current `Main.ans`.
+-- | The trailing semicolon suppresses the restored value's execute result.
+-- | Returns empty string on any error.
 getJuliaState :: RunnerServices -> Jupyter.KernelHandle -> Aff String
 getJuliaState svc kernel = do
     let code = String.joinWith "\n"
@@ -786,7 +787,7 @@ getJuliaState svc kernel = do
             , "  local _ans = isdefined(Main, :ans) ? Main.ans : nothing"
             , "  SevenAigentREPL.status()"
             , "  _ans"
-            , "end"
+            , "end;"
             ]
     result <- attempt $ svc.executeCodeDetailed kernel (RawJulia code) (const (pure unit))
     pure $ case result of

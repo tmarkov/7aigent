@@ -695,21 +695,21 @@ The steering message is **not** added to the persistent `ConversationHistory` an
 is **not** written to the session log. It is regenerated fresh before each
 subsequent LLM call within the turn.
 
-**A47** — The `{{julia_state}}` substitution value — used in both the steering
-message (A45) and the compaction prompt (A35) — is obtained by executing the
-following Julia expression in the Jupyter kernel:
+**A47** — The `{{julia_state}}` substitution value — used in the steering
+message (A45), compaction prompt (A35), and reflection prompt (A49) — is the
+formatted task-list status printed by `SevenAigentREPL.status()` in the
+persistent Jupyter kernel.
 
-```julia
-begin; local _ans = isdefined(Main, :ans) ? Main.ans : nothing; SevenAigentREPL.status(); _ans end
-```
+If `Main.ans` is defined before resolving `{{julia_state}}`, it must remain
+defined with the identical value afterward. The substitution contains only the
+standard-output text produced by `status()`. In particular, it must not include
+the displayed representation of the prior `Main.ans`, an `execute_result`,
+`display_data`, or unrelated kernel output.
 
-The runner captures the concatenated stdout output (iopub `stream` messages)
-produced during this execution as the substitution text. The expression is
-structured to restore `Main.ans` to its prior value after the call, so that the
-kernel's interactive state is unaffected. If the execution fails, produces no
-output, or does not complete within a short timeout, the substitution value is
-the empty string. This kernel call is not logged as a `tool_call` event and does
-not affect the conversation history.
+If status resolution fails, produces no standard output, or does not complete
+within a short timeout, the substitution value is the empty string. This
+kernel call is not logged as a `tool_call` event and does not affect the
+conversation history.
 
 ---
 
