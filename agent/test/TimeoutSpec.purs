@@ -4,6 +4,7 @@ module Test.TimeoutSpec where
 import Prelude
 
 import Data.Array as Array
+import Data.Either (Either(..), isLeft)
 import Data.String as String
 import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (shouldEqual, shouldSatisfy, fail)
@@ -11,11 +12,13 @@ import Test.Spec.Assertions (shouldEqual, shouldSatisfy, fail)
 import Agent.Programs.Timeout
   ( defaultTimeoutCheckSeconds
   , isCheckDue
-  , buildTimeoutCheckRequest
-  , interpretTimeoutResponse
-  , TimeoutDecision(..)
   )
-import Agent.Types (RawJulia(..))
+import Agent.Programs.ExecutionDecision
+  ( TimeoutDecision(..)
+  , parseTimeoutDecision
+  , renderTimeoutPrompt
+  , timeoutJsonSchemaPretty
+  )
 
 timeoutSpec :: Spec Unit
 timeoutSpec = do
@@ -70,66 +73,66 @@ timeoutSpec = do
   -- A15: interrupt check request construction
   ---------------------------------------------------------------------------
 
-  describe "A15: timeout check request construction" do
+  describe "A15 + A15a: timeout prompt construction" do
 
-    it "A15: request contains the Julia source being executed" do
-      let request = buildTimeoutCheckRequest (RawJulia "big_computation()") 30 "partial"
-      let rendered = renderMessages request
-      rendered `shouldSatisfy` contains "big_computation()"
+    it "A15: substitutes every supported timeout keyword" do
+      let result = renderTimeoutPrompt
+            "{{julia_source}}|{{elapsed_time}}|{{output_so_far}}|{{json_schema}}"
+            { juliaSource: "big_computation()"
+            , elapsedSeconds: 30
+            , outputSoFar: "partial"
+            }
+      case result of
+        Left err -> fail ("Expected valid timeout prompt, got " <> show err)
+        Right prompt -> do
+          prompt `shouldSatisfy` contains "big_computation()|30|partial|"
+          prompt `shouldSatisfy` contains "\"continue\""
+          prompt `shouldSatisfy` contains "\"interrupt\""
 
-    it "A15: request contains elapsed time" do
-      let request = buildTimeoutCheckRequest (RawJulia "x") 45 ""
-      let rendered = renderMessages request
-      rendered `shouldSatisfy` contains "45"
+    it "A15: accepts a template containing only a subset of keywords" do
+      let result = renderTimeoutPrompt "Elapsed: {{elapsed_time}}"
+            { juliaSource: "x", elapsedSeconds: 45, outputSoFar: "" }
+      case result of
+        Left err -> fail ("Expected valid timeout prompt, got " <> show err)
+        Right prompt -> prompt `shouldEqual` "Elapsed: 45"
 
-    it "A15: request contains partial output" do
-      let request = buildTimeoutCheckRequest (RawJulia "x") 30 "some output so far"
-      let rendered = renderMessages request
-      rendered `shouldSatisfy` contains "some output so far"
+    it "A15: rejects stdin-only prompt keyword" do
+      renderTimeoutPrompt "{{prompt}}"
+        { juliaSource: "x", elapsedSeconds: 30, outputSoFar: "" }
+        `shouldSatisfy` isLeft
 
-    it "A15: request asks a yes/no question about interruption" do
-      let request = buildTimeoutCheckRequest (RawJulia "x") 30 ""
-      let rendered = renderMessages request
-      rendered `shouldSatisfy` \s ->
-        contains "interrupt" (String.toLower s)
+    it "A15a: exposes the guaranteed pretty-printed timeout schema" do
+      timeoutJsonSchemaPretty `shouldSatisfy` contains "\"continue\""
+      timeoutJsonSchemaPretty `shouldSatisfy` contains "\"interrupt\""
 
   ---------------------------------------------------------------------------
   -- A16 + A17: timeout check response handling
   ---------------------------------------------------------------------------
 
-  describe "A16: LLM says yes to interrupt" do
+  describe "A16: structured timeout interrupt" do
 
-    it "A16: 'yes' response → Interrupt decision" do
-      let decision = interpretTimeoutResponse "Yes, interrupt the execution."
-      case decision of
-        Interrupt -> pure unit
-        _ -> fail "Expected Interrupt"
+    it "A16: interrupt action is accepted" do
+      parseTimeoutDecision "{\"action\":\"interrupt\"}"
+        `shouldEqual` Right InterruptForTimeout
 
-  describe "A17: LLM says no to interrupt" do
+  describe "A17: structured timeout continue" do
 
-    it "A17: 'no' response → ScheduleNext with doubled interval" do
-      let decision = interpretTimeoutResponse "No, let it continue running."
-      case decision of
-        ScheduleNext nextInterval ->
-          -- A17 says the interval doubles each time. If current interval
-          -- is the base (30s), next should be 60s.
-          nextInterval `shouldSatisfy` (_ > 0)
-        _ -> fail "Expected ScheduleNext"
+    it "A17: continue action is accepted" do
+      parseTimeoutDecision "{\"action\":\"continue\"}"
+        `shouldEqual` Right ContinueAfterTimeout
 
-    it "A17: ScheduleNext interval is the next checkpoint in the schedule" do
-      -- Verify the actual interval value, not just its positivity
-      let decision = interpretTimeoutResponse "No, let it continue running."
-      case decision of
-        ScheduleNext nextInterval ->
-          -- The next checkpoint after the first (30s) is 60s
-          nextInterval `shouldEqual` 60
-        _ -> fail "Expected ScheduleNext"
+    it "A15a: timeout rejects reply actions" do
+      parseTimeoutDecision "{\"action\":\"reply\",\"value\":\"x\"}"
+        `shouldSatisfy` isLeft
+
+    it "A15a: timeout rejects extra fields" do
+      parseTimeoutDecision "{\"action\":\"continue\",\"value\":\"x\"}"
+        `shouldSatisfy` isLeft
+
+    it "A15a: timeout rejects legacy yes/no text" do
+      parseTimeoutDecision "yes" `shouldSatisfy` isLeft
 
   where
   contains :: String -> String -> Boolean
   contains needle haystack =
     String.contains (String.Pattern needle) haystack
-
-  -- Render an array of messages to a single string for searching
-  renderMessages :: Array _ -> String
-  renderMessages msgs = String.joinWith "\n" (map _.content msgs)

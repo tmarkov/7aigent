@@ -26,11 +26,13 @@ import Test.SessionListingSpec (sessionListingSpec)
 import Test.SessionLogSpec (sessionLogSpec)
 import Test.SessionResumeSpec (sessionResumeSpec)
 import Test.StartupSpec (startupSpec)
+import Test.StdinRequestSpec (stdinRequestSpec)
 import Test.SteeringSpec (steeringSpec)
 import Test.TemplateSpec (templateSpec)
 import Test.TimeoutSpec (timeoutSpec)
 import Test.ToolStepSpec (toolStepSpec)
 import Test.ToolDefsSpec (toolDefsSpec)
+import Test.ToolExecutionSpec (toolExecutionSpec)
 import Test.WireFormatSpec (wireFormatSpec)
 import Test.RoundStepSpec (roundStepSpec)
 
@@ -57,9 +59,11 @@ main = launchAff_ $ runSpec [ consoleReporter ] do
   sessionLogSpec
   sessionResumeSpec
   startupSpec
+  stdinRequestSpec
   steeringSpec
   templateSpec
   timeoutSpec
   toolStepSpec
   toolDefsSpec
+  toolExecutionSpec
   wireFormatSpec

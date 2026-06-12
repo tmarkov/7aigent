@@ -8,8 +8,9 @@ module Agent.Runner.Services
 import Prelude
 
 import Data.Either (Either)
+import Data.Int as Int
 import Effect (Effect)
-import Effect.Aff (Aff)
+import Effect.Aff (Aff, Milliseconds(..), delay)
 import Agent.Types
     ( WorkspacePath
     , RawJulia
@@ -36,11 +37,22 @@ type RunnerServices =
                          -> Aff (Either AppError Jupyter.KernelHandle)
     , executeCode        :: Jupyter.KernelHandle -> RawJulia -> (String -> Effect Unit) -> Aff String
     , executeCodeDetailed :: Jupyter.KernelHandle -> RawJulia -> (String -> Effect Unit) -> Aff Jupyter.ExecutionResult
+    , executeCodeDetailedWithInput
+        :: Jupyter.KernelHandle
+        -> RawJulia
+        -> (String -> Effect Unit)
+        -> (Jupyter.InputRequest -> Effect Unit)
+        -> Aff Jupyter.ExecutionResult
     , interruptKernel    :: Jupyter.KernelHandle -> Aff Unit
     , interruptSandbox   :: Sandbox.SandboxHandle -> Effect Unit
     , closeKernel        :: Jupyter.KernelHandle -> Effect Unit
-    , callLlm            :: Config -> String -> ConversationHistory -> (String -> Effect Unit) -> Aff (Either AppError Llm.CallLlmResult)
-    , callLlmJson        :: Config -> String -> ConversationHistory -> Aff (Either AppError Llm.CallLlmResult)
+    , callLlm
+        :: Config
+        -> String
+        -> ConversationHistory
+        -> Llm.LlmCallOptions
+        -> Aff (Either AppError Llm.CallLlmResult)
+    , delayMilliseconds :: Int -> Aff Unit
     , setLlmRequestLogPath :: String -> Effect Unit
     , printLn            :: String -> Effect Unit
     , printStr           :: String -> Effect Unit
@@ -59,11 +71,13 @@ productionServices =
     , connectKernel: Jupyter.connectKernel
     , executeCode: Jupyter.executeCode
     , executeCodeDetailed: Jupyter.executeCodeDetailed
+    , executeCodeDetailedWithInput: Jupyter.executeCodeDetailedWithInput
     , interruptKernel: Jupyter.interruptKernel
     , interruptSandbox: Sandbox.interruptSandbox
     , closeKernel: Jupyter.closeKernel
     , callLlm: Llm.callLlm
-    , callLlmJson: Llm.callLlmJson
+    , delayMilliseconds: \milliseconds ->
+        delay (Milliseconds (Int.toNumber milliseconds))
     , setLlmRequestLogPath: Llm.setLlmRequestLogPath
     , printLn: Terminal.printLn
     , printStr: Terminal.printStr

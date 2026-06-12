@@ -200,6 +200,25 @@ encodeLogEventJson (TimeoutResponse r) =
         , Tuple "timestamp" (J.fromString (renderTimestamp r.timestamp))
         , Tuple "interrupt" (J.fromBoolean r.interrupt)
         ]
+encodeLogEventJson (StdinRequest r) =
+    mkObj
+        [ Tuple "type" (J.fromString "stdin_request")
+        , Tuple "timestamp" (J.fromString (renderTimestamp r.timestamp))
+        , Tuple "tool_call_id" (J.fromString (unwrapToolCallId r.toolCallId))
+        , Tuple "sequence" (J.fromNumber (Int.toNumber r.sequence))
+        , Tuple "attempt" (J.fromNumber (Int.toNumber r.attempt))
+        , Tuple "elapsed_seconds" (J.fromNumber (Int.toNumber r.elapsedSeconds))
+        , Tuple "prompt" (J.fromString r.prompt)
+        , Tuple "value" (case r.value of
+            Nothing -> J.jsonNull
+            Just value -> J.fromString value)
+        , Tuple "interrupt" (case r.interrupt of
+            Nothing -> J.jsonNull
+            Just interrupt -> J.fromBoolean interrupt)
+        , Tuple "error" (case r.error of
+            Nothing -> J.jsonNull
+            Just err -> J.fromString err)
+        ]
 encodeLogEventJson (EvtReflection r) =
     let base =
             [ Tuple "type" (J.fromString "reflection")
@@ -352,6 +371,27 @@ decodeLogEventObj obj = do
             ts <- getStr obj "timestamp"
             interrupt <- getBool obj "interrupt"
             Right $ TimeoutResponse { timestamp: Timestamp ts, interrupt }
+        "stdin_request" -> do
+            ts <- getStr obj "timestamp"
+            tcId <- getStr obj "tool_call_id"
+            sequence <- getNum obj "sequence"
+            attemptNumber <- getNum obj "attempt"
+            elapsed <- getNum obj "elapsed_seconds"
+            prompt <- getStr obj "prompt"
+            value <- getNullableString obj "value"
+            interrupt <- getNullableBool obj "interrupt"
+            err <- getNullableString obj "error"
+            Right $ StdinRequest
+                { timestamp: Timestamp ts
+                , toolCallId: ToolCallId tcId
+                , sequence: numToInt sequence
+                , attempt: numToInt attemptNumber
+                , elapsedSeconds: numToInt elapsed
+                , prompt
+                , value
+                , interrupt
+                , error: err
+                }
         "reflection" -> do
             ts <- getStr obj "timestamp"
             turnIdx <- getNum obj "turn_index"
@@ -376,6 +416,30 @@ getStr obj key = case FO.lookup key obj of
     Just v -> case J.toString v of
         Nothing -> Left (JsonDecodeError ("Field " <> key <> " is not a string"))
         Just s -> Right s
+
+getNullableString
+    :: FO.Object J.Json
+    -> String
+    -> Either AppError (Maybe String)
+getNullableString obj key = case FO.lookup key obj of
+    Nothing -> Left (JsonDecodeError ("Missing field: " <> key))
+    Just value
+        | J.isNull value -> Right Nothing
+        | otherwise -> case J.toString value of
+            Nothing -> Left (JsonDecodeError ("Field " <> key <> " is not a string or null"))
+            Just text -> Right (Just text)
+
+getNullableBool
+    :: FO.Object J.Json
+    -> String
+    -> Either AppError (Maybe Boolean)
+getNullableBool obj key = case FO.lookup key obj of
+    Nothing -> Left (JsonDecodeError ("Missing field: " <> key))
+    Just value
+        | J.isNull value -> Right Nothing
+        | otherwise -> case J.toBoolean value of
+            Nothing -> Left (JsonDecodeError ("Field " <> key <> " is not a boolean or null"))
+            Just decision -> Right (Just decision)
 
 getNum :: FO.Object J.Json -> String -> Either AppError Number
 getNum obj key = case FO.lookup key obj of

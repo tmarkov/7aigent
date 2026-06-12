@@ -80,6 +80,7 @@ printed to the terminal for each file or directory created (e.g.
 | `.7aigent/summary_message.md` | `config/summary_message.md` |
 | `.7aigent/steering_message.md` | `config/steering_message.md` |
 | `.7aigent/reflection_prompt.md` | `config/reflection_prompt.md` |
+| `.7aigent/timeout_prompt.md` | `config/timeout_prompt.md` |
 | `.7aigent/stdin_prompt.md` | `config/stdin_prompt.md` |
 | `.7aigent/startup.jl` | `config/startup.jl` |
 
@@ -249,25 +250,68 @@ backoff:
 | 5th   | 480 s           |
 | …     | each interval doubles |
 
-**A15** — Each interrupt check sends a separate LLM request using the same
-model. This request is **not** appended to the conversation history. It
-contains:
+The schedule measures accumulated execution-wait time. It is paused while a
+timeout-decision LLM call is in progress and while an input request is being
+serviced. A later checkpoint is therefore not queued or started while an
+earlier check is unresolved. The wall-clock duration substituted for
+`{{elapsed_time}}` continues to include these paused periods.
 
-- The Julia source being executed.
-- The elapsed time.
-- Any output produced so far (accumulated from iopub `stream` messages).
-- A yes/no question: should the runner interrupt the execution?
+**A15** — The timeout-check prompt is read from
+`.7aigent/timeout_prompt.md` in the workspace directory. The file uses the
+same `{{keyword}}` substitution syntax as A21. At session start, the runner
+reads and validates this template; any unrecognised `{{keyword}}` causes the
+runner to exit with an informative error. The supported keywords are:
 
-The check request and the LLM's response are written to the session log
-(A25) and displayed on the terminal, but are not part of the conversation
-history.
+| Keyword | Replaced with |
+|---|---|
+| `{{julia_source}}` | The Julia source being executed |
+| `{{elapsed_time}}` | Elapsed time since execution started |
+| `{{output_so_far}}` | The tool output accumulated so far from the iopub message types listed in A4 |
+| `{{json_schema}}` | The timeout-decision JSON schema from A15a, serialized as a pretty-printed JSON string |
 
-**A16** — If the LLM answers yes, the runner sends an `interrupt_request` to
-the Jupyter control channel. The output produced so far, with `\n[interrupted]`
-appended, is returned as the tool result. The ReACT loop continues normally.
+For each scheduled check, the runner substitutes these values and sends the
+resulting text as the user-role message in a separate out-of-band LLM call
+using the configured model. The prompt is displayed on the terminal and is
+not appended to the conversation history. A `timeout_check` event is written
+once for the scheduled check before its first LLM attempt.
 
-**A17** — If the LLM answers no, the runner schedules the next check and
-continues waiting. There is no hard cap on total wait time.
+**A15a** — Timeout checks use the same structured execution-decision call and
+validation mechanism as stdin requests (A53a–A54a), including JSON-object
+response mode, strict field validation, the shared API/parse/validation retry
+budget, token accounting, request debug logging, and terminal prompt display.
+The timeout-specific response schema accepts exactly:
+
+```json
+{"action":"continue"}
+```
+
+or:
+
+```json
+{"action":"interrupt"}
+```
+
+No other fields or action values are valid. The pretty-printed schema that
+expresses these alternatives is the guaranteed substitution value for
+`{{json_schema}}`. The runner makes one initial attempt followed by at most
+`max_api_retries` retries. Every failed API, parse, or validation attempt
+consumes one retry. Parse and validation failures retry immediately. API and
+network failures wait according to the exponential backoff schedule in A18
+before retrying. A `token_usage` event is written for every attempt that
+returns token counts.
+
+**A16** — If the validated timeout decision is `interrupt`, the runner sends
+an `interrupt_request` to the Jupyter control channel. The output produced so
+far, with `\n[interrupted]` appended, is returned as the tool result. The
+ReACT loop continues normally.
+
+**A17** — If the validated timeout decision is `continue`, the runner
+schedules the next check and continues waiting. If the initial timeout LLM
+attempt and all permitted retries fail without a valid decision, the runner
+also continues waiting and schedules the next check. One `timeout_response`
+event records the final decision for the scheduled check, with
+`interrupt = true` only for a validated `interrupt` decision and
+`interrupt = false` otherwise. There is no hard cap on total wait time.
 
 ---
 
@@ -290,9 +334,14 @@ Input requests whose prompt begins with the reserved summary transport prefix
 A53–A56.
 
 **A52a** — When an `input_request` arrives, the runner pauses the timeout
-check schedule (A14–A17). Any pending timeout check is cancelled. After the
-`input_reply` is sent and the kernel resumes execution, the runner starts a
-fresh timeout check schedule from the first interval (30 s).
+check schedule (A14–A17). If a timeout-check LLM request or retry is in
+progress, the runner cancels its HTTP request, performs no further retries for
+that scheduled check, and immediately begins servicing the input request. A
+cancelled timeout check has no final decision and therefore does not produce a
+`timeout_response` event; its existing `timeout_check` event and request debug
+log entry remain. After the `input_reply` has been transmitted successfully,
+the runner starts a fresh timeout check schedule from the first interval
+(30 s).
 
 **A53 — Stdin prompt template**
 
@@ -308,8 +357,7 @@ error (same rule as A23). The supported keywords are:
 | `{{elapsed_time}}` | Elapsed time since execution started |
 | `{{output_so_far}}` | The tool output accumulated so far from the iopub message types listed in A4 |
 | `{{prompt}}` | The `prompt` string from the `input_request` |
-| `{{password}}` | `"true"` if `password` was set to `true` in the `input_request`, otherwise `"false"` (Jupyter protocol convention for secret input) |
-| `{{json_schema}}` | The JSON schema for structured output (see below), serialized as a pretty-printed JSON string |
+| `{{json_schema}}` | The stdin-decision JSON schema from A53a, serialized as a pretty-printed JSON string |
 
 The runner substitutes all keywords into the template and sends the resulting
 text as the user-role message in an out-of-band LLM call. The call uses the
@@ -317,42 +365,49 @@ same configured model as the main session but is **not** appended to the
 conversation history. The request prompt is displayed on the terminal. Each
 attempt is written to the session log as a `stdin_request` event (A26).
 
-**A53a** — The stdin LLM call requests a JSON-object response from the API.
-The runner validates the returned object against this schema:
+**A53a** — The stdin LLM call uses the same structured execution-decision call
+and validation mechanism as timeout checks (A15a), including JSON-object
+response mode, strict field validation, retry accounting, token accounting,
+request debug logging, and terminal prompt display. The stdin-specific
+response schema accepts exactly:
 
 ```json
-{"type": "object", "properties": {"value": {"type": "string", "description": "The text to send to the REPL as input"}, "interrupt": {"type": "boolean", "description": "Set to true to interrupt execution instead of providing input"}}, "required": ["value", "interrupt"], "additionalProperties": false}
+{"action":"reply","value":"<text to send>"}
 ```
 
-The pretty-printed form of this same schema is the guaranteed substitution
-value for `{{json_schema}}`.
+or:
+
+```json
+{"action":"interrupt"}
+```
+
+For `reply`, `value` is required and must be a string. For `interrupt`,
+`value` is prohibited. No other fields or action values are valid. The
+pretty-printed schema that expresses these alternatives is the guaranteed
+substitution value for `{{json_schema}}`.
 
 **A54 — Stdin response handling**
 
-The runner attempts to parse the LLM response as a JSON object with `value`
-(string) and `interrupt` (boolean) fields and rejects values with missing,
-extra, or incorrectly typed fields. If validation succeeds:
+The runner parses and validates the LLM response against A53a. If validation
+succeeds:
 
-- If `interrupt` is `true`: the runner sends an `interrupt_request` on the
+- If `action` is `interrupt`: the runner sends an `interrupt_request` on the
   control channel (per A16). The accumulated output so far, with
   `\n[interrupted]` appended, is returned as the tool result. The pending
   timeout schedule (A52a) is cancelled.
-- If `interrupt` is `false`: the runner sends an `input_reply` to the stdin
-  channel with `content.value` set to `value`. If `password` is `false`, the
-  sent value is appended to the accumulated output using JSON string encoding,
-  as `\n[input: <json-string>]`. If `password` is `true`, the value is not
-  displayed, logged, or included in the tool result; the accumulated output is
-  instead appended with `\n[input: <hidden>]`. The runner then starts a fresh
-  timeout check schedule (A52a).
+- If `action` is `reply`: the runner sends an `input_reply` to the stdin
+  channel with `content.value` set to `value`. The sent value is appended to
+  the accumulated output using JSON string encoding, as
+  `\n[input: <json-string>]`. The runner considers the request resolved only
+  after the reply has been transmitted successfully, then starts a fresh
+  timeout check schedule (A52a). If transmission fails, the runner interrupts
+  the execution and returns the accumulated output with
+  `\n[interrupted: stdin reply failed]` appended.
 
 **A54a** — If the LLM response cannot be parsed as valid JSON, or the parsed
 object does not validate against the schema in A53a, the runner retries the
-stdin LLM call using the same template, schema, and out-of-band semantics.
-Parse/validation failures and API-level errors share one retry budget. The
-runner makes one initial attempt followed by at most `max_api_retries` retries
-(A18); every failed attempt consumes one retry from that budget. Each attempt
-is logged as a separate `stdin_request` event, and a `token_usage` event is
-written for every attempt that returns token counts.
+stdin LLM call using the shared mechanism from A15a. Each attempt is logged
+as a separate `stdin_request` event.
 
 **A54b** — If the initial attempt and all permitted retries fail without a
 valid JSON response (whether due to parse failures, API errors, or a mix of
@@ -370,11 +425,11 @@ input-request cycle and restarted fresh after each `input_reply`.
 **A56** — Each `input_request` handled through A53–A55 is assigned a
 one-based sequence number within its `julia_repl` tool execution. Every stdin
 LLM attempt is logged as a `stdin_request` event with the fields listed in
-A26 and is not part of the conversation history. A successful non-password
-input reply records the value sent to the kernel. A password input reply and a
-successful interrupt decision record `value = null`. Failed attempts record
-the applicable API, parse, or validation error, with both `value` and
-`interrupt` set to null.
+A26 and is not part of the conversation history. A successful input reply
+records the value sent to the kernel with `interrupt = false`. A successful
+interrupt decision records `value = null` with `interrupt = true`. Failed
+attempts record the applicable API, parse, or validation error, with both
+`value` and `interrupt` set to null.
 
 ---
 
@@ -388,6 +443,12 @@ every call regardless, and the retry cost is trivial. The maximum number of
 retries is configurable via `max_api_retries` in `config.toml` (A37). If all
 retries are exhausted, the error is displayed on the terminal and the runner
 re-prompts the user for new input. The session continues; no state is lost.
+
+The runner exposes one configurable LLM transport operation for all calls.
+Callers select text or JSON-object response mode, whether tools are available,
+whether tokens are streamed, and whether the transport performs its normal
+API-error retries or returns after one attempt. Domain-specific JSON parsing
+and validation remain the caller's responsibility.
 
 ---
 
@@ -487,7 +548,7 @@ concurrently.
 | `reflection`       | `timestamp`, `turn_index` (1-based turn number within current round), `auto_turns_taken` (rounds auto-continued so far this session), `complete` (bool), `feedback` (string or null) |
 | `timeout_check`    | `timestamp`, `elapsed_seconds`, `partial_output`                                           |
 | `timeout_response` | `timestamp`, `interrupt` (bool)                                                            |
-| `stdin_request`    | `timestamp`, `tool_call_id`, `sequence` (1-based), `attempt` (1-based), `elapsed_seconds`, `prompt`, `password` (bool), `value` (string or null), `interrupt` (bool or null), `error` (string or null) |
+| `stdin_request`    | `timestamp`, `tool_call_id`, `sequence` (1-based), `attempt` (1-based), `elapsed_seconds`, `prompt`, `value` (string or null), `interrupt` (bool or null), `error` (string or null) |
 | `escape`           | `timestamp`                                                                                |
 | `sigint`           | `timestamp`                                                                                |
 | `session_end`      | `timestamp`, `reason` (`"eof"`, `"sigint"`, `"error"`)                                    |

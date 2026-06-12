@@ -130,7 +130,7 @@ function streamChatCompletion(endpoint, apiKey, body, onToken, onError, onComple
     url = new URL(endpoint);
   } catch (e) {
     onError(mkError("Invalid API endpoint: " + e.message, null, false));
-    return;
+    return () => {};
   }
 
   const payload = JSON.stringify(body);
@@ -150,21 +150,22 @@ function streamChatCompletion(endpoint, apiKey, body, onToken, onError, onComple
     },
   };
 
-  const req = proto.request(options, (res) => {
-    let settled = false;
-    const fail = (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(wallClockTimer);
-      onError(error);
-    };
-    const succeed = (result) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(wallClockTimer);
-      onComplete(result);
-    };
+  let settled = false;
+  let wallClockTimer;
+  const fail = (error) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(wallClockTimer);
+    onError(error);
+  };
+  const succeed = (result) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(wallClockTimer);
+    onComplete(result);
+  };
 
+  const req = proto.request(options, (res) => {
     if (res.statusCode !== 200) {
       let errBody = "";
       res.on("data", (chunk) => errBody += chunk.toString());
@@ -238,17 +239,23 @@ function streamChatCompletion(endpoint, apiKey, body, onToken, onError, onComple
     req.destroy(new Error("Network timeout"));
   });
 
-  const wallClockTimer = setTimeout(() => {
+  wallClockTimer = setTimeout(() => {
     req.destroy(new Error("LLM request timed out (wall clock)"));
   }, LLM_WALL_CLOCK_TIMEOUT_MS);
 
   req.on("error", (err) => {
-    clearTimeout(wallClockTimer);
-    onError(mkError(err.message, null, looksLikeTimeout(err)));
+    fail(mkError(err.message, null, looksLikeTimeout(err)));
   });
   writeRequestLog({ timestamp: new Date().toISOString(), endpoint, ...body });
   req.write(payload);
   req.end();
+
+  return () => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(wallClockTimer);
+    req.destroy();
+  };
 }
 
 function stripJsonFences(text) {
@@ -380,7 +387,7 @@ export function summarizeEvidence(endpoint, apiKey, model, requestJson, onError,
 //   -> Array ToolDef       -- tool definitions
 //   -> (String -> Effect Unit)  -- onToken callback
 //   -> (String -> LlmResult -> Effect Unit)  -- completion callback (null err = success)
-//   -> Effect Unit
+//   -> Effect (Effect Unit)
 // ---------------------------------------------------------------------------
 
 export const streamLlmImpl =
@@ -390,7 +397,7 @@ export const streamLlmImpl =
   const apiMessages = messages.map(encodeMessage);
   const apiTools = tools.map(encodeTool);
 
-  streamChatCompletion(
+  return streamChatCompletion(
     endpoint,
     apiKey,
     {
@@ -407,7 +414,8 @@ export const streamLlmImpl =
 };
 
 // callJsonLlmImpl :: String -> String -> String -> Array Message
-//   -> (StreamError -> Effect Unit) -> (LlmResult -> Effect Unit) -> Effect Unit
+//   -> (StreamError -> Effect Unit) -> (LlmResult -> Effect Unit)
+//   -> Effect (Effect Unit)
 //
 // Like streamLlmImpl but with no tools and JSON-object response format.
 // Tokens are discarded (not streamed to the caller).
@@ -417,7 +425,7 @@ export const callJsonLlmImpl =
 
   const apiMessages = messages.map(encodeMessage);
 
-  streamChatCompletion(
+  return streamChatCompletion(
     endpoint,
     apiKey,
     {

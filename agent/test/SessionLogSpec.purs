@@ -203,6 +203,29 @@ sessionLogSpec = do
         Right _ -> fail "Expected TokenUsage event"
         Left err -> fail ("Decode failed: " <> show err)
 
+    it "A26 + A56: stdin_request event round-trips nullable outcome fields" do
+      let event = StdinRequest
+            { timestamp: Timestamp "t1"
+            , toolCallId: ToolCallId "tc1"
+            , sequence: 2
+            , attempt: 3
+            , elapsedSeconds: 17
+            , prompt: "Password: "
+            , value: Nothing
+            , interrupt: Nothing
+            , error: Just "invalid JSON"
+            }
+      case decodeLogEvent (encodeLogEvent event) of
+        Right (StdinRequest r) -> do
+          r.toolCallId `shouldEqual` ToolCallId "tc1"
+          r.sequence `shouldEqual` 2
+          r.attempt `shouldEqual` 3
+          r.value `shouldEqual` Nothing
+          r.interrupt `shouldEqual` Nothing
+          r.error `shouldEqual` Just "invalid JSON"
+        Right _ -> fail "Expected StdinRequest event"
+        Left err -> fail ("Decode failed: " <> show err)
+
     it "A26: compaction event round-trips correctly" do
       let event = compactionEvent
             { timestamp: "t1"

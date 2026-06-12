@@ -3,12 +3,15 @@
 module Test.Helpers.MockServices
     ( MockState
     , LlmInvocation
+    , StdinReply
     , CallRecord(..)
     , mkMockServices
     , getCalls
     , callsMatching
     , getLlmInvocations
     , getLlmHistories
+    , queueStdinRequests
+    , getStdinReplies
     ) where
 
 import Prelude
@@ -50,6 +53,7 @@ data CallRecord
     | CallCloseKernel
     | CallLlm String
     | CallLlmJson String
+    | CallDelayMilliseconds Int
     | CallLlmRequestLog String
     | CallSetLlmRequestLogPath String
     | CallPrintLn String
@@ -71,6 +75,8 @@ instance showCallRecord :: Show CallRecord where
     show CallCloseKernel = "CallCloseKernel"
     show (CallLlm purpose) = "CallLlm(" <> purpose <> ")"
     show (CallLlmJson purpose) = "CallLlmJson(" <> purpose <> ")"
+    show (CallDelayMilliseconds milliseconds) =
+        "CallDelayMilliseconds(" <> show milliseconds <> ")"
     show (CallLlmRequestLog entry) = "CallLlmRequestLog(" <> entry <> ")"
     show (CallSetLlmRequestLogPath path) = "CallSetLlmRequestLogPath(" <> path <> ")"
     show (CallPrintLn s) = "CallPrintLn(" <> s <> ")"
@@ -86,6 +92,11 @@ type LlmInvocation =
     , history :: ConversationHistory
     }
 
+type StdinReply =
+    { value :: String
+    , annotation :: String
+    }
+
 -- | Mutable state shared between mock service functions and the test.
 type MockState =
     { calls :: Ref (Array CallRecord)
@@ -95,6 +106,8 @@ type MockState =
     , readLineResponses :: Ref (Array String)
     , streamingChunks :: Ref (Array (Array String))
     , llmInvocations :: Ref (Array LlmInvocation)
+    , stdinRequests :: Ref (Array { prompt :: String })
+    , stdinReplies :: Ref (Array StdinReply)
     , spawnResult :: Either String Sandbox.SandboxHandle
     , connectResult :: Either String Jupyter.KernelHandle
     }
@@ -108,6 +121,17 @@ getLlmInvocations st = Ref.read st.llmInvocations
 
 getLlmHistories :: MockState -> Effect (Array ConversationHistory)
 getLlmHistories st = map _.history <$> getLlmInvocations st
+
+queueStdinRequests
+    :: MockState
+    -> Array { prompt :: String }
+    -> Effect Unit
+queueStdinRequests st requests =
+    Ref.write requests st.stdinRequests
+
+getStdinReplies :: MockState -> Effect (Array StdinReply)
+getStdinReplies st =
+    Ref.read st.stdinReplies
 
 -- | Filter recorded calls matching a predicate.
 callsMatching :: (CallRecord -> Boolean) -> MockState -> Effect (Array CallRecord)
@@ -134,6 +158,8 @@ mkMockServices opts = do
     readLineResponses <- Ref.new opts.readLineResponses
     streamingChunks <- Ref.new opts.streamingChunks
     llmInvocations <- Ref.new []
+    stdinRequests <- Ref.new []
+    stdinReplies <- Ref.new []
     let state =
             { calls
             , llmResponses
@@ -142,6 +168,8 @@ mkMockServices opts = do
             , readLineResponses
             , streamingChunks
             , llmInvocations
+            , stdinRequests
+            , stdinReplies
             , spawnResult: opts.spawnResult
             , connectResult: opts.connectResult
             }
@@ -197,37 +225,75 @@ mkMockServices opts = do
                         case String.stripPrefix (String.Pattern "__CRASH__") result of
                             Just msg -> liftEffect $ Exception.throw ("Sandbox crashed: " <> msg)
                             Nothing -> pure { output: result, hadError: false }
+            , executeCodeDetailedWithInput: \_ (RawJulia code) onToken onInput -> do
+                liftEffect $ record (CallExecuteCodeDetailed code)
+                annotations <- liftEffect $ Ref.new ""
+                requests <- liftEffect $ Ref.read stdinRequests
+                liftEffect $ Ref.write [] stdinRequests
+                liftEffect $ for_ requests \request ->
+                    onInput
+                        { prompt: request.prompt
+                        , reply: \value annotation _ onSuccess -> do
+                            Ref.modify_
+                                (_ <> [ { value, annotation } ])
+                                stdinReplies
+                            Ref.modify_ (_ <> annotation) annotations
+                            onToken annotation
+                            onSuccess
+                        , cancel: pure unit
+                        }
+                detailedQueue <- liftEffect $ Ref.read execDetailedResponses
+                case Array.uncons detailedQueue of
+                    Just { head: h, tail: t } -> do
+                        liftEffect $ Ref.write t execDetailedResponses
+                        suffix <- liftEffect $ Ref.read annotations
+                        pure h { output = h.output <> suffix }
+                    Nothing -> do
+                        result <- liftEffect $ popStr execResponses ""
+                        case String.stripPrefix (String.Pattern "__CRASH__") result of
+                            Just msg -> liftEffect $ Exception.throw ("Sandbox crashed: " <> msg)
+                            Nothing -> do
+                                suffix <- liftEffect $ Ref.read annotations
+                                pure { output: result <> suffix, hadError: false }
             , interruptKernel: \_ -> do
                 liftEffect $ record CallInterruptKernel
             , interruptSandbox: \_ -> record CallInterruptSandbox
             , closeKernel: \_ -> record CallCloseKernel
-            , callLlm: \config _ history onChunk -> do
-                liftEffect $ record (CallLlm "stream")
-                liftEffect $ Ref.modify_ (_ <> [{ kind: "stream", config, history }]) llmInvocations
+            , callLlm: \config _ history options -> do
+                let isJson = options.responseFormat == Llm.JsonObjectResponse
+                let kind =
+                        if isJson
+                            then "json"
+                            else "stream"
+                liftEffect $ record
+                    (if isJson
+                        then CallLlmJson kind
+                        else CallLlm kind)
+                liftEffect $ Ref.modify_
+                    (_ <> [{ kind, config, history }])
+                    llmInvocations
                 -- A51: write request debug log entry
                 let (ApiEndpoint ep) = config.apiEndpoint
                 let (ModelName mdl) = config.model
-                let logEntry = "{\"timestamp\":\"2025-01-01T00:00:00Z\",\"endpoint\":\"" <> ep <> "\",\"model\":\"" <> mdl <> "\",\"stream\":true,\"stream_options\":{\"include_usage\":true}}"
+                let responseFormat =
+                        if isJson
+                            then ",\"response_format\":{\"type\":\"json_object\"}"
+                            else ""
+                let logEntry =
+                        "{\"timestamp\":\"2025-01-01T00:00:00Z\",\"endpoint\":\""
+                        <> ep <> "\",\"model\":\"" <> mdl
+                        <> "\",\"stream\":true,\"stream_options\":{\"include_usage\":true}"
+                        <> responseFormat <> "}"
                 liftEffect $ record (CallLlmRequestLog logEntry)
                 -- A7: invoke the streaming callback with scripted chunks
                 chunks <- liftEffect $ popChunks streamingChunks
-                liftEffect $ for_ chunks onChunk
+                liftEffect $ for_ chunks options.onToken
                 r <- liftEffect $ popLlm llmResponses (Left "no more LLM responses")
                 pure $ case r of
                     Left e -> Left (LlmApiError e)
                     Right v -> Right v
-            , callLlmJson: \config _ history -> do
-                liftEffect $ record (CallLlmJson "json")
-                liftEffect $ Ref.modify_ (_ <> [{ kind: "json", config, history }]) llmInvocations
-                -- A51: write request debug log entry
-                let (ApiEndpoint ep) = config.apiEndpoint
-                let (ModelName mdl) = config.model
-                let logEntry = "{\"timestamp\":\"2025-01-01T00:00:00Z\",\"endpoint\":\"" <> ep <> "\",\"model\":\"" <> mdl <> "\",\"stream\":true,\"stream_options\":{\"include_usage\":true},\"response_format\":{\"type\":\"json_object\"}}"
-                liftEffect $ record (CallLlmRequestLog logEntry)
-                r <- liftEffect $ popLlm llmResponses (Left "no more LLM JSON responses")
-                pure $ case r of
-                    Left e -> Left (LlmApiError e)
-                    Right v -> Right v
+            , delayMilliseconds: \milliseconds ->
+                liftEffect $ record (CallDelayMilliseconds milliseconds)
             , setLlmRequestLogPath: \path -> record (CallSetLlmRequestLogPath path)
             , printLn: \s -> record (CallPrintLn s)
             , printStr: \s -> record (CallPrintStr s)

@@ -264,6 +264,17 @@ data LogEvent
       , partialOutput :: String
       }
   | TimeoutResponse { timestamp :: Timestamp, interrupt :: Boolean }
+  | StdinRequest
+      { timestamp :: Timestamp
+      , toolCallId :: ToolCallId
+      , sequence :: Int
+      , attempt :: Int
+      , elapsedSeconds :: Int
+      , prompt :: String
+      , value :: Maybe String
+      , interrupt :: Maybe Boolean
+      , error :: Maybe String
+      }
   | EvtReflection
       { timestamp :: Timestamp
       , turnIndex :: Int
@@ -289,6 +300,8 @@ instance Show LogEvent where
     "(TimeoutCheck " <> show r.elapsedSeconds <> ")"
   show (TimeoutResponse r) =
     "(TimeoutResponse " <> show r.interrupt <> ")"
+  show (StdinRequest r) =
+    "(StdinRequest sequence=" <> show r.sequence <> " attempt=" <> show r.attempt <> ")"
   show (EvtReflection r) =
     "(EvtReflection turn=" <> show r.turnIndex <> " complete=" <> show r.complete <> ")"
 

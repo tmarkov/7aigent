@@ -53,6 +53,20 @@ function parseMsg(frames) {
   } catch (_) { return null; }
 }
 
+function buildExecuteRequestContent(code) {
+  return {
+    code,
+    silent: false,
+    store_history: true,
+    user_expressions: {},
+    allow_stdin: true,
+    stop_on_error: false,
+  };
+}
+
+export const executeRequestAllowsStdin = (code) =>
+  buildExecuteRequestContent(code).allow_stdin;
+
 // connectKernelImpl :: String
 //   -> { apiEndpoint :: String, apiKey :: String, model :: String }
 //   -> (String -> String -> Effect Unit)  -- onLlmQuery
@@ -185,9 +199,8 @@ export const connectKernelImpl = (kernelJsonPath) => (summaryServiceConfig) => (
     if (parsed.header?.msg_type !== "input_request") return false;
 
     const prompt = String(parsed.content?.prompt || "");
-    let value = "7aigent does not support arbitrary interactive stdin.";
-
     if (prompt.startsWith(SUMMARY_INPUT_PROMPT_PREFIX)) {
+      let value;
       const commId = prompt.slice(SUMMARY_INPUT_PROMPT_PREFIX.length);
       // Must exceed LLM_WALL_CLOCK_TIMEOUT_MS × MAX_ATTEMPTS so the LLM has a full
       // chance to respond (or exhaust retries) before we give up on the Julia side.
@@ -205,9 +218,51 @@ export const connectKernelImpl = (kernelJsonPath) => (summaryServiceConfig) => (
         clearTimeout(timeoutHandle);
         pendingSummaryReplies.delete(commId);
       }
+      await sendStdinReply({ value }, parsed.header);
+      return true;
     }
 
-    await sendStdinReply({ value }, parsed.header);
+    const parentMsgId =
+      parsed.parentHeader?.msg_id || parsed.header?.parent_header?.msg_id;
+    const handler = pending.get(parentMsgId);
+    if (!handler) {
+      await sendStdinReply(
+        { value: "7aigent has no pending execution for this input request." },
+        parsed.header,
+      );
+      return true;
+    }
+
+    await new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return false;
+        settled = true;
+        resolve();
+        return true;
+      };
+      const reply = (value) => (annotation) => (onError) => (onSuccess) => () => {
+        if (settled) return;
+        sendStdinReply({ value }, parsed.header).then(() => {
+          if (annotation) {
+            handler.onToken(annotation)();
+            handler.output.push(annotation);
+          }
+          onSuccess();
+          finish();
+        }).catch((err) => {
+          onError(String(err?.message || err))();
+          finish();
+        });
+      };
+      handler.onInput({
+        prompt,
+        reply,
+        cancel: () => () => {
+          finish();
+        },
+      })();
+    });
     return true;
   }
 
@@ -232,7 +287,10 @@ export const connectKernelImpl = (kernelJsonPath) => (summaryServiceConfig) => (
         }
         case "display_data": {
           const text = (parsed.content.data || {})["text/plain"] || "";
-          if (text) handler.output.push(text);
+          if (text) {
+            handler.onToken(text)();
+            handler.output.push(text);
+          }
           break;
         }
         case "error": {
@@ -281,21 +339,26 @@ export const connectKernelImpl = (kernelJsonPath) => (summaryServiceConfig) => (
     stdinLoop().catch((_) => {/* socket closed on cleanup */});
 
     const handle = {
-      // execute :: String -> (String -> Effect Unit) -> (ExecutionResult -> Effect Unit) -> Effect Unit
+      // execute :: String -> onToken -> onInput -> onComplete -> Effect Unit
       // onToken is called for each partial output; onComplete is called with the full execution result
-      execute: (code) => (onToken) => (onComplete) => () => {
+      execute: (code) => (onToken) => (onInput) => (onComplete) => () => {
         const msgId = crypto.randomUUID();
-        const msg = buildMsg(key, sessionId, "execute_request", {
-          code,
-          silent: false,
-          store_history: true,
-          user_expressions: {},
-          allow_stdin: /\bsummarize!\s*\(/.test(code),
-          stop_on_error: false,
-        }, msgId);
+        const msg = buildMsg(
+          key,
+          sessionId,
+          "execute_request",
+          buildExecuteRequestContent(code),
+          msgId,
+        );
 
         const p = new Promise((resolve) => {
-          pending.set(msgId, { resolve, onToken, output: [], hadError: false });
+          pending.set(msgId, {
+            resolve,
+            onToken,
+            onInput,
+            output: [],
+            hadError: false,
+          });
         });
 
         shell.send(msg).then(() => {

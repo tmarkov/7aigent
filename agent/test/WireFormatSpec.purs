@@ -40,6 +40,8 @@ import Agent.Types
     , ModelName(..)
     , ToolCallId(..)
     , TokenCount(..)
+    , Timestamp(..)
+    , LogEvent(..)
     )
 
 wireFormatSpec :: Spec Unit
@@ -115,6 +117,32 @@ wireFormatSpec = do
       assertHasField obj "timestamp"
       assertHasField obj "content"
       assertFieldEquals obj "type" "llm_response"
+
+  describe "A26 + A56: stdin_request wire-format field names" do
+
+    it "A26: stdin_request contains every specified field" do
+      let event = StdinRequest
+            { timestamp: Timestamp "t1"
+            , toolCallId: ToolCallId "tc1"
+            , sequence: 1
+            , attempt: 1
+            , elapsedSeconds: 4
+            , prompt: "Name: "
+            , value: Just "Ada"
+            , interrupt: Just false
+            , error: Nothing
+            }
+      let obj = parseToObj (encodeLogEvent event)
+      assertFieldEquals obj "type" "stdin_request"
+      assertHasField obj "timestamp"
+      assertHasField obj "tool_call_id"
+      assertHasField obj "sequence"
+      assertHasField obj "attempt"
+      assertHasField obj "elapsed_seconds"
+      assertHasField obj "prompt"
+      assertHasField obj "value"
+      assertHasField obj "interrupt"
+      assertHasField obj "error"
 
   ---------------------------------------------------------------------------
   -- A26: llm_query wire format

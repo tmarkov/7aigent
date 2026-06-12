@@ -44,7 +44,7 @@ Project guide: {{agents_md}}
 -- | A mock KernelHandle whose functions do nothing.
 mockKernelHandle :: Jupyter.KernelHandle
 mockKernelHandle =
-    { execute: \_ _ onDone -> onDone { output: "", hadError: false }
+    { execute: \_ _ _ onDone -> onDone { output: "", hadError: false }
     , interrupt: \onDone -> onDone
     , close: pure unit
     }

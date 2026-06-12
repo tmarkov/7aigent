@@ -3,9 +3,13 @@
 module Agent.Services.Jupyter
     ( KernelHandle
     , ExecutionResult
+    , InputRequest
     , connectKernel
     , executeCode
     , executeCodeDetailed
+    , executeCodeDetailedWithInput
+    , executeRequestAllowsStdin
+    , sendInputReply
     , interruptKernel
     , closeKernel
     ) where
@@ -27,9 +31,24 @@ type ExecutionResult =
     , hadError :: Boolean
     }
 
+type InputRequest =
+    { prompt :: String
+    , reply
+        :: String
+        -> String
+        -> (String -> Effect Unit)
+        -> Effect Unit
+        -> Effect Unit
+    , cancel :: Effect Unit
+    }
+
 -- | A live connection to the Jupyter kernel.
 type KernelHandle =
-    { execute   :: String -> (String -> Effect Unit) -> (ExecutionResult -> Effect Unit) -> Effect Unit
+    { execute   :: String
+                    -> (String -> Effect Unit)
+                    -> (InputRequest -> Effect Unit)
+                    -> (ExecutionResult -> Effect Unit)
+                    -> Effect Unit
     , interrupt :: Effect Unit -> Effect Unit
     , close     :: Effect Unit
     }
@@ -41,6 +60,8 @@ foreign import connectKernelImpl
     -> (String -> Effect Unit)
     -> (KernelHandle -> Effect Unit)
     -> Effect Unit
+
+foreign import executeRequestAllowsStdin :: String -> Boolean
 
 -- | Connect to the Jupyter kernel described by kernel.json.
 connectKernel
@@ -58,12 +79,43 @@ connectKernel kernelJsonPath summaryConfig onLlmQuery = makeAff \resolve -> do
 -- | and resolving with the full output string when complete.
 executeCode :: KernelHandle -> RawJulia -> (String -> Effect Unit) -> Aff String
 executeCode kernel (RawJulia code) onToken = makeAff \resolve -> do
-    kernel.execute code onToken (\result -> resolve (Right result.output))
+    kernel.execute code onToken rejectInput (\result -> resolve (Right result.output))
     pure nonCanceler
 
 executeCodeDetailed :: KernelHandle -> RawJulia -> (String -> Effect Unit) -> Aff ExecutionResult
 executeCodeDetailed kernel (RawJulia code) onToken = makeAff \resolve -> do
-    kernel.execute code onToken (\result -> resolve (Right result))
+    kernel.execute code onToken rejectInput (\result -> resolve (Right result))
+    pure nonCanceler
+
+executeCodeDetailedWithInput
+    :: KernelHandle
+    -> RawJulia
+    -> (String -> Effect Unit)
+    -> (InputRequest -> Effect Unit)
+    -> Aff ExecutionResult
+executeCodeDetailedWithInput kernel (RawJulia code) onToken onInput = makeAff \resolve -> do
+    kernel.execute code onToken onInput (\result -> resolve (Right result))
+    pure nonCanceler
+
+rejectInput :: InputRequest -> Effect Unit
+rejectInput request =
+    request.reply
+        "7aigent does not support stdin for this internal execution."
+        "\n[input: <unavailable>]"
+        (const (pure unit))
+        (pure unit)
+
+sendInputReply
+    :: InputRequest
+    -> String
+    -> String
+    -> Aff (Either String Unit)
+sendInputReply request value annotation = makeAff \resolve -> do
+    request.reply
+        value
+        annotation
+        (\err -> resolve (Right (Left err)))
+        (resolve (Right (Right unit)))
     pure nonCanceler
 
 -- | Send an interrupt_request to the kernel control channel.

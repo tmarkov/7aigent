@@ -10,6 +10,7 @@ import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (shouldEqual)
 
 import Agent.Programs.Jupyter (collectOutput, IopubMessage(..))
+import Agent.Services.Jupyter (executeRequestAllowsStdin)
 
 jupyterSpec :: Spec Unit
 jupyterSpec = do
@@ -70,6 +71,14 @@ jupyterSpec = do
 
     it "A4: empty message sequence → empty string" do
       collectOutput [] `shouldEqual` ""
+
+  describe "A4: execute_request stdin support" do
+
+    it "A4: enables stdin for ordinary Julia source" do
+      executeRequestAllowsStdin "name = readline()" `shouldEqual` true
+
+    it "A4: enables stdin even when source does not mention summarize!" do
+      executeRequestAllowsStdin "readline()" `shouldEqual` true
 
   where
   contains :: String -> String -> Boolean

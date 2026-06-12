@@ -590,6 +590,34 @@ controllerSpec = do
                         _ -> false) calls
                 hasTemplateError `shouldEqual` false
 
+        it "A15: unknown keyword in timeout_prompt.md aborts startup" do
+            withWorkspace \ws -> do
+                writeWorkspaceFile ws ".7aigent/config.toml" testConfigToml
+                writeWorkspaceFile ws ".7aigent/system_prompt.md" minimalSystemPrompt
+                writeWorkspaceFile ws ".7aigent/startup.jl" "# empty startup"
+                writeWorkspaceFile ws ".7aigent/timeout_prompt.md" "{{unknown_timeout}}"
+                liftEffect setTestEnv
+                { svc, state } <- liftEffect $ mkMockServices
+                    { llmResponses: []
+                    , execResponses: []
+                    , execDetailedResponses:
+                        [ { output: "", hadError: false }
+                        , { output: "", hadError: false }
+                        ]
+                    , readLineResponses: []
+                    , streamingChunks: []
+                    , spawnResult: Right mockSandboxHandle
+                    , connectResult: Right mockKernelHandle
+                    }
+                _ <- attempt $ runNewSession svc ws (Just "test")
+                calls <- liftEffect $ getCalls state
+                liftEffect unsetTestEnv
+                calls `shouldSatisfy` Array.any (\c -> case c of
+                    CallPrintErr s ->
+                        String.contains (String.Pattern "Error in timeout_prompt.md") s
+                    _ -> false)
+                calls `shouldSatisfy` Array.any (_ == CallExit 1)
+
     describe "A29: julia_defs.jl is written from replay-safe julia_repl inputs" do
         it "A29: pure julia definitions are written in execution order" do
             withTestSessionCustom

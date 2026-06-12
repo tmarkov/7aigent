@@ -4,16 +4,22 @@ module Agent.Runner.ToolExecution
 
 import Prelude
 
+import Control.Alt ((<|>))
+import Control.Parallel (parallel, sequential)
 import Data.Argonaut.Core as J
 import Data.Argonaut.Parser as JP
 import Data.Array as Array
 import Data.Either (Either(..))
+import Data.Int as Int
 import Data.Maybe (Maybe(..))
 import Data.Set (Set)
 import Data.Set as Set
 import Data.String as String
 import Data.Traversable (traverse)
+import Effect (Effect)
 import Effect.Aff (Aff, Milliseconds(..), attempt, delay, forkAff)
+import Effect.Aff.AVar as AVar
+import Effect.AVar as EffectAVar
 import Effect.Class (liftEffect)
 import Effect.Exception as Exception
 import Effect.Exception (message)
@@ -27,6 +33,7 @@ import Agent.Types
     , Config
     , ConversationHistory(..)
     , ToolCall
+    , ToolCallId
     , HunkId
     , RawJulia(..)
     , TokenCount(..)
@@ -35,6 +42,17 @@ import Agent.Types
     , LlmResponse(..)
     , renderToolName
     , extractContent
+    )
+import Agent.Programs.ExecutionDecision
+    ( DecisionFailure(..)
+    , StdinDecision(..)
+    , TimeoutDecision(..)
+    , decisionRetryDelayMilliseconds
+    , parseStdinDecision
+    , parseTimeoutDecision
+    , renderInputAnnotation
+    , renderStdinPrompt
+    , renderTimeoutPrompt
     )
 import Agent.Programs.GitCommit
     ( runGitCommitAll
@@ -47,12 +65,7 @@ import Agent.Programs.GitStage
     )
 import Agent.Programs.GitWritePlan (GitWritePlan)
 import Agent.Programs.SessionLog (writeLogEvent)
-import Agent.Programs.Timeout
-    ( buildTimeoutCheckRequest
-    , interpretTimeoutResponse
-    , isCheckDue
-    , TimeoutDecision(..)
-    )
+import Agent.Programs.Timeout (isCheckDue)
 import Agent.Programs.ToolInput
     ( summarizeToolInput
     , parseJuliaCodeInput
@@ -61,10 +74,13 @@ import Agent.Programs.ToolInput
     )
 import Agent.Programs.ToolOutput (processToolOutput)
 import Agent.Runner.Services (RunnerServices)
+import Agent.Services.Jupyter as Jupyter
 import Agent.Services.Jupyter (KernelHandle)
+import Agent.Services.Llm as Llm
 import Agent.Services.Sandbox (SandboxHandle)
 
 foreign import decodeHexUtf8 :: String -> String
+foreign import nowEpochMilliseconds :: Effect Number
 
 data GitStageWhat
     = StageAll
@@ -74,6 +90,15 @@ data GitCommitWhat
     = CommitAll
     | CommitStaged
     | CommitSelectors (Array String)
+
+data InputOutcome
+    = InputReplied
+    | InputInterrupted String
+
+data ExecutionEvent
+    = InputArrived Jupyter.InputRequest
+    | ExecutionCompleted Jupyter.ExecutionResult
+    | ExecutionFailed String
 
 type ParsedGitWritePlan =
     { wholeFiles :: Array { path :: String, oldPath :: Maybe String }
@@ -89,11 +114,21 @@ doTool
     -> String
     -> KernelHandle
     -> SandboxHandle
+    -> String
+    -> String
     -> ConversationHistory
     -> ToolCall
     -> Set HunkId
-    -> Aff { history :: ConversationHistory, hunks :: Set HunkId, toolInterrupted :: Boolean }
-doTool svc ws sessionId config apiKey kernel sandbox history tc knownHunks = do
+    -> Llm.LlmUsage
+    -> Aff
+        { history :: ConversationHistory
+        , hunks :: Set HunkId
+        , toolInterrupted :: Boolean
+        , usageTotals :: Llm.LlmUsage
+        }
+doTool
+    svc ws sessionId config apiKey kernel _sandbox timeoutTemplate stdinTemplate
+    history tc knownHunks usageTotals = do
     ts <- Timestamp <$> liftEffect svc.nowIso
     writeLogEvent ws sessionId (EvtToolCall
         { timestamp: ts
@@ -106,8 +141,11 @@ doTool svc ws sessionId config apiKey kernel sandbox history tc knownHunks = do
     when (not (String.null inputSummary)) do
         liftEffect $ svc.printLn inputSummary
 
+    usageRef <- liftEffect $ Ref.new usageTotals
     { output: rawOut, hunks: hunks', toolInterrupted } <-
-        dispatchTool svc ws sessionId config apiKey kernel sandbox tc knownHunks
+        dispatchTool
+            svc ws sessionId config apiKey kernel timeoutTemplate stdinTemplate
+            tc knownHunks usageRef
 
     let proc = processToolOutput config.outputThresholdChars rawOut
     liftEffect $ svc.printLn proc.displayText
@@ -121,7 +159,13 @@ doTool svc ws sessionId config apiKey kernel sandbox history tc knownHunks = do
         })
 
     let toolMsg = ToolResultMessage { toolCallId: tc.id, output: proc.llmFacing }
-    pure { history: addMsg history toolMsg, hunks: hunks', toolInterrupted }
+    usageTotals' <- liftEffect $ Ref.read usageRef
+    pure
+        { history: addMsg history toolMsg
+        , hunks: hunks'
+        , toolInterrupted
+        , usageTotals: usageTotals'
+        }
 
 dispatchTool
     :: RunnerServices
@@ -130,11 +174,15 @@ dispatchTool
     -> Config
     -> String
     -> KernelHandle
-    -> SandboxHandle
+    -> String
+    -> String
     -> ToolCall
     -> Set HunkId
+    -> Ref.Ref Llm.LlmUsage
     -> Aff { output :: String, hunks :: Set HunkId, toolInterrupted :: Boolean }
-dispatchTool svc ws sessionId config apiKey kernel sandbox tc knownHunks =
+dispatchTool
+    svc ws sessionId config apiKey kernel timeoutTemplate stdinTemplate
+    tc knownHunks usageRef =
     case tc.name of
         JuliaRepl -> do
             let code = parseJuliaCodeInput tc.input
@@ -145,7 +193,10 @@ dispatchTool svc ws sessionId config apiKey kernel sandbox tc knownHunks =
                 config
                 apiKey
                 kernel
-                sandbox
+                tc.id
+                timeoutTemplate
+                stdinTemplate
+                usageRef
                 (RawJulia code)
             pure
                 { output: result.output
@@ -166,7 +217,7 @@ dispatchTool svc ws sessionId config apiKey kernel sandbox tc knownHunks =
                             case refreshR of
                                 Left err ->
                                     toolFailure err
-                                Right unit -> do
+                                Right _ -> do
                                     stageR <- runGitStageAll ws
                                     pure case stageR of
                                         Left err ->
@@ -211,7 +262,7 @@ dispatchTool svc ws sessionId config apiKey kernel sandbox tc knownHunks =
                             case refreshR of
                                 Left err ->
                                     toolFailure err
-                                Right unit -> do
+                                Right _ -> do
                                     commitR <- runGitCommitAll ws input.message input.body
                                     pure case commitR of
                                         Left err ->
@@ -229,7 +280,7 @@ dispatchTool svc ws sessionId config apiKey kernel sandbox tc knownHunks =
                             case refreshR of
                                 Left err ->
                                     toolFailure err
-                                Right unit -> do
+                                Right _ -> do
                                     commitR <- runGitCommitStaged ws input.message input.body
                                     pure case commitR of
                                         Left err ->
@@ -282,53 +333,203 @@ runJuliaReplWithTimeoutChecks
     -> Config
     -> String
     -> KernelHandle
-    -> SandboxHandle
+    -> ToolCallId
+    -> String
+    -> String
+    -> Ref.Ref Llm.LlmUsage
     -> RawJulia
     -> Aff { output :: String, toolInterrupted :: Boolean }
-runJuliaReplWithTimeoutChecks svc ws sessionId config apiKey kernel sandbox source = do
+runJuliaReplWithTimeoutChecks
+    svc ws sessionId config apiKey kernel toolCallId
+    timeoutTemplate stdinTemplate usageRef source = do
+    startedAt <- liftEffect nowEpochMilliseconds
     partialRef <- liftEffect $ Ref.new ""
-    resultRef <- liftEffect $ Ref.new Nothing
-    errorRef <- liftEffect $ Ref.new Nothing
+    eventVar <- AVar.empty
+    sequenceRef <- liftEffect $ Ref.new 0
     let wrappedSource = wrapJuliaSourceWithRefresh source
     _ <- forkAff do
-        result <- attempt $ svc.executeCodeDetailed kernel wrappedSource \chunk ->
-            Ref.modify_ (_ <> chunk) partialRef
+        result <- attempt $ svc.executeCodeDetailedWithInput
+            kernel
+            wrappedSource
+            (\chunk -> Ref.modify_ (_ <> chunk) partialRef)
+            (\request ->
+                void $ EffectAVar.put
+                    (InputArrived request)
+                    eventVar
+                    (const (pure unit)))
         case result of
             Left err ->
-                liftEffect $ Ref.write (Just (message err)) errorRef
+                AVar.put (ExecutionFailed (message err)) eventVar
             Right execResult ->
-                liftEffect $ Ref.write (Just execResult) resultRef
-    waitForResult 0 0 partialRef resultRef errorRef
+                AVar.put (ExecutionCompleted execResult) eventVar
+    waitForResult startedAt 0 0 partialRef eventVar sequenceRef
   where
-    waitForResult elapsed lastCheckAt partialRef resultRef errorRef = do
-        maybeError <- liftEffect $ Ref.read errorRef
-        case maybeError of
-            Just errMsg ->
+    waitForResult
+        startedAt scheduleElapsed lastCheckAt partialRef eventVar sequenceRef = do
+        next <- raceAff
+            (delay (Milliseconds 1000.0))
+            (AVar.take eventVar)
+        case next of
+            Right event ->
+                handleExecutionEvent
+                    startedAt scheduleElapsed lastCheckAt
+                    partialRef eventVar sequenceRef event
+            Left _ ->
+                checkTimeout
+      where
+        checkTimeout = do
+            let scheduleElapsed' = scheduleElapsed + 1
+            if isCheckDue config.timeoutCheckSeconds scheduleElapsed' lastCheckAt then do
+                partialOutput <- liftEffect $ Ref.read partialRef
+                elapsed <- elapsedSince startedAt
+                next <- raceAff
+                    (runTimeoutCheck elapsed partialOutput)
+                    (AVar.take eventVar)
+                case next of
+                    Right event ->
+                        handleExecutionEvent
+                            startedAt scheduleElapsed' lastCheckAt
+                            partialRef eventVar sequenceRef event
+                    Left InterruptForTimeout -> do
+                        svc.interruptKernel kernel
+                        interruptedOutput <- liftEffect $ Ref.read partialRef
+                        pure
+                            { output: interruptedOutput <> "\n[interrupted]"
+                            , toolInterrupted: true
+                            }
+                    Left ContinueAfterTimeout ->
+                        waitForResult
+                            startedAt scheduleElapsed' scheduleElapsed'
+                            partialRef eventVar sequenceRef
+            else
+                waitForResult
+                    startedAt scheduleElapsed' lastCheckAt
+                    partialRef eventVar sequenceRef
+
+    handleExecutionEvent
+        startedAt scheduleElapsed lastCheckAt partialRef eventVar sequenceRef event =
+        case event of
+            ExecutionFailed errMsg ->
                 liftEffect $ Exception.throw errMsg
-            Nothing ->
-                pure unit
-        maybeResult <- liftEffect $ Ref.read resultRef
-        case maybeResult of
-            Just result ->
+            ExecutionCompleted result ->
                 pure { output: result.output, toolInterrupted: false }
-            Nothing -> do
-                delay (Milliseconds 1000.0)
-                let elapsed' = elapsed + 1
-                if isCheckDue config.timeoutCheckSeconds elapsed' lastCheckAt then do
-                    partialOutput <- liftEffect $ Ref.read partialRef
-                    decision <- runTimeoutCheck elapsed' partialOutput
-                    case decision of
-                        Interrupt -> do
-                            liftEffect $ svc.interruptSandbox sandbox
-                            interruptedOutput <- liftEffect $ Ref.read partialRef
-                            pure
-                                { output: interruptedOutput <> "\n[interrupted]"
-                                , toolInterrupted: true
-                                }
-                        ScheduleNext _ ->
-                            waitForResult elapsed' elapsed' partialRef resultRef errorRef
-                else
-                    waitForResult elapsed' lastCheckAt partialRef resultRef errorRef
+            InputArrived request -> do
+                sequence <- liftEffect $ Ref.modify (\n -> n + 1) sequenceRef
+                outcome <- handleInputRequest startedAt sequence request partialRef
+                case outcome of
+                    InputReplied ->
+                        waitForResult
+                            startedAt 0 0 partialRef eventVar sequenceRef
+                    InputInterrupted marker -> do
+                        partialOutput <- liftEffect $ Ref.read partialRef
+                        pure
+                            { output: partialOutput <> marker
+                            , toolInterrupted: true
+                            }
+
+    raceAff :: forall left right. Aff left -> Aff right -> Aff (Either left right)
+    raceAff left right =
+        sequential $
+            parallel (Left <$> left)
+            <|>
+            parallel (Right <$> right)
+
+    elapsedSince startedAt = do
+        now <- liftEffect nowEpochMilliseconds
+        pure (Int.floor ((now - startedAt) / 1000.0))
+
+    handleInputRequest startedAt sequence request partialRef = do
+        elapsed <- elapsedSince startedAt
+        partialOutput <- liftEffect $ Ref.read partialRef
+        let promptResult = renderStdinPrompt stdinTemplate
+                { juliaSource: unwrapRawJulia source
+                , elapsedSeconds: elapsed
+                , outputSoFar: partialOutput
+                , prompt: request.prompt
+                }
+        case promptResult of
+            Left _ -> do
+                liftEffect request.cancel
+                svc.interruptKernel kernel
+                pure (InputInterrupted "\n[interrupted: stdin response unavailable]")
+            Right requestText -> do
+                liftEffect $ svc.printLn requestText
+                decision <- runDecisionCall
+                    requestText
+                    parseStdinDecision
+                    (logStdinDecisionAttempt elapsed sequence request)
+                case decision of
+                    Just InterruptForStdin -> do
+                        liftEffect request.cancel
+                        svc.interruptKernel kernel
+                        pure (InputInterrupted "\n[interrupted]")
+                    Just (ReplyWithInput value) -> do
+                        let annotation = renderInputAnnotation value
+                        replyResult <- Jupyter.sendInputReply
+                            request
+                            value
+                            annotation
+                        case replyResult of
+                            Right _ ->
+                                pure InputReplied
+                            Left _ -> do
+                                liftEffect request.cancel
+                                svc.interruptKernel kernel
+                                pure
+                                    (InputInterrupted
+                                        "\n[interrupted: stdin reply failed]")
+                    _ -> do
+                        liftEffect request.cancel
+                        svc.interruptKernel kernel
+                        pure
+                            (InputInterrupted
+                                "\n[interrupted: stdin response unavailable]")
+
+    logStdinDecisionAttempt elapsed sequence request attemptNumber result =
+        case result of
+            Left err ->
+                logStdinAttempt
+                    elapsed sequence attemptNumber request
+                    Nothing Nothing (Just err)
+            Right InterruptForStdin ->
+                logStdinAttempt
+                    elapsed sequence attemptNumber request
+                    Nothing (Just true) Nothing
+            Right (ReplyWithInput value) ->
+                logStdinAttempt
+                    elapsed sequence attemptNumber request
+                    (Just value)
+                    (Just false)
+                    Nothing
+
+    logStdinAttempt elapsed sequence attemptNumber request value interrupt err = do
+        ts <- Timestamp <$> liftEffect svc.nowIso
+        writeLogEvent ws sessionId (StdinRequest
+            { timestamp: ts
+            , toolCallId
+            , sequence
+            , attempt: attemptNumber
+            , elapsedSeconds: elapsed
+            , prompt: request.prompt
+            , value
+            , interrupt
+            , error: err
+            })
+
+    recordUsage usage = do
+        totals <- liftEffect $ Ref.read usageRef
+        let totals' = addUsage totals usage
+        liftEffect $ Ref.write totals' usageRef
+        ts <- Timestamp <$> liftEffect svc.nowIso
+        writeLogEvent ws sessionId (TokenUsage
+            { timestamp: ts
+            , inputTokens: usage.inputTokens
+            , cachedInputTokens: usage.cachedInputTokens
+            , outputTokens: usage.outputTokens
+            , totalSessionInputTokens: totals'.inputTokens
+            , totalSessionCachedInputTokens: totals'.cachedInputTokens
+            , totalSessionOutputTokens: totals'.outputTokens
+            })
 
     runTimeoutCheck elapsed partialOutput = do
         ts <- Timestamp <$> liftEffect svc.nowIso
@@ -338,41 +539,79 @@ runJuliaReplWithTimeoutChecks svc ws sessionId config apiKey kernel sandbox sour
             , partialOutput
             })
 
-        let requestText = renderTimeoutCheckRequest source elapsed partialOutput
-        liftEffect $ svc.printLn requestText
-        llmR <- svc.callLlm
-            config
-            apiKey
-            (timeoutCheckHistory requestText)
-            (liftEffect <<< svc.printStr)
-        liftEffect $ svc.printLn ""
-
-        let decision = case llmR of
-                Left _ -> ScheduleNext 60
-                Right result ->
-                    let (LlmResponse response) = result.response
-                    in interpretTimeoutResponse response.content
+        let promptResult = renderTimeoutPrompt timeoutTemplate
+                { juliaSource: unwrapRawJulia source
+                , elapsedSeconds: elapsed
+                , outputSoFar: partialOutput
+                }
+        decision <- case promptResult of
+            Left _ ->
+                pure ContinueAfterTimeout
+            Right requestText -> do
+                liftEffect $ svc.printLn requestText
+                result <- runDecisionCall
+                    requestText
+                    parseTimeoutDecision
+                    (\_ _ -> pure unit)
+                pure case result of
+                    Just parsed -> parsed
+                    Nothing -> ContinueAfterTimeout
         ts2 <- Timestamp <$> liftEffect svc.nowIso
         writeLogEvent ws sessionId (TimeoutResponse
             { timestamp: ts2
-            , interrupt: decision == Interrupt
+            , interrupt: decision == InterruptForTimeout
             })
         pure decision
 
-renderTimeoutCheckRequest :: RawJulia -> Int -> String -> String
-renderTimeoutCheckRequest source elapsed partialOutput =
-    String.joinWith "\n\n"
-        (map _.content (buildTimeoutCheckRequest source elapsed partialOutput))
-
-timeoutCheckHistory :: String -> ConversationHistory
-timeoutCheckHistory requestText =
-    ConversationHistory
-        { messages:
-            [ { message: UserMessage { content: requestText }
-              , tokens: estimateTokens requestText
-              }
-            ]
-        }
+    runDecisionCall
+        :: forall decision
+         . String
+        -> (String -> Either String decision)
+        -> (Int -> Either String decision -> Aff Unit)
+        -> Aff (Maybe decision)
+    runDecisionCall requestText parseDecision onAttempt =
+        go 1
+      where
+        go attemptNumber = do
+            llmR <- svc.callLlm
+                config
+                apiKey
+                (decisionHistory requestText)
+                { responseFormat: Llm.JsonObjectResponse
+                , toolsEnabled: false
+                , retryMode: Llm.SingleApiAttempt
+                , onToken: const (pure unit)
+                }
+            attemptResult <- case llmR of
+                Left err ->
+                    pure (Left (DecisionApiFailure (show err)))
+                Right result -> do
+                    recordUsage result.usage
+                    let (LlmResponse response) = result.response
+                    pure case parseDecision response.content of
+                        Left err ->
+                            Left (DecisionResponseFailure err)
+                        Right decision ->
+                            Right decision
+            case attemptResult of
+                Left (DecisionApiFailure err) ->
+                    onAttempt attemptNumber (Left err)
+                Left (DecisionResponseFailure err) ->
+                    onAttempt attemptNumber (Left err)
+                Right parsedDecision ->
+                    onAttempt attemptNumber (Right parsedDecision)
+            case attemptResult of
+                Right decision ->
+                    pure (Just decision)
+                Left failure | attemptNumber <= config.maxApiRetries -> do
+                    case decisionRetryDelayMilliseconds attemptNumber failure of
+                        Nothing ->
+                            pure unit
+                        Just milliseconds ->
+                            svc.delayMilliseconds milliseconds
+                    go (attemptNumber + 1)
+                Left _ ->
+                    pure Nothing
 
 refreshWorkspaceView
     :: RunnerServices
@@ -540,3 +779,28 @@ addMsg (ConversationHistory history) msg =
 
 estimateTokens :: String -> TokenCount
 estimateTokens s = TokenCount (max 1 (String.length s / 4))
+
+unwrapRawJulia :: RawJulia -> String
+unwrapRawJulia (RawJulia source) = source
+
+decisionHistory :: String -> ConversationHistory
+decisionHistory prompt =
+    ConversationHistory
+        { messages:
+            [ { message: UserMessage { content: prompt }
+              , tokens: estimateTokens prompt
+              }
+            ]
+        }
+
+addUsage :: Llm.LlmUsage -> Llm.LlmUsage -> Llm.LlmUsage
+addUsage totals usage =
+    { inputTokens: addTokenCounts totals.inputTokens usage.inputTokens
+    , cachedInputTokens:
+        addTokenCounts totals.cachedInputTokens usage.cachedInputTokens
+    , outputTokens: addTokenCounts totals.outputTokens usage.outputTokens
+    }
+
+addTokenCounts :: TokenCount -> TokenCount -> TokenCount
+addTokenCounts (TokenCount left) (TokenCount right) =
+    TokenCount (left + right)

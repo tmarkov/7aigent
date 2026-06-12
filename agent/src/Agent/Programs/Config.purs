@@ -123,7 +123,8 @@ placeDefaultConfigs (WorkspacePath wp) = do
             pure (Just "Created .7aigent/state")
     let fileNames = [ "config.toml", "system_prompt.md", "compaction_prompt.md"
                     , "summary_message.md", "startup.jl", "steering_message.md"
-                    , "reflection_prompt.md" ]
+                    , "reflection_prompt.md", "timeout_prompt.md"
+                    , "stdin_prompt.md" ]
     let mSrcDir = toMaybe (lookupEnvSync "AGENT_CONFIG_DIR")
     results <- traverse
         (\name -> do
