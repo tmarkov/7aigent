@@ -31,7 +31,6 @@ import Node.FS.Aff as FS
 
 import Agent.Types
     ( WorkspacePath(..)
-    , ApiEndpoint(..)
     , Timestamp(..)
     , SessionId(..)
     , SessionEndReason(..)
@@ -284,9 +283,6 @@ startSession svc ws@(WorkspacePath wp) resumedFrom existingHistory resumeState p
             exit1 svc
         Right k -> pure k
 
-    let (ApiEndpoint summaryApiEndpoint) = config.apiEndpoint
-    let (ModelName summaryModel) = config.model
-
     preflight <- runSandboxPreflight ws (promptSandboxPreflight svc)
     case preflight of
         HaltStartup -> do
@@ -315,17 +311,6 @@ startSession svc ws@(WorkspacePath wp) resumedFrom existingHistory resumeState p
 
     -- Connect to Jupyter kernel
     kernelR <- svc.connectKernel sandbox.kernelJsonPath
-        { apiEndpoint: summaryApiEndpoint
-        , apiKey
-        , model: summaryModel
-        }
-        (\purpose input -> launchAff_ do
-            ts' <- getTs svc
-            writeLogEvent ws sessionId (EvtLlmQuery
-                { timestamp: ts'
-                , purpose
-                , input
-                }))
     kernel <- case kernelR of
         Left err -> do
             svc.killSandbox sandbox
@@ -1244,9 +1229,6 @@ runMcpSession
     -> String
     -> Aff McpRunResult
 runMcpSession svc ws@(WorkspacePath wp) config apiKey message = do
-    let summaryApiEndpoint = let (ApiEndpoint e) = config.apiEndpoint in e
-    let summaryModel       = let (ModelName m)   = config.model       in m
-
     sessionId <- allocateSessionId ws
 
     sbxR <- svc.spawnSandbox ws
@@ -1261,17 +1243,6 @@ runMcpSession svc ws@(WorkspacePath wp) config apiKey message = do
             let cleanup = svc.killSandbox s
 
             kernelR <- svc.connectKernel s.kernelJsonPath
-                { apiEndpoint: summaryApiEndpoint
-                , apiKey
-                , model: summaryModel
-                }
-                (\purpose input -> launchAff_ do
-                    ts' <- getTs svc
-                    writeLogEvent ws sessionId (EvtLlmQuery
-                        { timestamp: ts'
-                        , purpose
-                        , input
-                        }))
             case kernelR of
                 Left err -> do
                     cleanup

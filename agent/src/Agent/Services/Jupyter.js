@@ -1,10 +1,37 @@
 import * as zmq from "zeromq";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
-import { summarizeEvidence } from "../Agent.Services.Llm/foreign.js";
 
 const SUMMARY_COMM_TARGET = "7aigent.summary";
 const SUMMARY_INPUT_PROMPT_PREFIX = "7aigent.summary.reply:";
+export const summaryCorrelationTimeoutMilliseconds = 10000;
+
+function summaryCommIdFromPrompt(prompt) {
+  const text = String(prompt || "");
+  return text.startsWith(SUMMARY_INPUT_PROMPT_PREFIX)
+    ? text.slice(SUMMARY_INPUT_PROMPT_PREFIX.length)
+    : "";
+}
+
+function summaryRequestFromContent(content) {
+  if (content?.target_name !== SUMMARY_COMM_TARGET || !content?.comm_id) {
+    return null;
+  }
+  return {
+    commId: String(content.comm_id),
+    requestJson: JSON.stringify(content.data || {}),
+  };
+}
+
+export const classifySummaryInputPrompt = summaryCommIdFromPrompt;
+
+export const decodeSummaryCommContent = (contentJson) => {
+  try {
+    return summaryRequestFromContent(JSON.parse(contentJson))?.requestJson || "";
+  } catch (_) {
+    return "";
+  }
+};
 
 function readKernelJson(kernelJsonPath) {
   return JSON.parse(fs.readFileSync(kernelJsonPath, "utf8"));
@@ -68,18 +95,16 @@ export const executeRequestAllowsStdin = (code) =>
   buildExecuteRequestContent(code).allow_stdin;
 
 // connectKernelImpl :: String
-//   -> { apiEndpoint :: String, apiKey :: String, model :: String }
-//   -> (String -> String -> Effect Unit)  -- onLlmQuery
 //   -> (String -> Effect Unit)  -- onError
 //   -> (KernelHandle -> Effect Unit)  -- onSuccess
 //   -> Effect Unit
 //
 // KernelHandle = {
 //   execute :: String -> (String -> Effect Unit) -> (String -> Effect Unit) -> Effect Unit,
-//   interrupt :: Effect Unit -> Effect Unit,  -- takes onDone
+//   interrupt :: (String -> Effect Unit) -> Effect Unit -> Effect Unit,
 //   close :: Effect Unit
 // }
-export const connectKernelImpl = (kernelJsonPath) => (summaryServiceConfig) => (onLlmQuery) => (onError) => (onSuccess) => () => {
+export const connectKernelImpl = (kernelJsonPath) => (onError) => (onSuccess) => () => {
   let config;
   try { config = readKernelJson(kernelJsonPath); }
   catch (e) { onError("Failed to read kernel.json: " + e.message)(); return; }
@@ -103,6 +128,7 @@ export const connectKernelImpl = (kernelJsonPath) => (summaryServiceConfig) => (
   // Map from msgId -> { resolve, onToken, output: string[], hadError: boolean }
   const pending = new Map();
   const pendingSummaryReplies = new Map();
+  const expiredSummaryRequests = new Set();
 
   function sendShellMessage(msgType, content) {
     const msgId = crypto.randomUUID();
@@ -116,40 +142,15 @@ export const connectKernelImpl = (kernelJsonPath) => (summaryServiceConfig) => (
 
   function handleSummaryComm(parsed) {
     if (parsed.header?.msg_type !== "comm_open") return false;
-    const content = parsed.content || {};
-    if (content.target_name !== SUMMARY_COMM_TARGET) return false;
-
-    const commId = content.comm_id;
-    if (!commId) return true;
-
-    let requestJson = "";
+    let request;
     try {
-      requestJson = JSON.stringify(content.data || {});
+      request = summaryRequestFromContent(parsed.content || {});
     } catch (err) {
-      _resolvePendingSummary(commId, Promise.resolve({ error: "Summary request payload was not serializable: " + err.message }));
       return true;
     }
+    if (!request) return false;
 
-    onLlmQuery("summary")(requestJson)();
-
-    if (!summaryServiceConfig?.apiEndpoint || !summaryServiceConfig?.apiKey || !summaryServiceConfig?.model) {
-      _resolvePendingSummary(commId, Promise.resolve({ error: "Summary service is not configured." }));
-      return true;
-    }
-
-    _resolvePendingSummary(
-      commId,
-      new Promise((resolve) => {
-        summarizeEvidence(
-          summaryServiceConfig.apiEndpoint,
-          summaryServiceConfig.apiKey,
-          summaryServiceConfig.model,
-          requestJson,
-          (errorMessage) => resolve({ error: String(errorMessage) }),
-          (responseData) => resolve({ data: responseData }),
-        );
-      }),
-    );
+    _resolvePendingSummary(request.commId, Promise.resolve(request.requestJson));
     return true;
   }
 
@@ -158,25 +159,13 @@ export const connectKernelImpl = (kernelJsonPath) => (summaryServiceConfig) => (
   // before iopub), call it.  Otherwise write the settled promise directly so
   // handleInputRequest can pick it up with a simple Map lookup.
   function _resolvePendingSummary(commId, settledPromise) {
+    if (expiredSummaryRequests.delete(commId)) return;
     const existing = pendingSummaryReplies.get(commId);
     if (existing?._deferred) {
       existing._deferred(settledPromise);
     } else {
       pendingSummaryReplies.set(commId, settledPromise);
     }
-  }
-
-  function encodeSummaryReplyValue(result) {
-    if (result?.error != null) {
-      return "error\t" + Buffer.from(String(result.error), "utf8").toString("base64");
-    }
-
-    const lines = ["ok"];
-    for (const entry of result?.data?.summaries || []) {
-      const encodedSummary = Buffer.from(String(entry.summary), "utf8").toString("base64");
-      lines.push(String(entry.id) + "\t" + encodedSummary);
-    }
-    return lines.join("\n");
   }
 
   // Return a Promise that resolves to the pending summary reply for commId.
@@ -199,26 +188,65 @@ export const connectKernelImpl = (kernelJsonPath) => (summaryServiceConfig) => (
     if (parsed.header?.msg_type !== "input_request") return false;
 
     const prompt = String(parsed.content?.prompt || "");
-    if (prompt.startsWith(SUMMARY_INPUT_PROMPT_PREFIX)) {
-      let value;
-      const commId = prompt.slice(SUMMARY_INPUT_PROMPT_PREFIX.length);
-      // Must exceed LLM_WALL_CLOCK_TIMEOUT_MS × MAX_ATTEMPTS so the LLM has a full
-      // chance to respond (or exhaust retries) before we give up on the Julia side.
-      const timeoutMs = 330000; // 5.5 minutes — just above the 5-minute LLM wall-clock
-      let timeoutHandle;
-      const timeoutPromise = new Promise((_, reject) => {
-        timeoutHandle = setTimeout(() => reject(new Error("Summary LLM call timed out after 330s")), timeoutMs);
-      });
-      try {
-        const pendingReply = await Promise.race([_awaitPendingSummary(commId), timeoutPromise]);
-        value = encodeSummaryReplyValue(await Promise.race([pendingReply, timeoutPromise]));
-      } catch (err) {
-        value = encodeSummaryReplyValue({ error: String(err.message || err) });
-      } finally {
-        clearTimeout(timeoutHandle);
-        pendingSummaryReplies.delete(commId);
+    const isSummaryPrompt = prompt.startsWith(SUMMARY_INPUT_PROMPT_PREFIX);
+    const commId = summaryCommIdFromPrompt(prompt);
+    if (isSummaryPrompt) {
+      if (!commId) {
+        await sendStdinReply(
+          { value: "error\t" + Buffer.from(
+            "Summary input request omitted its correlation id.",
+            "utf8",
+          ).toString("base64") },
+          parsed.header,
+        );
+        return true;
       }
-      await sendStdinReply({ value }, parsed.header);
+      const parentMsgId =
+        parsed.parentHeader?.msg_id || parsed.header?.parent_header?.msg_id;
+      const handler = pending.get(parentMsgId);
+      if (!handler) {
+        await sendStdinReply(
+          { value: "error\t" + Buffer.from(
+            "7aigent has no pending execution for this summary request.",
+            "utf8",
+          ).toString("base64") },
+          parsed.header,
+        );
+        return true;
+      }
+      const loadSummaryRequest = (onError) => (onSuccess) => () => {
+        let settled = false;
+        const timeoutHandle = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          pendingSummaryReplies.delete(commId);
+          expiredSummaryRequests.add(commId);
+          onError(
+            `Summary request '${commId}' did not receive a matching comm_open ` +
+            `within ${summaryCorrelationTimeoutMilliseconds} ms`,
+          )();
+        }, summaryCorrelationTimeoutMilliseconds);
+        _awaitPendingSummary(commId).then((requestJson) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeoutHandle);
+          onSuccess(requestJson)();
+        }).catch((err) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeoutHandle);
+          onError(String(err?.message || err))();
+        }).finally(() => {
+          pendingSummaryReplies.delete(commId);
+        });
+        return () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeoutHandle);
+          pendingSummaryReplies.delete(commId);
+        };
+      };
+      await deliverInputRequest(handler, parsed, prompt, loadSummaryRequest);
       return true;
     }
 
@@ -233,6 +261,16 @@ export const connectKernelImpl = (kernelJsonPath) => (summaryServiceConfig) => (
       return true;
     }
 
+    await deliverInputRequest(handler, parsed, prompt, null);
+    return true;
+  }
+
+  async function deliverInputRequest(
+    handler,
+    parsed,
+    prompt,
+    summaryRequest,
+  ) {
     await new Promise((resolve) => {
       let settled = false;
       const finish = () => {
@@ -257,13 +295,13 @@ export const connectKernelImpl = (kernelJsonPath) => (summaryServiceConfig) => (
       };
       handler.onInput({
         prompt,
+        summaryRequest,
         reply,
         cancel: () => () => {
           finish();
         },
       })();
     });
-    return true;
   }
 
   async function iopubLoop() {
@@ -323,7 +361,8 @@ export const connectKernelImpl = (kernelJsonPath) => (summaryServiceConfig) => (
       try {
         await handleInputRequest(parsed);
       } catch (_) {
-        // Ignore failed stdin replies; the Julia side timeout will surface the error.
+        // A failed stdin socket cannot service this request; keep the receive
+        // loop alive so a recoverable handler failure does not block later input.
       }
     }
   }
@@ -354,29 +393,38 @@ export const connectKernelImpl = (kernelJsonPath) => (summaryServiceConfig) => (
         const p = new Promise((resolve) => {
           pending.set(msgId, {
             resolve,
+            completion: null,
             onToken,
             onInput,
             output: [],
             hadError: false,
           });
         });
+        pending.get(msgId).completion = p;
+        p.then((result) => onComplete(result)());
 
-        shell.send(msg).then(() => {
-          p.then((result) => onComplete(result)());
-        }).catch((err) => {
+        shell.send(msg).catch((err) => {
+          const handler = pending.get(msgId);
+          if (!handler) return;
           pending.delete(msgId);
-          onComplete({
+          handler.resolve({
             output: "[kernel error: " + err.message + "]",
             hadError: true,
-          })();
+          });
         });
       },
 
-      // interrupt :: (Effect Unit) -> Effect Unit  -- takes a no-arg callback
-      interrupt: (onDone) => () => {
+      // Interrupt completion means that every execution active when the request
+      // was made has subsequently reported idle on IOPub.
+      interrupt: (onError) => (onDone) => () => {
+        const activeExecutions =
+          Array.from(pending.values(), (handler) => handler.completion);
         const msgId = crypto.randomUUID();
         const msg = buildMsg(key, sessionId, "interrupt_request", {}, msgId);
-        control.send(msg).then(() => onDone()).catch(() => onDone());
+        control.send(msg)
+          .then(() => Promise.all(activeExecutions))
+          .then(() => onDone())
+          .catch((err) => onError(String(err?.message || err))());
       },
 
       // close :: Effect Unit

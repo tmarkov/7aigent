@@ -225,7 +225,10 @@ batch. The response is either:
 - an informative error.
 
 After a successful response, the generated-summary store is updated before the
-next batch begins.
+next batch begins. The REPL API does not impose a summary-level timeout while
+waiting for the runner: a valid request may remain pending through all
+configured runner LLM attempts and completes when a response arrives or the
+execution is interrupted.
 
 ### Configuration
 

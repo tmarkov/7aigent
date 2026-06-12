@@ -301,9 +301,11 @@ before retrying. A `token_usage` event is written for every attempt that
 returns token counts.
 
 **A16** — If the validated timeout decision is `interrupt`, the runner sends
-an `interrupt_request` to the Jupyter control channel. The output produced so
-far, with `\n[interrupted]` appended, is returned as the tool result. The
-ReACT loop continues normally.
+an `interrupt_request` to the Jupyter control channel and waits until the
+interrupted execution reports the kernel as idle. Only then is the output
+produced so far, with `\n[interrupted]` appended, returned as the tool result,
+and the ReACT loop continues normally. Failure to send the interrupt is a
+kernel error and must not be reported as a successful interruption.
 
 **A17** — If the validated timeout decision is `continue`, the runner
 schedules the next check and continues waiting. If the initial timeout LLM
@@ -326,12 +328,16 @@ requests so that supported interactive execution can complete normally.
 stdin channel (S8). When an `input_request` arrives, the runner services the
 request while continuing to drain and accumulate iopub messages belonging to
 the execution. Execution completion waits until the input request has been
-resolved and the kernel has completed the execution.
+resolved and the kernel has completed the execution. If servicing an input
+request is cancelled or fails before transmitting a reply, the runner releases
+the request through its cancellation callback so that later stdin requests can
+be processed.
 
 Input requests whose prompt begins with the reserved summary transport prefix
 `7aigent.summary.reply:` are serviced by the summary RPC defined in A20b and
 `repl-api-requirements.md`. They are not sent to the stdin LLM flow in
-A53–A56.
+A53–A56, but they are execution input requests for scheduling purposes and
+therefore pause and restart timeout checks under A52a.
 
 **A52a** — When an `input_request` arrives, the runner pauses the timeout
 check schedule (A14–A17). If a timeout-check LLM request or retry is in
@@ -392,9 +398,9 @@ The runner parses and validates the LLM response against A53a. If validation
 succeeds:
 
 - If `action` is `interrupt`: the runner sends an `interrupt_request` on the
-  control channel (per A16). The accumulated output so far, with
-  `\n[interrupted]` appended, is returned as the tool result. The pending
-  timeout schedule (A52a) is cancelled.
+  control channel and waits for kernel recovery (per A16). The accumulated
+  output so far, with `\n[interrupted]` appended, is then returned as the tool
+  result. The pending timeout schedule (A52a) is cancelled.
 - If `action` is `reply`: the runner sends an `input_reply` to the stdin
   channel with `content.value` set to `value`. The sent value is appended to
   the accumulated output using JSON string encoding, as
@@ -477,8 +483,35 @@ the terminal, and exits.
 
 **A20b** — The runner services the Jupyter summary RPC defined in
 `repl-api-requirements.md`. Summary-helper LLM calls use the same configured
-model and retry policy as the main session but are not appended to the REACT
-conversation history.
+model and the common LLM transport from A18, including configured retries,
+request debug logging, cancellation, and token accounting, but are not appended
+to the REACT conversation history. The Jupyter service is transport-only: it
+correlates the summary `comm_open` payload with the reserved `input_request`
+and delivers the resulting summary request to the active `julia_repl`
+execution. It does not call the LLM directly.
+
+The runner validates each summary response before replying to Julia. A valid
+response supplies exactly one string summary for every requested target id.
+Invalid JSON or an invalid response shape consumes the same shared attempt
+budget as API failures. If all attempts fail, the runner returns an encoded
+error reply to Julia containing the final API, parse, or validation error
+rather than interrupting the execution.
+
+Before calling the LLM, the runner validates the correlated summary request.
+The request must be a JSON object containing exactly `request_id`,
+`target_ids`, and `evidence`. `request_id` must be a non-empty string;
+`target_ids` must be a non-empty array of unique, non-empty strings; and
+`evidence` must be an object containing exactly the array-valued fields
+`nodes`, `witnesses`, and `targets`. An invalid request receives an encoded
+error reply without making an LLM call.
+
+If the reserved summary `input_request` arrives without a matching
+`comm_open`, the Jupyter transport waits at most 10 seconds for correlation.
+It then fails the summary request with an informative error and releases the
+active execution input request. This timeout bounds only cross-channel
+correlation. Once a valid request is correlated, summary generation has no
+separate summary-level deadline; it remains pending until the configured LLM
+attempts finish or execution is interrupted.
 
 ---
 

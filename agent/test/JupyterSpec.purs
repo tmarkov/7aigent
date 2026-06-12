@@ -3,14 +3,24 @@ module Test.JupyterSpec where
 
 import Prelude
 
+import Data.Either (Either(..))
 import Data.Map as Map
 import Data.String as String
 import Data.Tuple (Tuple(..))
+import Effect.Aff (attempt)
+import Effect.Class (liftEffect)
+import Effect.Exception (message)
 import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (shouldEqual)
 
 import Agent.Programs.Jupyter (collectOutput, IopubMessage(..))
-import Agent.Services.Jupyter (executeRequestAllowsStdin)
+import Agent.Services.Jupyter
+  ( classifySummaryInputPrompt
+  , decodeSummaryCommContent
+  , executeRequestAllowsStdin
+  , interruptKernel
+  , summaryCorrelationTimeoutMilliseconds
+  )
 
 jupyterSpec :: Spec Unit
 jupyterSpec = do
@@ -79,6 +89,43 @@ jupyterSpec = do
 
     it "A4: enables stdin even when source does not mention summarize!" do
       executeRequestAllowsStdin "readline()" `shouldEqual` true
+
+  describe "A20b + A52: summary RPC protocol classification" do
+
+    it "A20b: extracts the reserved summary input correlation id" do
+      classifySummaryInputPrompt "7aigent.summary.reply:comm-42"
+        `shouldEqual` "comm-42"
+      classifySummaryInputPrompt "Name: "
+        `shouldEqual` ""
+
+    it "A20b: extracts only summary comm payloads" do
+      decodeSummaryCommContent
+        ( "{\"target_name\":\"7aigent.summary\",\"comm_id\":\"c1\","
+          <> "\"data\":{\"target_ids\":[\"n1\"]}}"
+        )
+        `shouldEqual` "{\"target_ids\":[\"n1\"]}"
+      decodeSummaryCommContent
+        "{\"target_name\":\"other\",\"comm_id\":\"c1\",\"data\":{}}"
+        `shouldEqual` ""
+
+    it "A20b: uses a short timeout only for unmatched correlation" do
+      summaryCorrelationTimeoutMilliseconds `shouldEqual` 10000
+
+  describe "A16: interrupt completion" do
+
+    it "A16: reports control-channel send failure as a kernel error" do
+      let kernel =
+            { execute: \_ _ _ onDone ->
+                onDone { output: "", hadError: false }
+            , interrupt: \onError _ -> onError "control socket closed"
+            , close: pure unit
+            }
+      result <- attempt (interruptKernel kernel)
+      case result of
+        Left err ->
+          message err `shouldEqual` "control socket closed"
+        Right _ ->
+          liftEffect $ shouldEqual "an interrupt failure" "success"
 
   where
   contains :: String -> String -> Boolean

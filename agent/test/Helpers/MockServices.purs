@@ -202,7 +202,7 @@ mkMockServices opts = do
                     Left e -> Left (SandboxLaunchError e)
                     Right s -> Right s
             , killSandbox: \_ -> pure unit
-            , connectKernel: \path _ _ -> do
+            , connectKernel: \path -> do
                 liftEffect $ record (CallConnectKernel path)
                 pure $ case opts.connectResult of
                     Left e -> Left (KernelError e)
@@ -233,6 +233,7 @@ mkMockServices opts = do
                 liftEffect $ for_ requests \request ->
                     onInput
                         { prompt: request.prompt
+                        , summaryRequest: Nothing
                         , reply: \value annotation _ onSuccess -> do
                             Ref.modify_
                                 (_ <> [ { value, annotation } ])

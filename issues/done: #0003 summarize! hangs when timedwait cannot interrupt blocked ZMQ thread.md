@@ -36,16 +36,14 @@ Node sends an error `input_reply`, which unblocks the Julia `readprompt` call
 and lets `_coerce_stdin_response` propagate the error. This prevents the
 infinite hang but adds a 30-second delay per timed-out call.
 
-## Correct fix
+## Resolution
 
-Use `Threads.@spawn` to run `IJulia.readprompt` on a separate OS thread so
-that Julia's scheduler is not blocked, and `timedwait` works as intended.
-
-Note: a previous attempt to use `Threads.@spawn` failed with
-"cannot switch to task running on another thread" because Julia's `timedwait`
-implementation uses task switching internally that is not compatible with
-cross-thread communication in all Julia versions. The fix may require
-restructuring the timeout logic (e.g. using a `Channel` or `Timer`).
+The Julia-side summary timeout was removed. Valid summary requests now block
+until the runner finishes its configured LLM attempts or execution is
+interrupted. The runner separately bounds only cross-channel correlation:
+an `input_request` without a matching `comm_open` receives an encoded error
+after 10 seconds. Correlated requests are validated before any LLM call, so
+malformed direct summary RPC requests also receive an immediate encoded error.
 
 ## Affected files
 

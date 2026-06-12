@@ -23,6 +23,7 @@ import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (shouldEqual)
 
 import Agent.Programs.Config (parseConfig)
+import Agent.Programs.SummaryRequest (encodeSummaryError)
 import Agent.Programs.SessionLog (allocateSessionId, readLogEvents)
 import Agent.Runner.ToolExecution (doTool)
 import Agent.Services.Jupyter as Jupyter
@@ -70,6 +71,7 @@ toolExecutionSpec = do
                                 delay (Milliseconds 1100.0)
                                 liftEffect $ onInput
                                     { prompt: "Name: "
+                                    , summaryRequest: Nothing
                                     , reply: \_ _ _ onSuccess -> do
                                         Ref.write true inputReplied
                                         onSuccess
@@ -118,6 +120,220 @@ toolExecutionSpec = do
                 events <- requireEvents ws sessionId
                 Array.length (Array.mapMaybe asTimeoutResponse events)
                     `shouldEqual` 0
+
+        it "A52: cancelling stdin service releases the pending request" do
+            withWorkspace \ws -> do
+                sessionId <- allocateSessionId ws
+                mock <- liftEffect $ mkMockServices (mockOptions [])
+                inputStarted <- liftEffect $ Ref.new false
+                inputCancelled <- liftEffect $ Ref.new false
+                let svc = mock.svc
+                        { executeCodeDetailedWithInput =
+                            \_ _ _ onInput -> do
+                                liftEffect $ onInput
+                                    { prompt: "Name: "
+                                    , summaryRequest: Nothing
+                                    , reply: \_ _ _ _ -> pure unit
+                                    , cancel: Ref.write true inputCancelled
+                                    }
+                                waitUntil inputCancelled
+                                pure { output: "", hadError: false }
+                        , callLlm = \_ _ _ _ -> do
+                            liftEffect $ Ref.write true inputStarted
+                            never
+                        }
+                config <- requireConfig
+                maybeResult <- sequential $
+                    parallel
+                        (Just <$> doTool
+                            svc ws sessionId config "key" mockKernelHandle
+                            mockSandboxHandle "{{json_schema}}" "{{prompt}}"
+                            emptyHistory
+                            { name: JuliaRepl
+                            , input: "{\"code\":\"readline()\"}"
+                            , id: ToolCallId "tc-cancel-input"
+                            }
+                            Set.empty
+                            zeroUsage)
+                    <|>
+                    parallel
+                        (waitUntil inputStarted *>
+                            delay (Milliseconds 50.0) $> Nothing)
+                map _.toolInterrupted maybeResult `shouldEqual` Nothing
+                wasCancelled <- liftEffect $ Ref.read inputCancelled
+                wasCancelled `shouldEqual` true
+
+        it "A20b + A52a: summary input uses common LLM transport and pauses timeout" do
+            withWorkspace \ws -> do
+                sessionId <- allocateSessionId ws
+                mock <- liftEffect $ mkMockServices (mockOptions [])
+                timeoutCancelled <- liftEffect $ Ref.new false
+                decisionCalls <- liftEffect $ Ref.new 0
+                inputReplied <- liftEffect $ Ref.new false
+                summaryReply <- liftEffect $ Ref.new ""
+                let requestJson =
+                        ( "{\"request_id\":\"r1\",\"target_ids\":[\"node-1\"],"
+                            <> "\"evidence\":{\"nodes\":[],\"witnesses\":[],"
+                            <> "\"targets\":[]}}"
+                        )
+                let svc = mock.svc
+                        { executeCodeDetailedWithInput =
+                            \_ _ _ onInput -> do
+                                delay (Milliseconds 1100.0)
+                                liftEffect $ onInput
+                                    { prompt: "7aigent.summary.reply:comm-1"
+                                    , summaryRequest: Just
+                                        (delay (Milliseconds 200.0) $> requestJson)
+                                    , reply: \value _ _ onSuccess -> do
+                                        Ref.write value summaryReply
+                                        Ref.write true inputReplied
+                                        onSuccess
+                                    , cancel: pure unit
+                                    }
+                                waitUntil inputReplied
+                                pure { output: "done", hadError: false }
+                        , callLlm = \_ _ _ options -> do
+                            callNumber <- liftEffect $
+                                Ref.modify (\n -> n + 1) decisionCalls
+                            if callNumber == 1
+                                then cancelWith never
+                                    (effectCanceler
+                                        (Ref.write true timeoutCancelled))
+                                else if callNumber == 2
+                                    then pure (Right
+                                        (llmResult "{}" 5 1))
+                                else do
+                                    (options.responseFormat == Llm.JsonObjectResponse)
+                                        `shouldEqual` true
+                                    pure (Right
+                                        (llmResult
+                                            ( "{\"summaries\":[{\"id\":\"node-1\","
+                                                <> "\"summary\":\"Generated.\"}]}"
+                                            )
+                                            9
+                                            2))
+                        }
+                baseConfig <- requireConfig
+                let config = baseConfig
+                        { timeoutCheckSeconds = [ 1 ]
+                        , maxApiRetries = 1
+                        }
+                maybeResult <- sequential $
+                    parallel
+                        (Just <$> doTool
+                            svc ws sessionId config "key" mockKernelHandle
+                            mockSandboxHandle "{{json_schema}}" "{{prompt}}"
+                            emptyHistory
+                            { name: JuliaRepl
+                            , input: "{\"code\":\"summarize!([\\\"node-1\\\"])\"}"
+                            , id: ToolCallId "tc-summary"
+                            }
+                            Set.empty
+                            zeroUsage)
+                    <|>
+                    parallel
+                        (delay (Milliseconds 2500.0) $> Nothing)
+                map _.toolInterrupted maybeResult `shouldEqual` Just false
+                wasCancelled <- liftEffect $ Ref.read timeoutCancelled
+                wasCancelled `shouldEqual` true
+                map (_.usageTotals.inputTokens) maybeResult
+                    `shouldEqual` Just (TokenCount 14)
+                replyValue <- liftEffect $ Ref.read summaryReply
+                replyValue `shouldEqual` "ok\nnode-1\tR2VuZXJhdGVkLg=="
+                events <- requireEvents ws sessionId
+                Array.length (Array.mapMaybe asTimeoutResponse events)
+                    `shouldEqual` 0
+                Array.length (Array.mapMaybe asTokenUsage events)
+                    `shouldEqual` 2
+                Array.length (Array.mapMaybe asLlmQuery events)
+                    `shouldEqual` 1
+
+        it "A20b: summary retry exhaustion returns the final validation error" do
+            withWorkspace \ws -> do
+                sessionId <- allocateSessionId ws
+                mock <- liftEffect $ mkMockServices
+                    (mockOptions
+                        [ llmResult "{}" 5 1
+                        , llmResult "{\"summaries\":[]}" 6 1
+                        ])
+                inputReplied <- liftEffect $ Ref.new false
+                summaryReply <- liftEffect $ Ref.new ""
+                let requestJson =
+                        ( "{\"request_id\":\"r1\",\"target_ids\":[\"node-1\"],"
+                            <> "\"evidence\":{\"nodes\":[],\"witnesses\":[],"
+                            <> "\"targets\":[]}}"
+                        )
+                let svc = mock.svc
+                        { executeCodeDetailedWithInput =
+                            \_ _ _ onInput -> do
+                                liftEffect $ onInput
+                                    { prompt: "7aigent.summary.reply:comm-1"
+                                    , summaryRequest: Just (pure requestJson)
+                                    , reply: \value _ _ onSuccess -> do
+                                        Ref.write value summaryReply
+                                        Ref.write true inputReplied
+                                        onSuccess
+                                    , cancel: pure unit
+                                    }
+                                waitUntil inputReplied
+                                pure { output: "done", hadError: false }
+                        }
+                baseConfig <- requireConfig
+                let config = baseConfig { maxApiRetries = 1 }
+                result <- doTool
+                    svc ws sessionId config "key" mockKernelHandle
+                    mockSandboxHandle "{{json_schema}}" "{{prompt}}"
+                    emptyHistory
+                    { name: JuliaRepl
+                    , input: "{\"code\":\"summarize!([\\\"node-1\\\"])\"}"
+                    , id: ToolCallId "tc-summary-error"
+                    }
+                    Set.empty
+                    zeroUsage
+                result.toolInterrupted `shouldEqual` false
+                replyValue <- liftEffect $ Ref.read summaryReply
+                replyValue `shouldEqual` encodeSummaryError
+                    "Summary response must contain each requested id exactly once"
+
+        it "A20b: malformed summary request returns an error without an LLM call" do
+            withWorkspace \ws -> do
+                sessionId <- allocateSessionId ws
+                mock <- liftEffect $ mkMockServices (mockOptions [])
+                inputReplied <- liftEffect $ Ref.new false
+                summaryReply <- liftEffect $ Ref.new ""
+                let svc = mock.svc
+                        { executeCodeDetailedWithInput =
+                            \_ _ _ onInput -> do
+                                liftEffect $ onInput
+                                    { prompt: "7aigent.summary.reply:comm-1"
+                                    , summaryRequest: Just
+                                        (pure "{\"target_ids\":[\"node-1\"]}")
+                                    , reply: \value _ _ onSuccess -> do
+                                        Ref.write value summaryReply
+                                        Ref.write true inputReplied
+                                        onSuccess
+                                    , cancel: pure unit
+                                    }
+                                waitUntil inputReplied
+                                pure { output: "done", hadError: false }
+                        }
+                config <- requireConfig
+                result <- doTool
+                    svc ws sessionId config "key" mockKernelHandle
+                    mockSandboxHandle "{{json_schema}}" "{{prompt}}"
+                    emptyHistory
+                    { name: JuliaRepl
+                    , input: "{\"code\":\"malformed direct summary RPC\"}"
+                    , id: ToolCallId "tc-summary-invalid-request"
+                    }
+                    Set.empty
+                    zeroUsage
+                result.toolInterrupted `shouldEqual` false
+                replyValue <- liftEffect $ Ref.read summaryReply
+                replyValue `shouldEqual` encodeSummaryError
+                    "Expected exactly the fields request_id, target_ids, evidence"
+                llmCalls <- liftEffect $ callsMatching isLlmCall mock.state
+                llmCalls `shouldEqual` []
 
         it "A52 + A54 + A55: services sequential requests and preserves annotations" do
             withWorkspace \ws -> do
@@ -252,6 +468,7 @@ toolExecutionSpec = do
                             \_ _ _ onInput -> do
                                 liftEffect $ onInput
                                     { prompt: "Name: "
+                                    , summaryRequest: Nothing
                                     , reply: \_ _ onError _ ->
                                         onError "stdin socket closed"
                                     , cancel: Ref.write true inputCancelled
@@ -366,6 +583,12 @@ type TimeoutResponseEvent =
     , interrupt :: Boolean
     }
 
+type LlmQueryEvent =
+    { timestamp :: Timestamp
+    , purpose :: String
+    , input :: String
+    }
+
 mockOptions :: Array Llm.CallLlmResult -> MockOptions
 mockOptions responses =
     { llmResponses: map Right responses
@@ -411,9 +634,18 @@ asTimeoutResponse :: LogEvent -> Maybe TimeoutResponseEvent
 asTimeoutResponse (TimeoutResponse event) = Just event
 asTimeoutResponse _ = Nothing
 
+asLlmQuery :: LogEvent -> Maybe LlmQueryEvent
+asLlmQuery (EvtLlmQuery event) = Just event
+asLlmQuery _ = Nothing
+
 isRequestLog :: CallRecord -> Boolean
 isRequestLog (CallLlmRequestLog _) = true
 isRequestLog _ = false
+
+isLlmCall :: CallRecord -> Boolean
+isLlmCall (CallLlm _) = true
+isLlmCall (CallLlmJson _) = true
+isLlmCall _ = false
 
 isRetryDelay :: CallRecord -> Boolean
 isRetryDelay (CallDelayMilliseconds _) = true

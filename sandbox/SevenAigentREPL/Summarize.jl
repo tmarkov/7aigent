@@ -502,14 +502,7 @@ function _request_summaries_via_comm(request)::Dict{String,String}
 
     try
         prompt = SUMMARY_INPUT_PROMPT_PREFIX * comm_id
-        response_task = @async IJulia.readprompt(prompt)
-        wait_status = timedwait(() -> istaskdone(response_task), SUMMARY_RPC_TIMEOUT_SECS)
-        if wait_status != :ok
-            Base.throwto(response_task, InterruptException())
-            throw(ErrorException("Summary RPC timed out waiting for frontend response."))
-        end
-
-        payload = fetch(response_task)
+        payload = IJulia.readprompt(prompt)
         return _coerce_stdin_response(payload, request.target_ids)
     finally
         try

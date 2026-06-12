@@ -14,7 +14,6 @@ export todo_add!, todo_start!, todo_next!, todo_refine_current!, todo_delete!, s
 
 const SUMMARY_COMM_TARGET = "7aigent.summary"
 const SUMMARY_INPUT_PROMPT_PREFIX = "7aigent.summary.reply:"
-const SUMMARY_RPC_TIMEOUT_SECS = 360.0 # 6 minutes — must exceed handleInputRequest timeout (330s)
 
 const LLM_DF_TRUNCATE = 360
 const LLM_DF_MAX_DISPLAY_COLUMNS = 20

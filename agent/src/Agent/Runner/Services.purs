@@ -31,10 +31,7 @@ import Agent.Services.Stdin as Stdin
 type RunnerServices =
     { spawnSandbox       :: WorkspacePath -> Aff (Either AppError Sandbox.SandboxHandle)
     , killSandbox        :: Sandbox.SandboxHandle -> Aff Unit
-    , connectKernel      :: String
-                             -> { apiEndpoint :: String, apiKey :: String, model :: String }
-                             -> (String -> String -> Effect Unit)
-                         -> Aff (Either AppError Jupyter.KernelHandle)
+    , connectKernel      :: String -> Aff (Either AppError Jupyter.KernelHandle)
     , executeCode        :: Jupyter.KernelHandle -> RawJulia -> (String -> Effect Unit) -> Aff String
     , executeCodeDetailed :: Jupyter.KernelHandle -> RawJulia -> (String -> Effect Unit) -> Aff Jupyter.ExecutionResult
     , executeCodeDetailedWithInput

@@ -17,7 +17,7 @@ import Data.Set as Set
 import Data.String as String
 import Data.Traversable (traverse)
 import Effect (Effect)
-import Effect.Aff (Aff, Milliseconds(..), attempt, delay, forkAff)
+import Effect.Aff (Aff, Milliseconds(..), attempt, bracket, delay, forkAff)
 import Effect.Aff.AVar as AVar
 import Effect.AVar as EffectAVar
 import Effect.Class (liftEffect)
@@ -65,6 +65,12 @@ import Agent.Programs.GitStage
     )
 import Agent.Programs.GitWritePlan (GitWritePlan)
 import Agent.Programs.SessionLog (writeLogEvent)
+import Agent.Programs.SummaryRequest
+    ( buildSummaryHistory
+    , encodeSummaryError
+    , encodeSummaryResult
+    , parseSummaryResponse
+    )
 import Agent.Programs.Timeout (isCheckDue)
 import Agent.Programs.ToolInput
     ( summarizeToolInput
@@ -414,8 +420,17 @@ runJuliaReplWithTimeoutChecks
             ExecutionCompleted result ->
                 pure { output: result.output, toolInterrupted: false }
             InputArrived request -> do
-                sequence <- liftEffect $ Ref.modify (\n -> n + 1) sequenceRef
-                outcome <- handleInputRequest startedAt sequence request partialRef
+                outcome <- bracket
+                    (pure unit)
+                    (const (liftEffect request.cancel))
+                    (const case request.summaryRequest of
+                        Nothing -> do
+                            sequence <- liftEffect $
+                                Ref.modify (\n -> n + 1) sequenceRef
+                            handleInputRequest
+                                startedAt sequence request partialRef
+                        Just loadRequest ->
+                            handleSummaryRequest request loadRequest)
                 case outcome of
                     InputReplied ->
                         waitForResult
@@ -426,6 +441,42 @@ runJuliaReplWithTimeoutChecks
                             { output: partialOutput <> marker
                             , toolInterrupted: true
                             }
+
+    handleSummaryRequest request loadRequest = do
+        requestResult <- attempt loadRequest
+        replyValue <- case requestResult of
+            Left err ->
+                pure (encodeSummaryError (message err))
+            Right requestJson -> do
+                ts <- Timestamp <$> liftEffect svc.nowIso
+                writeLogEvent ws sessionId (EvtLlmQuery
+                    { timestamp: ts
+                    , purpose: "summary"
+                    , input: requestJson
+                    })
+                case buildSummaryHistory requestJson of
+                    Left err ->
+                        pure (encodeSummaryError err)
+                    Right summaryCall -> do
+                        result <- runStructuredCall
+                            summaryCall.history
+                            (parseSummaryResponse summaryCall.targetIds)
+                            (\_ _ -> pure unit)
+                        pure case result of
+                            Left err ->
+                                encodeSummaryError err
+                            Right summaries ->
+                                encodeSummaryResult summaries
+        replyResult <- Jupyter.sendInputReply request replyValue ""
+        case replyResult of
+            Right _ ->
+                pure InputReplied
+            Left _ -> do
+                liftEffect request.cancel
+                svc.interruptKernel kernel
+                pure
+                    (InputInterrupted
+                        "\n[interrupted: summary reply failed]")
 
     raceAff :: forall left right. Aff left -> Aff right -> Aff (Either left right)
     raceAff left right =
@@ -570,13 +621,25 @@ runJuliaReplWithTimeoutChecks
         -> (Int -> Either String decision -> Aff Unit)
         -> Aff (Maybe decision)
     runDecisionCall requestText parseDecision onAttempt =
+        map hushStructuredResult $ runStructuredCall
+            (decisionHistory requestText)
+            parseDecision
+            onAttempt
+
+    runStructuredCall
+        :: forall result
+         . ConversationHistory
+        -> (String -> Either String result)
+        -> (Int -> Either String result -> Aff Unit)
+        -> Aff (Either String result)
+    runStructuredCall history parseResult onAttempt =
         go 1
       where
         go attemptNumber = do
             llmR <- svc.callLlm
                 config
                 apiKey
-                (decisionHistory requestText)
+                history
                 { responseFormat: Llm.JsonObjectResponse
                 , toolsEnabled: false
                 , retryMode: Llm.SingleApiAttempt
@@ -588,7 +651,7 @@ runJuliaReplWithTimeoutChecks
                 Right result -> do
                     recordUsage result.usage
                     let (LlmResponse response) = result.response
-                    pure case parseDecision response.content of
+                    pure case parseResult response.content of
                         Left err ->
                             Left (DecisionResponseFailure err)
                         Right decision ->
@@ -602,7 +665,7 @@ runJuliaReplWithTimeoutChecks
                     onAttempt attemptNumber (Right parsedDecision)
             case attemptResult of
                 Right decision ->
-                    pure (Just decision)
+                    pure (Right decision)
                 Left failure | attemptNumber <= config.maxApiRetries -> do
                     case decisionRetryDelayMilliseconds attemptNumber failure of
                         Nothing ->
@@ -610,8 +673,20 @@ runJuliaReplWithTimeoutChecks
                         Just milliseconds ->
                             svc.delayMilliseconds milliseconds
                     go (attemptNumber + 1)
-                Left _ ->
-                    pure Nothing
+                Left failure ->
+                    pure (Left (decisionFailureMessage failure))
+
+    hushStructuredResult :: forall result. Either String result -> Maybe result
+    hushStructuredResult result =
+        case result of
+            Left _ -> Nothing
+            Right value -> Just value
+
+    decisionFailureMessage :: DecisionFailure -> String
+    decisionFailureMessage failure =
+        case failure of
+            DecisionApiFailure err -> err
+            DecisionResponseFailure err -> err
 
 refreshWorkspaceView
     :: RunnerServices

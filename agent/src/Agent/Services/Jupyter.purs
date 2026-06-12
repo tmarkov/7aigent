@@ -4,11 +4,16 @@ module Agent.Services.Jupyter
     ( KernelHandle
     , ExecutionResult
     , InputRequest
+    , InputRequestWire
+    , SummaryRequestLoader
     , connectKernel
     , executeCode
     , executeCodeDetailed
     , executeCodeDetailedWithInput
     , executeRequestAllowsStdin
+    , summaryCorrelationTimeoutMilliseconds
+    , classifySummaryInputPrompt
+    , decodeSummaryCommContent
     , sendInputReply
     , interruptKernel
     , closeKernel
@@ -16,15 +21,12 @@ module Agent.Services.Jupyter
 
 import Prelude
 import Data.Either (Either(..))
+import Data.Maybe (Maybe)
+import Data.Nullable (Nullable, toMaybe)
 import Effect (Effect)
-import Effect.Aff (Aff, makeAff, nonCanceler)
+import Effect.Aff (Aff, effectCanceler, makeAff, nonCanceler)
+import Effect.Exception (error)
 import Agent.Types (RawJulia(..), AppError(..))
-
-type SummaryServiceConfig =
-    { apiEndpoint :: String
-    , apiKey :: String
-    , model :: String
-    }
 
 type ExecutionResult =
     { output :: String
@@ -33,6 +35,7 @@ type ExecutionResult =
 
 type InputRequest =
     { prompt :: String
+    , summaryRequest :: Maybe (Aff String)
     , reply
         :: String
         -> String
@@ -42,35 +45,54 @@ type InputRequest =
     , cancel :: Effect Unit
     }
 
+type InputRequestWire =
+    { prompt :: String
+    , summaryRequest :: Nullable SummaryRequestLoader
+    , reply
+        :: String
+        -> String
+        -> (String -> Effect Unit)
+        -> Effect Unit
+        -> Effect Unit
+    , cancel :: Effect Unit
+    }
+
+type SummaryRequestLoader =
+    (String -> Effect Unit)
+    -> (String -> Effect Unit)
+    -> Effect (Effect Unit)
+
 -- | A live connection to the Jupyter kernel.
 type KernelHandle =
     { execute   :: String
                     -> (String -> Effect Unit)
-                    -> (InputRequest -> Effect Unit)
+                    -> (InputRequestWire -> Effect Unit)
                     -> (ExecutionResult -> Effect Unit)
                     -> Effect Unit
-    , interrupt :: Effect Unit -> Effect Unit
+    , interrupt
+        :: (String -> Effect Unit)
+        -> Effect Unit
+        -> Effect Unit
     , close     :: Effect Unit
     }
 
 foreign import connectKernelImpl
     :: String
-    -> SummaryServiceConfig
-    -> (String -> String -> Effect Unit)
     -> (String -> Effect Unit)
     -> (KernelHandle -> Effect Unit)
     -> Effect Unit
 
 foreign import executeRequestAllowsStdin :: String -> Boolean
+foreign import summaryCorrelationTimeoutMilliseconds :: Int
+foreign import classifySummaryInputPrompt :: String -> String
+foreign import decodeSummaryCommContent :: String -> String
 
 -- | Connect to the Jupyter kernel described by kernel.json.
 connectKernel
     :: String
-    -> SummaryServiceConfig
-    -> (String -> String -> Effect Unit)
     -> Aff (Either AppError KernelHandle)
-connectKernel kernelJsonPath summaryConfig onLlmQuery = makeAff \resolve -> do
-    connectKernelImpl kernelJsonPath summaryConfig onLlmQuery
+connectKernel kernelJsonPath = makeAff \resolve -> do
+    connectKernelImpl kernelJsonPath
         (\msg -> resolve (Right (Left (KernelError msg))))
         (\h   -> resolve (Right (Right h)))
     pure nonCanceler
@@ -79,12 +101,14 @@ connectKernel kernelJsonPath summaryConfig onLlmQuery = makeAff \resolve -> do
 -- | and resolving with the full output string when complete.
 executeCode :: KernelHandle -> RawJulia -> (String -> Effect Unit) -> Aff String
 executeCode kernel (RawJulia code) onToken = makeAff \resolve -> do
-    kernel.execute code onToken rejectInput (\result -> resolve (Right result.output))
+    kernel.execute code onToken (rejectInput <<< toInputRequest)
+        (\result -> resolve (Right result.output))
     pure nonCanceler
 
 executeCodeDetailed :: KernelHandle -> RawJulia -> (String -> Effect Unit) -> Aff ExecutionResult
 executeCodeDetailed kernel (RawJulia code) onToken = makeAff \resolve -> do
-    kernel.execute code onToken rejectInput (\result -> resolve (Right result))
+    kernel.execute code onToken (rejectInput <<< toInputRequest)
+        (\result -> resolve (Right result))
     pure nonCanceler
 
 executeCodeDetailedWithInput
@@ -94,8 +118,24 @@ executeCodeDetailedWithInput
     -> (InputRequest -> Effect Unit)
     -> Aff ExecutionResult
 executeCodeDetailedWithInput kernel (RawJulia code) onToken onInput = makeAff \resolve -> do
-    kernel.execute code onToken onInput (\result -> resolve (Right result))
+    kernel.execute code onToken (onInput <<< toInputRequest)
+        (\result -> resolve (Right result))
     pure nonCanceler
+
+toInputRequest :: InputRequestWire -> InputRequest
+toInputRequest request =
+    { prompt: request.prompt
+    , summaryRequest: map loadSummaryRequest (toMaybe request.summaryRequest)
+    , reply: request.reply
+    , cancel: request.cancel
+    }
+
+loadSummaryRequest :: SummaryRequestLoader -> Aff String
+loadSummaryRequest loader = makeAff \resolve -> do
+    cancel <- loader
+        (\err -> resolve (Left (error err)))
+        (\requestJson -> resolve (Right requestJson))
+    pure (effectCanceler cancel)
 
 rejectInput :: InputRequest -> Effect Unit
 rejectInput request =
@@ -121,7 +161,9 @@ sendInputReply request value annotation = makeAff \resolve -> do
 -- | Send an interrupt_request to the kernel control channel.
 interruptKernel :: KernelHandle -> Aff Unit
 interruptKernel kernel = makeAff \resolve -> do
-    kernel.interrupt (resolve (Right unit))
+    kernel.interrupt
+        (\err -> resolve (Left (error err)))
+        (resolve (Right unit))
     pure nonCanceler
 
 -- | Close all kernel sockets.

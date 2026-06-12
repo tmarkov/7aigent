@@ -27,6 +27,7 @@ import Test.SessionLogSpec (sessionLogSpec)
 import Test.SessionResumeSpec (sessionResumeSpec)
 import Test.StartupSpec (startupSpec)
 import Test.StdinRequestSpec (stdinRequestSpec)
+import Test.SummaryRequestSpec (summaryRequestSpec)
 import Test.SteeringSpec (steeringSpec)
 import Test.TemplateSpec (templateSpec)
 import Test.TimeoutSpec (timeoutSpec)
@@ -60,6 +61,7 @@ main = launchAff_ $ runSpec [ consoleReporter ] do
   sessionResumeSpec
   startupSpec
   stdinRequestSpec
+  summaryRequestSpec
   steeringSpec
   templateSpec
   timeoutSpec

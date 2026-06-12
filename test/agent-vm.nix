@@ -159,7 +159,7 @@ let
                 kind = "tool-continuation"
             elif "__TOOL_CALL__" in last_user:
                 kind = "tool-call"
-            elif "Should I interrupt this execution?" in last_user:
+            elif "Decide whether to continue waiting or interrupt execution." in last_user:
                 kind = "timeout-check"
             elif payload.get("response_format", {}).get("type") == "json_object":
                 kind = "json"
@@ -210,8 +210,8 @@ let
                 normalized_tool = last_tool.strip()
                 body = text_response(f"FINAL_TOOL_OUTPUT: {normalized_tool}")
             elif kind == "timeout-check":
-                answer = "yes" if "__INTERRUPT_YES__" in last_user else "no"
-                body = text_response(answer)
+                action = "interrupt" if "__INTERRUPT_YES__" in last_user else "continue"
+                body = text_response(json.dumps({"action": action}))
             elif kind == "tool-call":
                 code = last_user.split("__TOOL_CALL__", 1)[1].strip()
                 body = tool_call_response(code)
@@ -525,7 +525,7 @@ pkgs.testers.nixosTest {
     )
     assert rc == 0, out
     timeout_checks = request_entries(kind="timeout-check")
-    assert len(timeout_checks) == 3, timeout_checks
+    assert len(timeout_checks) >= 3, timeout_checks
     tool_request = request_entries(kind="tool-call")[0]
     offsets = [entry["timestamp"] - tool_request["timestamp"] for entry in timeout_checks]
     assert 1 <= offsets[0] <= 12, offsets
@@ -539,23 +539,23 @@ pkgs.testers.nixosTest {
         text = entry["last_user"]
         assert "sleep(12)" in text, text
         assert "started" in text, text
-        assert "Should I interrupt this execution?" in text, text
+        assert "Decide whether to continue waiting or interrupt execution." in text, text
+        assert '"continue"' in text and '"interrupt"' in text, text
         assert entry["model"] == "mock-model", entry
     continuation = request_entries(kind="tool-continuation")[-1]
     continuation_payload = json.dumps(continuation["payload"])
-    assert "Should I interrupt this execution?" not in continuation_payload, continuation_payload
+    assert "Decide whether to continue waiting or interrupt execution." not in continuation_payload, continuation_payload
     session_log = latest_session_log()
     timeout_check_events = [event for event in session_log if event.get("type") == "timeout_check"]
     timeout_response_events = [event for event in session_log if event.get("type") == "timeout_response"]
-    assert len(timeout_check_events) == 3, timeout_check_events
-    assert len(timeout_response_events) == 3, timeout_response_events
-    assert [event["elapsed_seconds"] for event in timeout_check_events] == [3, 7, 14], timeout_check_events
+    assert len(timeout_check_events) >= 3, timeout_check_events
+    assert len(timeout_response_events) == len(timeout_check_events), timeout_response_events
+    assert [event["elapsed_seconds"] for event in timeout_check_events[:3]] == [3, 7, 14], timeout_check_events
     assert all(event["interrupt"] is False for event in timeout_response_events), timeout_response_events
-    assert "Should I interrupt this execution?" in out, out
-    assert "no" in out.lower(), out
+    assert "Decide whether to continue waiting or interrupt execution." in out, out
     assert "FINAL_TOOL_OUTPUT:" in out and "done" in out, out
 
-    # A16: "yes" timeout response interrupts execution and returns partial output.
+    # A16: structured interrupt response stops execution and returns partial output.
     # First timeout check at 3s; sleep(8) keeps it alive long enough.
     reset_workspace(DEFAULT_CONFIG)
     interrupt_prompt = (

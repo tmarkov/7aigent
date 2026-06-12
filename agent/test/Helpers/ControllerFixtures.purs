@@ -45,7 +45,7 @@ Project guide: {{agents_md}}
 mockKernelHandle :: Jupyter.KernelHandle
 mockKernelHandle =
     { execute: \_ _ _ onDone -> onDone { output: "", hadError: false }
-    , interrupt: \onDone -> onDone
+    , interrupt: \_ onDone -> onDone
     , close: pure unit
     }
 
