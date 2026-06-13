@@ -1,4 +1,4 @@
-{ stdenv, julia, lib, cacert, git, juliaEnv }:
+{ stdenv, julia, lib, cacert, git, juliaEnv, sandboxJuliaDepot }:
 
 let
   # juliaEnv is the single shared environment defined in flake.nix,
@@ -48,7 +48,8 @@ stdenv.mkDerivation {
 
     # $out is the depot root: compiled cache lands in $out/compiled/
     export JULIA_PROJECT=$out/project
-    export JULIA_DEPOT_PATH=$out:${juliaDepot}/depot
+    export JULIA_DEPOT_PATH=$out:${sandboxJuliaDepot}
+    export JULIA_CPU_TARGET="x86-64-v3"
     export JULIA_SSL_CA_ROOTS_PATH="${cacert}/etc/ssl/certs/ca-bundle.crt"
     export JULIA_PKG_SERVER=""
     export GIT_CONFIG_NOSYSTEM=1
@@ -63,15 +64,13 @@ stdenv.mkDerivation {
     # Precompile CodeTree into $out/compiled/ so the sandbox can load it
     # without any precompilation at runtime.
     #
-    # JULIA_DEPOT_PATH=$out:${juliaDepot}/depot means:
-    # - Julia searches ${juliaDepot}/depot/compiled/ first for existing caches
+    # JULIA_DEPOT_PATH=$out:${sandboxJuliaDepot} means:
+    # - Julia searches the target-specific sandbox depot for dependency caches
     #   (all transitive deps such as DataFrames, TreeSitter, etc. are already
     #   there, compiled by julia.withPackages — we leave them untouched)
     # - Only CodeTree is missing, so only CodeTree is compiled fresh into $out
-    # - The resulting .ji records @depot/packages/... paths (using juliaDepot's
-    #   packages/ directly, no extra symlink layer) which are identical to what
-    #   juliaDepot itself uses — so cache fingerprints stay consistent
-    JULIA_DEPOT_PATH=$out:${juliaDepot}/depot \
+    JULIA_CPU_TARGET="x86-64-v3" \
+      JULIA_DEPOT_PATH=$out:${sandboxJuliaDepot} \
       ${juliaRaw}/bin/julia --startup-file=no -e 'using CodeTree; using IJulia'
   '';
 

@@ -14,6 +14,8 @@
 #   @julia@        — path to the raw Julia package root
 #   @sandbox_out@  — sandbox package output path
 #   @codeTree@     — CodeTree package output path
+#   @julia_depot@  — target-specific third-party Julia depot
+#   @repl_runtime@ — SevenAigentREPL sources and precompile cache
 #   @sandbox_path@ — PATH inside the sandbox
 
 set -eu
@@ -131,9 +133,9 @@ write_config_json() {
       "/sockets/kernel-internal.json"
     ],
     "env": [
-      "JULIA_DEPOT_PATH=/tmp/julia-depot:@sandbox_out@/julia-depot",
+      "JULIA_DEPOT_PATH=/tmp/julia-depot:@repl_runtime@/julia-depot:@codeTree@:@julia_depot@",
       "JULIA_PROJECT=@codeTree@/project",
-      "JULIA_LOAD_PATH=@sandbox_out@/share/sandbox:@:@v#.#:@stdlib",
+      "JULIA_LOAD_PATH=@repl_runtime@/share/sandbox:@:@v#.#:@stdlib",
       "HOME=/home/julia",
       "JULIA_PKG_SERVER=",
       "PATH=@sandbox_path@"
@@ -302,9 +304,9 @@ run_bwrap() {
         --die-with-parent \
         --chdir /workspace \
         --setenv HOME /home/julia \
-        --setenv JULIA_DEPOT_PATH "/tmp/julia-depot:@sandbox_out@/julia-depot" \
+        --setenv JULIA_DEPOT_PATH "/tmp/julia-depot:@repl_runtime@/julia-depot:@codeTree@:@julia_depot@" \
         --setenv JULIA_PROJECT "@codeTree@/project" \
-        --setenv JULIA_LOAD_PATH "@sandbox_out@/share/sandbox:@:@v#.#:@stdlib" \
+        --setenv JULIA_LOAD_PATH "@repl_runtime@/share/sandbox:@:@v#.#:@stdlib" \
         --setenv JULIA_PKG_SERVER "" \
         --setenv PATH "@sandbox_path@"
 

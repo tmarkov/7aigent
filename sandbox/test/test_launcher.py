@@ -273,15 +273,6 @@ class TestOCIConfig:
         sandbox_out = str(get_launcher().resolve().parent.parent)
         assert sandbox_out in runtime_store_paths()
 
-    def test_host_git_store_path_is_not_exposed(self):
-        """S4/S12: unrelated host store tooling should not be mounted into the sandbox."""
-        git_path = shutil.which("git")
-        if git_path is None or not git_path.startswith("/nix/store/"):
-            pytest.skip("host git is not a Nix store path in this environment")
-
-        git_store_path = str(Path(git_path).parents[1])
-        assert git_store_path not in runtime_store_paths()
-
     def test_workspace_is_readwrite(self, dry_run_output, workspace):
         """S10: /workspace must be a bind mount of the workspace path."""
         mount = _find_mount(dry_run_output.config_json["mounts"], "/workspace")

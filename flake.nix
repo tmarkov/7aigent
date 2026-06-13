@@ -15,7 +15,7 @@
   };
 
   outputs = { self, nixpkgs, flake-utils, mkSpagoDerivation, purescript-overlay }:
-    flake-utils.lib.eachDefaultSystem (system:
+    flake-utils.lib.eachSystem [ "x86_64-linux" ] (system:
       let
         pkgs = import nixpkgs {
           inherit system;
@@ -25,27 +25,15 @@
           ];
         };
 
-        # Single combined Julia environment used by both codeTree (build/test)
-        # and sandbox (runtime depot).  Adding a package here automatically
-        # makes it available inside the sandbox without any other changes.
-        juliaEnv = pkgs.julia.withPackages [
-          # CodeTree.jl runtime dependencies
-          "DBInterface" "DataFrames" "DataFramesMeta" "SHA" "SQLite" "Tables"
-          "TreeSitter"
-          # Sandbox kernel
-          "IJulia"
-        ];
-
-        codeTree = pkgs.callPackage ./CodeTree.jl {
-          cacert   = pkgs.cacert;
-          inherit (pkgs) git;
-          inherit juliaEnv;
-        };
-        sandbox = pkgs.callPackage ./sandbox {
-          inherit codeTree juliaEnv;
+        sandboxPackages = import ./sandbox/packages.nix { inherit pkgs; };
+        sandboxComponents = pkgs.callPackage ./sandbox {
+          inherit sandboxPackages;
           gvisor = pkgs.gvisor;
           python3 = pkgs.python3;
         };
+        inherit (sandboxComponents) codeTree sandbox;
+        sandboxJuliaDepot = sandboxComponents.juliaDepot;
+        sandboxRepl = sandboxComponents.repl;
         agent = pkgs.callPackage ./agent {
           spago = pkgs.spago-unstable;
           purescript = pkgs.purs;
@@ -59,7 +47,7 @@
 
       in {
         packages = {
-          inherit codeTree sandbox agent;
+          inherit codeTree sandbox sandboxJuliaDepot sandboxRepl agent;
           default = sandbox;
         };
 
@@ -70,6 +58,7 @@
           agent-e2e = pkgs.callPackage ./test/agent-vm.nix {
             inherit agent testCodebase;
           };
+          sandbox-nix-structure = sandboxComponents.structureCheck;
         };
 
         devShells.default = pkgs.mkShell {

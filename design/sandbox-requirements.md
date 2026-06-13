@@ -244,3 +244,25 @@ before starting the container.
 **S23** — The launcher is a self-contained shell script. It has no runtime
 dependencies beyond the selected runner (`runsc` by default, `bwrap` in
 compatibility mode) and standard POSIX shell utilities.
+
+**S24** — The sandbox package is supported and exposed only on
+`x86_64-linux`. Julia precompilation uses the `x86-64-v3` CPU target, matching
+the supported NixOS platform baseline for this package.
+
+**S25** — Direct Julia packages available in the sandbox are declared in one
+Nix list. That list drives the generated Julia environment, target-specific
+precompilation, and build-time import validation; adding a package requires
+editing only that list.
+
+**S26** — Target-specific Julia caches are built in derivations separate from
+the sandbox launcher. Third-party package caches depend only on the package
+list and Julia environment. REPL API caches depend on the REPL API and
+CodeTree, but not on launcher, startup, rootfs, or launcher-test sources.
+
+**S27** — General-purpose programs available inside the sandbox are declared
+in one Nix list. That list drives both the minimal runtime closure and the
+sandbox `PATH`; adding or removing a program requires editing only that list.
+
+**S28** — Sandbox Nix configuration is contained in exactly two files:
+`sandbox/packages.nix` declares available packages and `sandbox/default.nix`
+defines all sandbox-related derivations and checks.

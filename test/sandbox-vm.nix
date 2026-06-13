@@ -182,7 +182,7 @@ pkgs.testers.nixosTest {
     rc, _ = machine.execute(
         "SANDBOX_LAUNCHER=${sandbox}/bin/7aigent-sandbox "
         "SANDBOX_PLATFORM=systrap "
-        "pytest -x ${sandbox.src}/test/test_integration.py "
+        "pytest -x ${../sandbox/test/test_integration.py} "
         "2>&1 | tee /tmp/pytest-integration.log"
     )
     if rc != 0:

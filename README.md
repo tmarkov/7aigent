@@ -51,6 +51,10 @@ Build the sandbox derivation:
 nix build .#sandbox
 ```
 
+Julia packages and general programs exposed inside the sandbox are declared in
+[`sandbox/packages.nix`](sandbox/packages.nix). Julia packages go in the
+`julia` list. Programs on the sandbox `PATH` go in the `programs` list.
+
 Ensure the workspace contains a host-managed state directory before launch:
 
 ```sh
