@@ -98,6 +98,7 @@ foreign import streamLlmImpl
         , parameters ::
             Array
                 { name :: String
+                , schemaType :: String
                 , description :: String
                 , required :: Boolean
                 }

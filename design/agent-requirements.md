@@ -131,14 +131,19 @@ spawn. If the user chooses to proceed, the runner removes
   workspace delta, or a selected subset of the current workspace delta. Runs on
   the host with full `.git` write access.
 
-**A4** — `julia_repl` takes a single string argument: the Julia source to
-execute. The runner sends an `execute_request` to the Jupyter shell channel
-with `allow_stdin = true` and collects all `stream`, `execute_result`,
-`display_data`, and `error` messages from the iopub channel until execution
-completes. The concatenated output is returned as the tool result. If the
-kernel sends an `input_request` on the stdin channel, the runner services it
-per the Julia REPL Input Requests section below before the execution is
-considered complete.
+**A4** — `julia_repl` takes an object with:
+
+- `code`: the Julia source to execute.
+- `timeout_seconds`: the first timeout-check deadline for this execution.
+
+`timeout_seconds` must be a positive integer no larger than
+`max_repl_timeout_seconds` from configuration. The runner sends an
+`execute_request` to the Jupyter shell channel with `allow_stdin = true` and
+collects all `stream`, `execute_result`, `display_data`, and `error` messages
+from the iopub channel until execution completes. The concatenated output is
+returned as the tool result. If the kernel sends an `input_request` on the
+stdin channel, the runner services it per the Julia REPL Input Requests section
+below before the execution is considered complete.
 
 **A5** — `git_stage` takes one required field:
 
@@ -238,22 +243,14 @@ behaves identically to SIGINT.
 ### Julia REPL Timeout
 
 **A14** — If a `julia_repl` tool call has been running without completing,
-the runner sends periodic out-of-band interrupt checks using exponential
-backoff:
-
-| Check | Time since start |
-|-------|-----------------|
-| 1st   | 30 s            |
-| 2nd   | 60 s            |
-| 3rd   | 120 s           |
-| 4th   | 240 s           |
-| 5th   | 480 s           |
-| …     | each interval doubles |
-
-The schedule measures accumulated execution-wait time. It is paused while a
-timeout-decision LLM call is in progress and while an input request is being
-serviced. A later checkpoint is therefore not queued or started while an
-earlier check is unresolved. The wall-clock duration substituted for
+the runner sends a timeout check after the tool call's current
+`timeout_seconds` deadline. There is no fixed global timeout schedule. The
+initial deadline is supplied by the `julia_repl` tool input (A4); later
+deadlines are supplied by timeout-check decisions (A15a). Each deadline is a
+single-shot timer. Timeout checking is paused while a timeout-decision LLM
+call is in progress and while an input request is being serviced. A later
+timeout check is therefore not queued or started while an earlier check or
+input request is unresolved. The wall-clock duration substituted for
 `{{elapsed_time}}` continues to include these paused periods.
 
 **A15** — The timeout-check prompt is read from
@@ -282,7 +279,7 @@ budget, token accounting, request debug logging, and terminal prompt display.
 The timeout-specific response schema accepts exactly:
 
 ```json
-{"action":"continue"}
+{"action":"wait","timeout_seconds":30}
 ```
 
 or:
@@ -291,14 +288,16 @@ or:
 {"action":"interrupt"}
 ```
 
-No other fields or action values are valid. The pretty-printed schema that
-expresses these alternatives is the guaranteed substitution value for
-`{{json_schema}}`. The runner makes one initial attempt followed by at most
-`max_api_retries` retries. Every failed API, parse, or validation attempt
-consumes one retry. Parse and validation failures retry immediately. API and
-network failures wait according to the exponential backoff schedule in A18
-before retrying. A `token_usage` event is written for every attempt that
-returns token counts.
+For `wait`, `timeout_seconds` must be a positive integer no larger than
+`max_repl_timeout_seconds` from configuration and becomes the next
+single-shot deadline. No other fields or action values are valid. The
+pretty-printed schema that expresses these alternatives is the guaranteed
+substitution value for `{{json_schema}}`. The runner makes one initial attempt
+followed by at most `max_api_retries` retries. Every failed API, parse, or
+validation attempt consumes one retry. Parse and validation failures retry
+immediately. API and network failures wait according to the exponential
+backoff schedule in A18 before retrying. A `token_usage` event is written for
+every attempt that returns token counts.
 
 **A16** — If the validated timeout decision is `interrupt`, the runner sends
 an `interrupt_request` to the Jupyter control channel and waits until the
@@ -307,13 +306,15 @@ produced so far, with `\n[interrupted]` appended, returned as the tool result,
 and the ReACT loop continues normally. Failure to send the interrupt is a
 kernel error and must not be reported as a successful interruption.
 
-**A17** — If the validated timeout decision is `continue`, the runner
-schedules the next check and continues waiting. If the initial timeout LLM
-attempt and all permitted retries fail without a valid decision, the runner
-also continues waiting and schedules the next check. One `timeout_response`
-event records the final decision for the scheduled check, with
-`interrupt = true` only for a validated `interrupt` decision and
-`interrupt = false` otherwise. There is no hard cap on total wait time.
+**A17** — If the validated timeout decision is `wait`, the runner schedules
+the next single-shot check using the decision's `timeout_seconds` and
+continues waiting. If the initial timeout LLM attempt and all permitted
+retries fail without a valid decision, the runner continues waiting using the
+same timeout duration that triggered the failed check. One
+`timeout_response` event records the final decision for the scheduled check:
+`action = "wait"` and `timeout_seconds` set for a validated wait decision, or
+`action = "interrupt"` for a validated interrupt decision. There is no hard
+cap on total wait time.
 
 ---
 
@@ -580,7 +581,7 @@ concurrently.
 | `compaction`       | `timestamp`, `summary`, `initial_message_count`, `compacted_message_count`, `final_message_count`, `total_tokens_before` |
 | `reflection`       | `timestamp`, `turn_index` (1-based turn number within current round), `auto_turns_taken` (rounds auto-continued so far this session), `complete` (bool), `feedback` (string or null) |
 | `timeout_check`    | `timestamp`, `elapsed_seconds`, `partial_output`                                           |
-| `timeout_response` | `timestamp`, `interrupt` (bool)                                                            |
+| `timeout_response` | `timestamp`, `action` (`"wait"` or `"interrupt"`), `timeout_seconds` (int or null)         |
 | `stdin_request`    | `timestamp`, `tool_call_id`, `sequence` (1-based), `attempt` (1-based), `elapsed_seconds`, `prompt`, `value` (string or null), `interrupt` (bool or null), `error` (string or null) |
 | `escape`           | `timestamp`                                                                                |
 | `sigint`           | `timestamp`                                                                                |
@@ -752,6 +753,7 @@ output_threshold_chars = 20000
 max_api_retries        = 3
 max_tokens_per_turn    = 200000
 max_turns_per_round    = 5
+max_repl_timeout_seconds = 300
 compaction_threshold   = 150000
 preserve_initial       = 20000
 preserve_final         = 40000
@@ -760,10 +762,11 @@ preserve_final         = 40000
 `compaction_threshold`, `preserve_initial`, and `preserve_final` are token
 counts governing context compaction (A33–A36). `max_turns_per_round` is the
 maximum number of turns the runner will auto-continue within a single round
-before surfacing to the user regardless of reflection result (A48). Additional
-sections may be present for other layers, including the REPL API; runner
-configuration parsing must ignore unknown sections and keys that it does not
-own.
+before surfacing to the user regardless of reflection result (A48).
+`max_repl_timeout_seconds` is the upper bound accepted for `julia_repl`
+initial and follow-up timeout deadlines (A4, A15a). Additional sections may be
+present for other layers, including the REPL API; runner configuration parsing
+must ignore unknown sections and keys that it does not own.
 
 **A37a** — `max_tokens_per_turn` limits how much new context the agent may
 accumulate within a single turn (the ReACT loop between two user prompts).

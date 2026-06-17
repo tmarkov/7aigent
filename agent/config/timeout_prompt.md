@@ -11,8 +11,8 @@ Output so far:
 {{output_so_far}}
 ```
 
-Decide whether to continue waiting or interrupt execution. Return a JSON
-object matching this schema:
+Decide whether to wait longer or interrupt execution. If waiting, choose the
+next timeout in seconds. Return a JSON object matching this schema:
 ```json
 {{json_schema}}
 ```

@@ -68,7 +68,7 @@ function encodeTool(td) {
   const properties = {};
   const required = [];
   for (const p of td.parameters) {
-    properties[p.name] = { type: "string", description: p.description };
+    properties[p.name] = { type: p.schemaType, description: p.description };
     if (p.required) required.push(p.name);
   }
   return {

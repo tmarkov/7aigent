@@ -28,6 +28,7 @@ compaction_threshold = 40000
 preserve_initial = 5000
 preserve_final = 10000
 max_turns_per_round = 3
+max_repl_timeout_seconds = 300
 """
 
 -- | A minimal system_prompt.md that uses all required template keywords.

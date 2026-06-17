@@ -3,8 +3,10 @@ module Test.Main where
 import Prelude
 import Effect (Effect)
 import Effect.Aff (launchAff_)
+import Data.Maybe (Maybe(..))
+import Data.Time.Duration (Milliseconds(..))
 import Test.Spec.Reporter (consoleReporter)
-import Test.Spec.Runner (runSpec)
+import Test.Spec.Runner (defaultConfig, runSpec')
 
 import Test.CLISpec (cliSpec)
 import Test.CompactionSpec (compactionSpec)
@@ -33,12 +35,14 @@ import Test.TemplateSpec (templateSpec)
 import Test.TimeoutSpec (timeoutSpec)
 import Test.ToolStepSpec (toolStepSpec)
 import Test.ToolDefsSpec (toolDefsSpec)
+import Test.ToolInputSpec (toolInputSpec)
 import Test.ToolExecutionSpec (toolExecutionSpec)
 import Test.WireFormatSpec (wireFormatSpec)
 import Test.RoundStepSpec (roundStepSpec)
 
 main :: Effect Unit
-main = launchAff_ $ runSpec [ consoleReporter ] do
+main = launchAff_ $ runSpec' (defaultConfig { timeout = Just (Milliseconds 5000.0) })
+  [ consoleReporter ] do
   cliSpec
   compactionSpec
   configSpec
@@ -67,5 +71,6 @@ main = launchAff_ $ runSpec [ consoleReporter ] do
   timeoutSpec
   toolStepSpec
   toolDefsSpec
+  toolInputSpec
   toolExecutionSpec
   wireFormatSpec

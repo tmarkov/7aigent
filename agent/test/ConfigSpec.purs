@@ -100,6 +100,7 @@ configSpec = do
             , "preserve_initial       = 20000"
             , "preserve_final         = 40000"
             , "max_turns_per_round    = 5"
+            , "max_repl_timeout_seconds = 300"
             ]
       case parseConfig toml of
         Right config -> do
@@ -107,12 +108,12 @@ configSpec = do
           config.model `shouldEqual` ModelName "test-model"
           config.outputThresholdChars `shouldEqual` 20000
           config.maxApiRetries `shouldEqual` 3
-          config.timeoutCheckSeconds `shouldEqual` [30, 60, 120, 240, 480]
+          config.maxReplTimeoutSeconds `shouldEqual` 300
           config.progressIntervalSeconds `shouldEqual` 15
         Left err ->
           fail ("Expected successful parse, got error: " <> show err)
 
-    it "A37: parses custom timeout_check_seconds and progress_interval_seconds" do
+    it "A37: parses custom max_repl_timeout_seconds and progress_interval_seconds" do
       let toml = String.joinWith "\n"
             [ "api_endpoint             = \"https://api.example.com/v1\""
             , "model                    = \"test-model\""
@@ -124,12 +125,12 @@ configSpec = do
             , "preserve_initial         = 20000"
             , "preserve_final           = 40000"
             , "max_turns_per_round      = 5"
-            , "timeout_check_seconds    = [2, 4, 8]"
+            , "max_repl_timeout_seconds = 120"
             , "progress_interval_seconds = 3"
             ]
       case parseConfig toml of
         Right config -> do
-          config.timeoutCheckSeconds `shouldEqual` [2, 4, 8]
+          config.maxReplTimeoutSeconds `shouldEqual` 120
           config.progressIntervalSeconds `shouldEqual` 3
         Left err ->
           fail ("Expected successful parse, got error: " <> show err)
@@ -146,6 +147,7 @@ configSpec = do
             , "preserve_initial       = 10000"
             , "preserve_final         = 30000"
             , "max_turns_per_round    = 3"
+            , "max_repl_timeout_seconds = 300"
             ]
       case parseConfig toml of
         Right config -> do
@@ -166,6 +168,7 @@ configSpec = do
             , "preserve_initial       = 20000"
             , "preserve_final         = 40000"
             , "max_turns_per_round    = 7"
+            , "max_repl_timeout_seconds = 300"
             ]
       case parseConfig toml of
         Right config -> config.maxTurnsPerRound `shouldEqual` 7
@@ -213,6 +216,7 @@ configSpec = do
             , "preserve_initial       = 20000"
             , "preserve_final         = 40000"
             , "max_turns_per_round    = 5"
+            , "max_repl_timeout_seconds = 300"
             ]
       parseConfig toml `shouldSatisfy` isLeft
 
@@ -227,6 +231,7 @@ configSpec = do
             , "preserve_initial       = 20000"
             , "preserve_final         = 40000"
             , "max_turns_per_round    = 5"
+            , "max_repl_timeout_seconds = 300"
             ]
       parseConfig toml `shouldSatisfy` isLeft
 
@@ -276,6 +281,7 @@ configSpec = do
             , "preserve_initial       = 20000"
             , "preserve_final         = 40000"
             , "max_turns_per_round    = 5"
+            , "max_repl_timeout_seconds = 300"
             ]
       parseConfig toml `shouldSatisfy` isLeft
 
@@ -291,6 +297,7 @@ configSpec = do
             , "preserve_initial       = 20000"
             , "preserve_final         = 40000"
             , "max_turns_per_round    = 5"
+            , "max_repl_timeout_seconds = 300"
             ]
       parseConfig toml `shouldSatisfy` isLeft
 
@@ -306,6 +313,7 @@ configSpec = do
             , "preserve_initial       = 20000"
             , "preserve_final         = 40000"
             , "max_turns_per_round    = 5"
+            , "max_repl_timeout_seconds = 300"
             ]
       case parseConfig toml of
         Left err ->

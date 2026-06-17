@@ -198,7 +198,10 @@ encodeLogEventJson (TimeoutResponse r) =
     mkObj
         [ Tuple "type" (J.fromString "timeout_response")
         , Tuple "timestamp" (J.fromString (renderTimestamp r.timestamp))
-        , Tuple "interrupt" (J.fromBoolean r.interrupt)
+        , Tuple "action" (J.fromString r.action)
+        , Tuple "timeout_seconds" case r.timeoutSeconds of
+            Nothing -> J.jsonNull
+            Just seconds -> J.fromNumber (Int.toNumber seconds)
         ]
 encodeLogEventJson (StdinRequest r) =
     mkObj
@@ -369,8 +372,13 @@ decodeLogEventObj obj = do
                 }
         "timeout_response" -> do
             ts <- getStr obj "timestamp"
-            interrupt <- getBool obj "interrupt"
-            Right $ TimeoutResponse { timestamp: Timestamp ts, interrupt }
+            action <- getStr obj "action"
+            timeoutSeconds <- getNullableInt obj "timeout_seconds"
+            Right $ TimeoutResponse
+                { timestamp: Timestamp ts
+                , action
+                , timeoutSeconds
+                }
         "stdin_request" -> do
             ts <- getStr obj "timestamp"
             tcId <- getStr obj "tool_call_id"
@@ -440,6 +448,18 @@ getNullableBool obj key = case FO.lookup key obj of
         | otherwise -> case J.toBoolean value of
             Nothing -> Left (JsonDecodeError ("Field " <> key <> " is not a boolean or null"))
             Just decision -> Right (Just decision)
+
+getNullableInt
+    :: FO.Object J.Json
+    -> String
+    -> Either AppError (Maybe Int)
+getNullableInt obj key = case FO.lookup key obj of
+    Nothing -> Left (JsonDecodeError ("Missing field: " <> key))
+    Just value
+        | J.isNull value -> Right Nothing
+        | otherwise -> case J.toNumber value of
+            Nothing -> Left (JsonDecodeError ("Field " <> key <> " is not a number or null"))
+            Just n -> Right (Just (numToInt n))
 
 getNum :: FO.Object J.Json -> String -> Either AppError Number
 getNum obj key = case FO.lookup key obj of

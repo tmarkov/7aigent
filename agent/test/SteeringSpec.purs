@@ -25,7 +25,7 @@ testConfig =
     , preserveInitial: TokenCount 20000
     , preserveFinal: TokenCount 40000
     , maxTurnsPerRound: 5
-    , timeoutCheckSeconds: [30, 60, 120, 240, 480]
+    , maxReplTimeoutSeconds: 300
     , progressIntervalSeconds: 15
     }
 

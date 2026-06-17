@@ -47,7 +47,7 @@ foreign import parseTomlPure
        , preserve_initial :: Number
        , preserve_final :: Number
        , max_turns_per_round :: Number
-       , timeout_check_seconds :: Array Number
+       , max_repl_timeout_seconds :: Number
        , progress_interval_seconds :: Number
        }
 
@@ -86,7 +86,7 @@ parseConfig input
                     , preserveInitial: TokenCount (Int.round r.preserve_initial)
                     , preserveFinal: TokenCount (Int.round r.preserve_final)
                     , maxTurnsPerRound: Int.round r.max_turns_per_round
-                    , timeoutCheckSeconds: map Int.round r.timeout_check_seconds
+                    , maxReplTimeoutSeconds: Int.round r.max_repl_timeout_seconds
                     , progressIntervalSeconds: Int.round r.progress_interval_seconds
                     }
 

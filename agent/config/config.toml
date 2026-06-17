@@ -13,6 +13,7 @@ compaction_threshold   = 120000
 preserve_initial       = 16000
 preserve_final         = 8000
 max_turns_per_round    = 20
+max_repl_timeout_seconds = 300
 
 [summaries]
 max_targets_per_batch = 6

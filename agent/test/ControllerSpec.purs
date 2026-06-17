@@ -74,7 +74,11 @@ juliaToolLlmResult code =
     { response: LlmResponse
         { content: ""
         , toolCalls:
-            [ { name: JuliaRepl, input: "{\"code\": " <> show code <> "}", id: ToolCallId "tc-1" } ]
+            [ { name: JuliaRepl
+              , input: "{\"code\": " <> show code <> ",\"timeout_seconds\":30}"
+              , id: ToolCallId "tc-1"
+              }
+            ]
         , inputTokens: TokenCount 100
         }
     , usage: { inputTokens: TokenCount 100, cachedInputTokens: TokenCount 0, outputTokens: TokenCount 30 }
@@ -86,7 +90,11 @@ juliaToolLlmResultHighTokens code tokens =
     { response: LlmResponse
         { content: ""
         , toolCalls:
-            [ { name: JuliaRepl, input: "{\"code\": " <> show code <> "}", id: ToolCallId "tc-1" } ]
+            [ { name: JuliaRepl
+              , input: "{\"code\": " <> show code <> ",\"timeout_seconds\":30}"
+              , id: ToolCallId "tc-1"
+              }
+            ]
         , inputTokens: TokenCount tokens
         }
     , usage: { inputTokens: TokenCount tokens, cachedInputTokens: TokenCount 0, outputTokens: TokenCount 30 }
@@ -491,6 +499,7 @@ controllerSpec = do
                     , "preserve_initial = 5000"
                     , "preserve_final = 10000"
                     , "max_turns_per_round = 3"
+                    , "max_repl_timeout_seconds = 300"
                     ]
             withTestSessionCustom
                 { llmResponses:
@@ -727,6 +736,7 @@ controllerSpec = do
                         , "preserve_initial = 5000"
                         , "preserve_final = 10000"
                         , "max_turns_per_round = 3"
+                        , "max_repl_timeout_seconds = 300"
                         ]
                 writeWorkspaceFile ws ".7aigent/config.toml" badKeyConfig
                 writeWorkspaceFile ws ".7aigent/system_prompt.md" minimalSystemPrompt
@@ -768,6 +778,7 @@ controllerSpec = do
                         , "preserve_initial = 5000"
                         , "preserve_final = 10000"
                         , "max_turns_per_round = 3"
+                        , "max_repl_timeout_seconds = 300"
                         ]
                 writeWorkspaceFile ws ".7aigent/config.toml" emptyKeyConfig
                 writeWorkspaceFile ws ".7aigent/system_prompt.md" minimalSystemPrompt
@@ -837,6 +848,7 @@ controllerSpec = do
                         , "preserve_initial = 5000"
                         , "preserve_final = 10000"
                         , "max_turns_per_round = 3"
+                        , "max_repl_timeout_seconds = 300"
                         ]
                 writeWorkspaceFile ws ".7aigent/config.toml" missingFieldConfig
                 writeWorkspaceFile ws ".7aigent/system_prompt.md" minimalSystemPrompt
@@ -922,6 +934,7 @@ controllerSpec = do
                     , "preserve_initial = 50"
                     , "preserve_final = 50"
                     , "max_turns_per_round = 3"
+                    , "max_repl_timeout_seconds = 300"
                     ]
             withTestSessionCustom
                 { llmResponses:
@@ -965,6 +978,7 @@ controllerSpec = do
                     , "preserve_initial = 50"
                     , "preserve_final = 50"
                     , "max_turns_per_round = 3"
+                    , "max_repl_timeout_seconds = 300"
                     ]
             withTestSessionCustom
                 { llmResponses:
@@ -1000,6 +1014,7 @@ controllerSpec = do
                     , "preserve_initial = 50"
                     , "preserve_final = 50"
                     , "max_turns_per_round = 3"
+                    , "max_repl_timeout_seconds = 300"
                     ]
             withTestSessionCustom
                 { llmResponses:
@@ -1040,6 +1055,7 @@ controllerSpec = do
                     , "preserve_initial = 50"
                     , "preserve_final = 50"
                     , "max_turns_per_round = 3"
+                    , "max_repl_timeout_seconds = 300"
                     ]
             let hugePrompt = String.joinWith "" (Array.replicate 400 "very-large-user-prompt ")
             withTestSessionCustom
@@ -1080,6 +1096,7 @@ controllerSpec = do
                     , "preserve_initial = 50"
                     , "preserve_final = 50"
                     , "max_turns_per_round = 3"
+                    , "max_repl_timeout_seconds = 300"
                     ]
             withTestSessionCustom
                 { llmResponses:
@@ -1125,6 +1142,7 @@ controllerSpec = do
                     , "preserve_initial = 1"
                     , "preserve_final = 5"
                     , "max_turns_per_round = 3"
+                    , "max_repl_timeout_seconds = 300"
                     ]
             withTestSessionCustom
                 { llmResponses:
@@ -1197,6 +1215,7 @@ controllerSpec = do
                     , "preserve_initial = 50"
                     , "preserve_final = 50"
                     , "max_turns_per_round = 3"
+                    , "max_repl_timeout_seconds = 300"
                     ]
             withTestSessionCustom
                 { llmResponses:
@@ -1251,6 +1270,7 @@ controllerSpec = do
                     , "preserve_initial = 50"
                     , "preserve_final = 50"
                     , "max_turns_per_round = 3"
+                    , "max_repl_timeout_seconds = 300"
                     ]
             withWorkspace \ws -> do
                 writeWorkspaceFile ws ".7aigent/config.toml" compactConfig
@@ -1322,6 +1342,7 @@ controllerSpec = do
                     , "preserve_initial = 50"
                     , "preserve_final = 50"
                     , "max_turns_per_round = 3"
+                    , "max_repl_timeout_seconds = 300"
                     ]
             withTestSessionCustom
                 { llmResponses:
@@ -1360,6 +1381,7 @@ controllerSpec = do
                     , "preserve_initial = 5000"
                     , "preserve_final = 10000"
                     , "max_turns_per_round = 3"
+                    , "max_repl_timeout_seconds = 300"
                     ]
             withTestSessionCustom
                 { llmResponses:
@@ -1410,6 +1432,7 @@ controllerSpec = do
                     , "preserve_initial = 5000"
                     , "preserve_final = 10000"
                     , "max_turns_per_round = 3"
+                    , "max_repl_timeout_seconds = 300"
                     ]
             withTestSessionCustom
                 { llmResponses:

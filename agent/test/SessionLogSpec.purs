@@ -266,10 +266,11 @@ sessionLogSpec = do
         Left err -> fail ("Decode failed: " <> show err)
 
     it "A26: timeout_response event round-trips correctly" do
-      let event = timeoutResponseEvent "t1" true
+      let event = timeoutResponseEvent "t1" "wait" (Just 10)
       case decodeLogEvent (encodeLogEvent event) of
         Right (TimeoutResponse r) -> do
-          r.interrupt `shouldEqual` true
+          r.action `shouldEqual` "wait"
+          r.timeoutSeconds `shouldEqual` Just 10
         Right _ -> fail "Expected TimeoutResponse event"
         Left err -> fail ("Decode failed: " <> show err)
 

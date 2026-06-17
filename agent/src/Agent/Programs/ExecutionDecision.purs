@@ -40,13 +40,13 @@ instance Show StdinDecision where
 
 data TimeoutDecision
     = InterruptForTimeout
-    | ContinueAfterTimeout
+    | WaitAfterTimeout Int
 
 derive instance Eq TimeoutDecision
 
 instance Show TimeoutDecision where
     show InterruptForTimeout = "InterruptForTimeout"
-    show ContinueAfterTimeout = "ContinueAfterTimeout"
+    show (WaitAfterTimeout seconds) = "(WaitAfterTimeout " <> show seconds <> ")"
 
 data DecisionFailure
     = DecisionApiFailure String
@@ -101,20 +101,38 @@ stdinJsonSchemaPretty =
 timeoutJsonSchemaPretty :: String
 timeoutJsonSchemaPretty =
     """{
-  "type": "object",
-  "properties": {
-    "action": {
-      "type": "string",
-      "enum": [
-        "continue",
-        "interrupt"
-      ]
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "action": {
+          "const": "wait"
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many seconds to wait before the next timeout check"
+        }
+      },
+      "required": [
+        "action",
+        "timeout_seconds"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "action": {
+          "const": "interrupt"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
     }
-  },
-  "required": [
-    "action"
-  ],
-  "additionalProperties": false
+  ]
 }"""
 
 renderStdinPrompt
@@ -184,12 +202,16 @@ parseStdinDecision input = do
 parseTimeoutDecision :: String -> Either String TimeoutDecision
 parseTimeoutDecision input = do
     obj <- parseObject input
-    requireKeys [ "action" ] obj
     action <- getAction obj
     case action of
-        "continue" -> Right ContinueAfterTimeout
-        "interrupt" -> Right InterruptForTimeout
-        _ -> Left "Timeout action must be continue or interrupt"
+        "wait" -> do
+            requireKeys [ "action", "timeout_seconds" ] obj
+            timeoutSeconds <- getPositiveInteger "timeout_seconds" obj
+            Right (WaitAfterTimeout timeoutSeconds)
+        "interrupt" -> do
+            requireKeys [ "action" ] obj
+            Right InterruptForTimeout
+        _ -> Left "Timeout action must be wait or interrupt"
 
 parseObject :: String -> Either String (FO.Object J.Json)
 parseObject input = do
@@ -205,6 +227,16 @@ getAction obj =
     case FO.lookup "action" obj >>= J.toString of
         Nothing -> Left "Field action must be a string"
         Just action -> Right action
+
+getPositiveInteger :: String -> FO.Object J.Json -> Either String Int
+getPositiveInteger key obj =
+    case FO.lookup key obj >>= J.toNumber of
+        Nothing -> Left ("Field " <> key <> " must be a number")
+        Just value ->
+            let rounded = Int.round value
+            in if rounded <= 0 || Int.toNumber rounded /= value
+                then Left ("Field " <> key <> " must be a positive integer")
+                else Right rounded
 
 requireKeys :: Array String -> FO.Object J.Json -> Either String Unit
 requireKeys expected obj =

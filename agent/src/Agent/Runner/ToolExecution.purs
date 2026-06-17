@@ -71,9 +71,9 @@ import Agent.Programs.SummaryRequest
     , encodeSummaryResult
     , parseSummaryResponse
     )
-import Agent.Programs.Timeout (isCheckDue)
 import Agent.Programs.ToolInput
     ( summarizeToolInput
+    , parseJuliaReplInput
     , parseJuliaCodeInput
     , parseGitStageInput
     , parseGitCommitInput
@@ -191,24 +191,28 @@ dispatchTool
     tc knownHunks usageRef =
     case tc.name of
         JuliaRepl -> do
-            let code = parseJuliaCodeInput tc.input
-            result <- runJuliaReplWithTimeoutChecks
-                svc
-                ws
-                sessionId
-                config
-                apiKey
-                kernel
-                tc.id
-                timeoutTemplate
-                stdinTemplate
-                usageRef
-                (RawJulia code)
-            pure
-                { output: result.output
-                , hunks: Set.empty
-                , toolInterrupted: result.toolInterrupted
-                }
+            case parseJuliaReplInput config.maxReplTimeoutSeconds tc.input of
+                Left err ->
+                    toolFailure err
+                Right input -> do
+                    result <- runJuliaReplWithTimeoutChecks
+                        svc
+                        ws
+                        sessionId
+                        config
+                        apiKey
+                        kernel
+                        tc.id
+                        timeoutTemplate
+                        stdinTemplate
+                        usageRef
+                        (RawJulia input.code)
+                        input.timeoutSeconds
+                    pure
+                        { output: result.output
+                        , hunks: Set.empty
+                        , toolInterrupted: result.toolInterrupted
+                        }
 
         GitStage ->
             case parseGitStageInput tc.input of
@@ -344,10 +348,11 @@ runJuliaReplWithTimeoutChecks
     -> String
     -> Ref.Ref Llm.LlmUsage
     -> RawJulia
+    -> Int
     -> Aff { output :: String, toolInterrupted :: Boolean }
 runJuliaReplWithTimeoutChecks
     svc ws sessionId config apiKey kernel toolCallId
-    timeoutTemplate stdinTemplate usageRef source = do
+    timeoutTemplate stdinTemplate usageRef source initialTimeoutSeconds = do
     startedAt <- liftEffect nowEpochMilliseconds
     partialRef <- liftEffect $ Ref.new ""
     eventVar <- AVar.empty
@@ -368,34 +373,27 @@ runJuliaReplWithTimeoutChecks
                 AVar.put (ExecutionFailed (message err)) eventVar
             Right execResult ->
                 AVar.put (ExecutionCompleted execResult) eventVar
-    waitForResult startedAt 0 0 partialRef eventVar sequenceRef
+    waitForResult startedAt initialTimeoutSeconds partialRef eventVar sequenceRef
   where
     waitForResult
-        startedAt scheduleElapsed lastCheckAt partialRef eventVar sequenceRef = do
+        startedAt timeoutSeconds partialRef eventVar sequenceRef = do
         next <- raceAff
-            (delay (Milliseconds 1000.0))
+            (delay (Milliseconds (Int.toNumber timeoutSeconds * 1000.0)))
             (AVar.take eventVar)
         case next of
             Right event ->
                 handleExecutionEvent
-                    startedAt scheduleElapsed lastCheckAt
-                    partialRef eventVar sequenceRef event
-            Left _ ->
-                checkTimeout
-      where
-        checkTimeout = do
-            let scheduleElapsed' = scheduleElapsed + 1
-            if isCheckDue config.timeoutCheckSeconds scheduleElapsed' lastCheckAt then do
+                    startedAt timeoutSeconds partialRef eventVar sequenceRef event
+            Left _ -> do
                 partialOutput <- liftEffect $ Ref.read partialRef
                 elapsed <- elapsedSince startedAt
-                next <- raceAff
-                    (runTimeoutCheck elapsed partialOutput)
+                timeoutResult <- raceAff
+                    (runTimeoutCheck timeoutSeconds elapsed partialOutput)
                     (AVar.take eventVar)
-                case next of
+                case timeoutResult of
                     Right event ->
                         handleExecutionEvent
-                            startedAt scheduleElapsed' lastCheckAt
-                            partialRef eventVar sequenceRef event
+                            startedAt timeoutSeconds partialRef eventVar sequenceRef event
                     Left InterruptForTimeout -> do
                         svc.interruptKernel kernel
                         interruptedOutput <- liftEffect $ Ref.read partialRef
@@ -403,17 +401,12 @@ runJuliaReplWithTimeoutChecks
                             { output: interruptedOutput <> "\n[interrupted]"
                             , toolInterrupted: true
                             }
-                    Left ContinueAfterTimeout ->
-                        waitForResult
-                            startedAt scheduleElapsed' scheduleElapsed'
+                    Left (WaitAfterTimeout nextTimeoutSeconds) ->
+                        waitForResult startedAt nextTimeoutSeconds
                             partialRef eventVar sequenceRef
-            else
-                waitForResult
-                    startedAt scheduleElapsed' lastCheckAt
-                    partialRef eventVar sequenceRef
 
     handleExecutionEvent
-        startedAt scheduleElapsed lastCheckAt partialRef eventVar sequenceRef event =
+        startedAt timeoutSeconds partialRef eventVar sequenceRef event =
         case event of
             ExecutionFailed errMsg ->
                 liftEffect $ Exception.throw errMsg
@@ -434,7 +427,7 @@ runJuliaReplWithTimeoutChecks
                 case outcome of
                     InputReplied ->
                         waitForResult
-                            startedAt 0 0 partialRef eventVar sequenceRef
+                            startedAt timeoutSeconds partialRef eventVar sequenceRef
                     InputInterrupted marker -> do
                         partialOutput <- liftEffect $ Ref.read partialRef
                         pure
@@ -582,7 +575,7 @@ runJuliaReplWithTimeoutChecks
             , totalSessionOutputTokens: totals'.outputTokens
             })
 
-    runTimeoutCheck elapsed partialOutput = do
+    runTimeoutCheck timeoutSeconds elapsed partialOutput = do
         ts <- Timestamp <$> liftEffect svc.nowIso
         writeLogEvent ws sessionId (TimeoutCheck
             { timestamp: ts
@@ -597,22 +590,45 @@ runJuliaReplWithTimeoutChecks
                 }
         decision <- case promptResult of
             Left _ ->
-                pure ContinueAfterTimeout
+                pure (WaitAfterTimeout timeoutSeconds)
             Right requestText -> do
                 liftEffect $ svc.printLn requestText
                 result <- runDecisionCall
                     requestText
-                    parseTimeoutDecision
+                    parseBoundedTimeoutDecision
                     (\_ _ -> pure unit)
                 pure case result of
                     Just parsed -> parsed
-                    Nothing -> ContinueAfterTimeout
+                    Nothing -> WaitAfterTimeout timeoutSeconds
         ts2 <- Timestamp <$> liftEffect svc.nowIso
         writeLogEvent ws sessionId (TimeoutResponse
             { timestamp: ts2
-            , interrupt: decision == InterruptForTimeout
+            , action: timeoutDecisionAction decision
+            , timeoutSeconds: timeoutDecisionSeconds decision
             })
         pure decision
+
+    parseBoundedTimeoutDecision input = do
+        decision <- parseTimeoutDecision input
+        case decision of
+            WaitAfterTimeout seconds
+                | seconds > config.maxReplTimeoutSeconds ->
+                    Left
+                        ( "Timeout wait exceeds max_repl_timeout_seconds "
+                            <> show config.maxReplTimeoutSeconds
+                        )
+            _ ->
+                Right decision
+
+    timeoutDecisionAction decision =
+        case decision of
+            InterruptForTimeout -> "interrupt"
+            WaitAfterTimeout _ -> "wait"
+
+    timeoutDecisionSeconds decision =
+        case decision of
+            InterruptForTimeout -> Nothing
+            WaitAfterTimeout seconds -> Just seconds
 
     runDecisionCall
         :: forall decision

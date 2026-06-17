@@ -6,7 +6,7 @@ import Prelude
 import Data.Array as Array
 import Data.Maybe (Maybe(..))
 import Test.Spec (Spec, describe, it)
-import Test.Spec.Assertions (shouldEqual, shouldSatisfy, fail)
+import Test.Spec.Assertions (shouldEqual, fail)
 
 import Agent.Programs.ToolDefs (toolDefinitions, ToolDef)
 import Agent.Types (renderToolName)
@@ -19,11 +19,14 @@ toolDefsSpec = do
     it "A3: exactly 3 tools are defined" do
       Array.length toolDefinitions `shouldEqual` 3
 
-    it "A3: julia_repl tool is defined with a required 'code' parameter" do
+    it "A3 + A4: julia_repl tool requires 'code' and 'timeout_seconds'" do
       case findTool "julia_repl" of
         Just tool -> do
           renderToolName tool.name `shouldEqual` "julia_repl"
           hasRequiredParam tool "code" `shouldEqual` true
+          hasRequiredParam tool "timeout_seconds" `shouldEqual` true
+          paramSchemaType tool "code" `shouldEqual` Just "string"
+          paramSchemaType tool "timeout_seconds" `shouldEqual` Just "integer"
         Nothing ->
           fail "julia_repl tool not found in definitions"
 
@@ -56,3 +59,7 @@ toolDefsSpec = do
   hasOptionalParam :: ToolDef -> String -> Boolean
   hasOptionalParam tool paramName =
     Array.any (\p -> p.name == paramName && not p.required) tool.parameters
+
+  paramSchemaType :: ToolDef -> String -> Maybe String
+  paramSchemaType tool paramName =
+    _.schemaType <$> Array.find (\p -> p.name == paramName) tool.parameters

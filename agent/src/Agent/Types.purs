@@ -148,7 +148,7 @@ type Config =
   , preserveInitial :: TokenCount
   , preserveFinal :: TokenCount
   , maxTurnsPerRound :: Int
-  , timeoutCheckSeconds :: Array Int
+  , maxReplTimeoutSeconds :: Int
   , progressIntervalSeconds :: Int
   }
 
@@ -263,7 +263,11 @@ data LogEvent
       , elapsedSeconds :: Int
       , partialOutput :: String
       }
-  | TimeoutResponse { timestamp :: Timestamp, interrupt :: Boolean }
+  | TimeoutResponse
+      { timestamp :: Timestamp
+      , action :: String
+      , timeoutSeconds :: Maybe Int
+      }
   | StdinRequest
       { timestamp :: Timestamp
       , toolCallId :: ToolCallId
@@ -299,7 +303,7 @@ instance Show LogEvent where
   show (TimeoutCheck r) =
     "(TimeoutCheck " <> show r.elapsedSeconds <> ")"
   show (TimeoutResponse r) =
-    "(TimeoutResponse " <> show r.interrupt <> ")"
+    "(TimeoutResponse " <> show r.action <> ")"
   show (StdinRequest r) =
     "(StdinRequest sequence=" <> show r.sequence <> " attempt=" <> show r.attempt <> ")"
   show (EvtReflection r) =

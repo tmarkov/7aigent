@@ -14,7 +14,7 @@ export const parseTomlPure = (input) => {
             "output_threshold_chars", "max_api_retries",
             "max_tokens_per_turn", "compaction_threshold",
             "preserve_initial", "preserve_final",
-            "max_turns_per_round"
+            "max_turns_per_round", "max_repl_timeout_seconds"
         ];
         // Check for missing required fields
         for (const f of fields) {
@@ -27,15 +27,11 @@ export const parseTomlPure = (input) => {
                     max_tokens_per_turn: 0, compaction_threshold: 0,
                     preserve_initial: 0, preserve_final: 0,
                     max_turns_per_round: 0,
-                    timeout_check_seconds: [30, 60, 120, 240, 480],
+                    max_repl_timeout_seconds: 300,
                     progress_interval_seconds: 15
                 };
             }
         }
-        const tcs = obj.timeout_check_seconds;
-        const timeout_check_seconds = Array.isArray(tcs)
-            ? tcs.map(Number)
-            : [30, 60, 120, 240, 480];
         const pis = obj.progress_interval_seconds;
         const progress_interval_seconds =
             typeof pis === "number" ? pis : 15;
@@ -52,7 +48,7 @@ export const parseTomlPure = (input) => {
             preserve_initial: Number(obj.preserve_initial),
             preserve_final: Number(obj.preserve_final),
             max_turns_per_round: Number(obj.max_turns_per_round),
-            timeout_check_seconds,
+            max_repl_timeout_seconds: Number(obj.max_repl_timeout_seconds),
             progress_interval_seconds
         };
     } catch (e) {
@@ -64,7 +60,7 @@ export const parseTomlPure = (input) => {
             max_tokens_per_turn: 0, compaction_threshold: 0,
             preserve_initial: 0, preserve_final: 0,
             max_turns_per_round: 0,
-            timeout_check_seconds: [30, 60, 120, 240, 480],
+            max_repl_timeout_seconds: 300,
             progress_interval_seconds: 15
         };
     }

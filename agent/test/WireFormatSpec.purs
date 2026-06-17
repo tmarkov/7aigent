@@ -312,12 +312,13 @@ wireFormatSpec = do
 
   describe "A26: timeout_response wire-format field names" do
 
-    it "A26: timeout_response has fields: type, timestamp, interrupt" do
-      let event = timeoutResponseEvent "t1" true
+    it "A26: timeout_response has fields: type, timestamp, action, timeout_seconds" do
+      let event = timeoutResponseEvent "t1" "wait" (Just 10)
       let obj = parseToObj (encodeLogEvent event)
       assertHasField obj "type"
       assertHasField obj "timestamp"
-      assertHasField obj "interrupt"
+      assertHasField obj "action"
+      assertHasField obj "timeout_seconds"
       assertFieldEquals obj "type" "timeout_response"
 
   ---------------------------------------------------------------------------

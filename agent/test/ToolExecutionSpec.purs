@@ -57,6 +57,73 @@ import Test.Helpers.Workspace (withWorkspace)
 
 toolExecutionSpec :: Spec Unit
 toolExecutionSpec = do
+    describe "A14-A17: model-selected julia_repl timeout workflow" do
+        it "A14 + A17: wait decision records the next timeout and continues" do
+            withWorkspace \ws -> do
+                sessionId <- allocateSessionId ws
+                mock <- liftEffect $ mkMockServices
+                    (mockOptions
+                        [ llmResult "{\"action\":\"wait\",\"timeout_seconds\":1}" 5 1 ])
+                let svc = mock.svc
+                        { executeCodeDetailedWithInput =
+                            \_ _ _ _ -> do
+                                delay (Milliseconds 1200.0)
+                                pure { output: "done", hadError: false }
+                        }
+                config <- requireConfig
+                result <- doTool
+                    svc ws sessionId
+                    (config { maxApiRetries = 0 })
+                    "key" mockKernelHandle mockSandboxHandle
+                    "{{json_schema}}" "{{prompt}}"
+                    emptyHistory
+                    { name: JuliaRepl
+                    , input: "{\"code\":\"sleep(2)\",\"timeout_seconds\":1}"
+                    , id: ToolCallId "tc-timeout-wait"
+                    }
+                    Set.empty
+                    zeroUsage
+                result.toolInterrupted `shouldEqual` false
+                events <- requireEvents ws sessionId
+                let responses = Array.mapMaybe asTimeoutResponse events
+                map _.action responses `shouldEqual` [ "wait" ]
+                map _.timeoutSeconds responses `shouldEqual` [ Just 1 ]
+
+        it "A16: interrupt decision interrupts the active timeout" do
+            withWorkspace \ws -> do
+                sessionId <- allocateSessionId ws
+                mock <- liftEffect $ mkMockServices
+                    (mockOptions [ llmResult "{\"action\":\"interrupt\"}" 4 1 ])
+                interruptCount <- liftEffect $ Ref.new 0
+                let svc = mock.svc
+                        { executeCodeDetailedWithInput =
+                            \_ _ _ _ -> do
+                                waitUntilInterrupt interruptCount
+                                pure { output: "partial", hadError: false }
+                        , interruptKernel = \_ -> do
+                            liftEffect $ Ref.modify_ (_ + 1) interruptCount
+                        }
+                config <- requireConfig
+                result <- doTool
+                    svc ws sessionId
+                    (config { maxApiRetries = 0 })
+                    "key" mockKernelHandle mockSandboxHandle
+                    "{{json_schema}}" "{{prompt}}"
+                    emptyHistory
+                    { name: JuliaRepl
+                    , input: "{\"code\":\"while true; sleep(1); end\",\"timeout_seconds\":1}"
+                    , id: ToolCallId "tc-timeout-interrupt"
+                    }
+                    Set.empty
+                    zeroUsage
+                result.toolInterrupted `shouldEqual` true
+                interrupts <- liftEffect $ Ref.read interruptCount
+                interrupts `shouldEqual` 1
+                events <- requireEvents ws sessionId
+                let responses = Array.mapMaybe asTimeoutResponse events
+                map _.action responses `shouldEqual` [ "interrupt" ]
+                map _.timeoutSeconds responses `shouldEqual` [ Nothing ]
+
     describe "A52-A56: julia_repl input request workflow" do
         it "A52a: stdin arrival cancels an in-flight timeout decision" do
             withWorkspace \ws -> do
@@ -93,10 +160,7 @@ toolExecutionSpec = do
                                         1))
                         }
                 baseConfig <- requireConfig
-                let config = baseConfig
-                        { timeoutCheckSeconds = [ 1 ]
-                        , maxApiRetries = 0
-                        }
+                let config = baseConfig { maxApiRetries = 0 }
                 maybeResult <- sequential $
                     parallel
                         (Just <$> doTool
@@ -104,7 +168,7 @@ toolExecutionSpec = do
                             mockSandboxHandle "{{json_schema}}" "{{prompt}}"
                             emptyHistory
                             { name: JuliaRepl
-                            , input: "{\"code\":\"readline()\"}"
+                            , input: "{\"code\":\"readline()\",\"timeout_seconds\":1}"
                             , id: ToolCallId "tc-cancel-timeout"
                             }
                             Set.empty
@@ -150,7 +214,7 @@ toolExecutionSpec = do
                             mockSandboxHandle "{{json_schema}}" "{{prompt}}"
                             emptyHistory
                             { name: JuliaRepl
-                            , input: "{\"code\":\"readline()\"}"
+                            , input: "{\"code\":\"readline()\",\"timeout_seconds\":30}"
                             , id: ToolCallId "tc-cancel-input"
                             }
                             Set.empty
@@ -214,10 +278,7 @@ toolExecutionSpec = do
                                             2))
                         }
                 baseConfig <- requireConfig
-                let config = baseConfig
-                        { timeoutCheckSeconds = [ 1 ]
-                        , maxApiRetries = 1
-                        }
+                let config = baseConfig { maxApiRetries = 1 }
                 maybeResult <- sequential $
                     parallel
                         (Just <$> doTool
@@ -225,7 +286,7 @@ toolExecutionSpec = do
                             mockSandboxHandle "{{json_schema}}" "{{prompt}}"
                             emptyHistory
                             { name: JuliaRepl
-                            , input: "{\"code\":\"summarize!([\\\"node-1\\\"])\"}"
+                            , input: "{\"code\":\"summarize!([\\\"node-1\\\"])\",\"timeout_seconds\":1}"
                             , id: ToolCallId "tc-summary"
                             }
                             Set.empty
@@ -285,7 +346,7 @@ toolExecutionSpec = do
                     mockSandboxHandle "{{json_schema}}" "{{prompt}}"
                     emptyHistory
                     { name: JuliaRepl
-                    , input: "{\"code\":\"summarize!([\\\"node-1\\\"])\"}"
+                    , input: "{\"code\":\"summarize!([\\\"node-1\\\"])\",\"timeout_seconds\":30}"
                     , id: ToolCallId "tc-summary-error"
                     }
                     Set.empty
@@ -323,7 +384,7 @@ toolExecutionSpec = do
                     mockSandboxHandle "{{json_schema}}" "{{prompt}}"
                     emptyHistory
                     { name: JuliaRepl
-                    , input: "{\"code\":\"malformed direct summary RPC\"}"
+                    , input: "{\"code\":\"malformed direct summary RPC\",\"timeout_seconds\":30}"
                     , id: ToolCallId "tc-summary-invalid-request"
                     }
                     Set.empty
@@ -354,7 +415,7 @@ toolExecutionSpec = do
                     "{{prompt}}\n{{json_schema}}"
                     emptyHistory
                     { name: JuliaRepl
-                    , input: "{\"code\":\"readline(); readline()\"}"
+                    , input: "{\"code\":\"readline(); readline()\",\"timeout_seconds\":30}"
                     , id: ToolCallId "tc-stdin"
                     }
                     Set.empty
@@ -386,7 +447,7 @@ toolExecutionSpec = do
                     mockSandboxHandle "{{json_schema}}" "{{prompt}}"
                     emptyHistory
                     { name: JuliaRepl
-                    , input: "{\"code\":\"readline()\"}"
+                    , input: "{\"code\":\"readline()\",\"timeout_seconds\":30}"
                     , id: ToolCallId "tc-retry"
                     }
                     Set.empty
@@ -422,7 +483,7 @@ toolExecutionSpec = do
                     mockSandboxHandle "{{json_schema}}" "{{prompt}}"
                     emptyHistory
                     { name: JuliaRepl
-                    , input: "{\"code\":\"readline()\"}"
+                    , input: "{\"code\":\"readline()\",\"timeout_seconds\":30}"
                     , id: ToolCallId "tc-api-retry"
                     }
                     Set.empty
@@ -445,7 +506,7 @@ toolExecutionSpec = do
                     mockSandboxHandle "{{json_schema}}" "{{prompt}}"
                     emptyHistory
                     { name: JuliaRepl
-                    , input: "{\"code\":\"readline()\"}"
+                    , input: "{\"code\":\"readline()\",\"timeout_seconds\":30}"
                     , id: ToolCallId "tc-visible-input"
                     }
                     Set.empty
@@ -481,7 +542,7 @@ toolExecutionSpec = do
                     mockSandboxHandle "{{json_schema}}" "{{prompt}}"
                     emptyHistory
                     { name: JuliaRepl
-                    , input: "{\"code\":\"readline()\"}"
+                    , input: "{\"code\":\"readline()\",\"timeout_seconds\":30}"
                     , id: ToolCallId "tc-reply-failed"
                     }
                     Set.empty
@@ -504,7 +565,7 @@ toolExecutionSpec = do
                     mockSandboxHandle "{{json_schema}}" "{{prompt}}"
                     emptyHistory
                     { name: JuliaRepl
-                    , input: "{\"code\":\"readline()\"}"
+                    , input: "{\"code\":\"readline()\",\"timeout_seconds\":30}"
                     , id: ToolCallId "tc-interrupt"
                     }
                     Set.empty
@@ -534,7 +595,7 @@ toolExecutionSpec = do
                     mockSandboxHandle "{{json_schema}}" "{{prompt}}"
                     emptyHistory
                     { name: JuliaRepl
-                    , input: "{\"code\":\"readline()\"}"
+                    , input: "{\"code\":\"readline()\",\"timeout_seconds\":30}"
                     , id: ToolCallId "tc-exhausted"
                     }
                     Set.empty
@@ -580,7 +641,8 @@ type TokenUsageEvent =
 
 type TimeoutResponseEvent =
     { timestamp :: Timestamp
-    , interrupt :: Boolean
+    , action :: String
+    , timeoutSeconds :: Maybe Int
     }
 
 type LlmQueryEvent =
@@ -670,3 +732,12 @@ waitUntil ref = do
         else do
             delay (Milliseconds 10.0)
             waitUntil ref
+
+waitUntilInterrupt :: Ref.Ref Int -> Aff Unit
+waitUntilInterrupt ref = do
+    count <- liftEffect $ Ref.read ref
+    if count > 0
+        then pure unit
+        else do
+            delay (Milliseconds 10.0)
+            waitUntilInterrupt ref

@@ -1,5 +1,6 @@
 module Agent.Programs.ToolInput
     ( summarizeToolInput
+    , parseJuliaReplInput
     , parseJuliaCodeInput
     , parseGitStageInput
     , parseGitCommitInput
@@ -11,11 +12,17 @@ import Data.Argonaut.Core as J
 import Data.Argonaut.Parser as JP
 import Data.Array as Array
 import Data.Either (Either(..))
+import Data.Int as Int
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.String as String
 import Foreign.Object as FO
 
 import Agent.Types (ToolName(..))
+
+type JuliaReplInput =
+    { code :: String
+    , timeoutSeconds :: Int
+    }
 
 type GitStageInput =
     { what :: String
@@ -45,6 +52,32 @@ summarizeToolInput GitCommit input =
     in "message: " <> fromMaybe "(none)" msg
        <> "  what: " <> fromMaybe "all" what
 summarizeToolInput _ input = input
+
+parseJuliaReplInput :: Int -> String -> Either String JuliaReplInput
+parseJuliaReplInput maxTimeoutSeconds input = do
+    obj <- case parseJsonObject input of
+        Nothing -> Left "Invalid julia_repl input: expected a JSON object"
+        Just parsed -> Right parsed
+    code <- case FO.lookup "code" obj >>= J.toString of
+        Nothing -> Left "Invalid julia_repl input: field code must be a string"
+        Just value -> Right value
+    timeoutSeconds <- case FO.lookup "timeout_seconds" obj >>= J.toNumber of
+        Nothing ->
+            Left "Invalid julia_repl input: field timeout_seconds must be a number"
+        Just value ->
+            let rounded = Int.round value
+            in if Int.toNumber rounded /= value
+                then Left "Invalid julia_repl input: timeout_seconds must be an integer"
+                else Right rounded
+    if timeoutSeconds <= 0 then
+        Left "Invalid julia_repl input: timeout_seconds must be positive"
+    else if timeoutSeconds > maxTimeoutSeconds then
+        Left
+            ( "Invalid julia_repl input: timeout_seconds exceeds max_repl_timeout_seconds "
+                <> show maxTimeoutSeconds
+            )
+    else
+        Right { code, timeoutSeconds }
 
 parseJuliaCodeInput :: String -> String
 parseJuliaCodeInput input =
