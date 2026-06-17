@@ -36,6 +36,7 @@ timeoutSpec = do
         Right prompt -> do
           prompt `shouldSatisfy` contains "big_computation()|30|partial|"
           prompt `shouldSatisfy` contains "\"wait\""
+          prompt `shouldSatisfy` contains "\"send_input\""
           prompt `shouldSatisfy` contains "\"interrupt\""
 
     it "A15: accepts a template containing only a subset of keywords" do
@@ -53,6 +54,8 @@ timeoutSpec = do
     it "A15a: exposes the guaranteed pretty-printed timeout schema" do
       timeoutJsonSchemaPretty `shouldSatisfy` contains "\"wait\""
       timeoutJsonSchemaPretty `shouldSatisfy` contains "\"timeout_seconds\""
+      timeoutJsonSchemaPretty `shouldSatisfy` contains "\"send_input\""
+      timeoutJsonSchemaPretty `shouldSatisfy` contains "\"value\""
       timeoutJsonSchemaPretty `shouldSatisfy` contains "\"interrupt\""
 
   ---------------------------------------------------------------------------
@@ -71,12 +74,20 @@ timeoutSpec = do
       parseTimeoutDecision "{\"action\":\"wait\",\"timeout_seconds\":10}"
         `shouldEqual` Right (WaitAfterTimeout 10)
 
+    it "A17a: send_input action with a value is accepted" do
+      parseTimeoutDecision "{\"action\":\"send_input\",\"value\":\"123\\n\"}"
+        `shouldEqual` Right (SendInputForTimeout "123\n")
+
     it "A15a: timeout rejects reply actions" do
       parseTimeoutDecision "{\"action\":\"reply\",\"value\":\"x\"}"
         `shouldSatisfy` isLeft
 
     it "A15a: timeout rejects extra fields" do
       parseTimeoutDecision "{\"action\":\"wait\",\"timeout_seconds\":10,\"value\":\"x\"}"
+        `shouldSatisfy` isLeft
+
+    it "A15a: timeout rejects send_input without value" do
+      parseTimeoutDecision "{\"action\":\"send_input\"}"
         `shouldSatisfy` isLeft
 
     it "A15a: timeout rejects wait without a next timeout" do

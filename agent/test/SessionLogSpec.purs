@@ -271,6 +271,8 @@ sessionLogSpec = do
         Right (TimeoutResponse r) -> do
           r.action `shouldEqual` "wait"
           r.timeoutSeconds `shouldEqual` Just 10
+          r.value `shouldEqual` Nothing
+          r.error `shouldEqual` Nothing
         Right _ -> fail "Expected TimeoutResponse event"
         Left err -> fail ("Decode failed: " <> show err)
 

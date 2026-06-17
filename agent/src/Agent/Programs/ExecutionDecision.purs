@@ -41,12 +41,14 @@ instance Show StdinDecision where
 data TimeoutDecision
     = InterruptForTimeout
     | WaitAfterTimeout Int
+    | SendInputForTimeout String
 
 derive instance Eq TimeoutDecision
 
 instance Show TimeoutDecision where
     show InterruptForTimeout = "InterruptForTimeout"
     show (WaitAfterTimeout seconds) = "(WaitAfterTimeout " <> show seconds <> ")"
+    show (SendInputForTimeout value) = "(SendInputForTimeout " <> show value <> ")"
 
 data DecisionFailure
     = DecisionApiFailure String
@@ -117,6 +119,23 @@ timeoutJsonSchemaPretty =
       "required": [
         "action",
         "timeout_seconds"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "action": {
+          "const": "send_input"
+        },
+        "value": {
+          "type": "string",
+          "description": "The exact text to send to the active timeout input sink"
+        }
+      },
+      "required": [
+        "action",
+        "value"
       ],
       "additionalProperties": false
     },
@@ -208,10 +227,16 @@ parseTimeoutDecision input = do
             requireKeys [ "action", "timeout_seconds" ] obj
             timeoutSeconds <- getPositiveInteger "timeout_seconds" obj
             Right (WaitAfterTimeout timeoutSeconds)
+        "send_input" -> do
+            requireKeys [ "action", "value" ] obj
+            value <- case FO.lookup "value" obj >>= J.toString of
+                Nothing -> Left "Field value must be a string"
+                Just text -> Right text
+            Right (SendInputForTimeout value)
         "interrupt" -> do
             requireKeys [ "action" ] obj
             Right InterruptForTimeout
-        _ -> Left "Timeout action must be wait or interrupt"
+        _ -> Left "Timeout action must be wait, send_input, or interrupt"
 
 parseObject :: String -> Either String (FO.Object J.Json)
 parseObject input = do

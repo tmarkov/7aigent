@@ -285,19 +285,27 @@ The timeout-specific response schema accepts exactly:
 or:
 
 ```json
+{"action":"send_input","value":"text to send\n"}
+```
+
+or:
+
+```json
 {"action":"interrupt"}
 ```
 
 For `wait`, `timeout_seconds` must be a positive integer no larger than
 `max_repl_timeout_seconds` from configuration and becomes the next
-single-shot deadline. No other fields or action values are valid. The
-pretty-printed schema that expresses these alternatives is the guaranteed
-substitution value for `{{json_schema}}`. The runner makes one initial attempt
-followed by at most `max_api_retries` retries. Every failed API, parse, or
-validation attempt consumes one retry. Parse and validation failures retry
-immediately. API and network failures wait according to the exponential
-backoff schedule in A18 before retrying. A `token_usage` event is written for
-every attempt that returns token counts.
+single-shot deadline. For `send_input`, `value` must be a string and is the
+exact text the runner attempts to send to the current timeout input sink. No
+other fields or action values are valid. The pretty-printed schema that
+expresses these alternatives is the guaranteed substitution value for
+`{{json_schema}}`. The runner makes one initial attempt followed by at most
+`max_api_retries` retries. Every failed API, parse, or validation attempt
+consumes one retry. Parse and validation failures retry immediately. API and
+network failures wait according to the exponential backoff schedule in A18
+before retrying. A `token_usage` event is written for every attempt that
+returns token counts.
 
 **A16** — If the validated timeout decision is `interrupt`, the runner sends
 an `interrupt_request` to the Jupyter control channel and waits until the
@@ -312,9 +320,19 @@ continues waiting. If the initial timeout LLM attempt and all permitted
 retries fail without a valid decision, the runner continues waiting using the
 same timeout duration that triggered the failed check. One
 `timeout_response` event records the final decision for the scheduled check:
-`action = "wait"` and `timeout_seconds` set for a validated wait decision, or
+`action = "wait"` and `timeout_seconds` set for a validated wait decision,
+`action = "send_input"` and `value` set for a validated input decision, or
 `action = "interrupt"` for a validated interrupt decision. There is no hard
 cap on total wait time.
+
+**A17a** — If the validated timeout decision is `send_input`, the runner
+attempts to send the decision's `value` to the active timeout input sink. In
+Phase 2, before the sandbox stdin channel exists, the default sink reports
+that input is unavailable and the runner continues waiting using the same
+timeout duration that triggered the check. The `timeout_response` event still
+records the attempted input and the sink error. Later sandbox integrations may
+provide a sink that accepts the input; after a successful send, the runner
+continues waiting using the same timeout duration that triggered the check.
 
 ---
 
@@ -347,8 +365,8 @@ that scheduled check, and immediately begins servicing the input request. A
 cancelled timeout check has no final decision and therefore does not produce a
 `timeout_response` event; its existing `timeout_check` event and request debug
 log entry remain. After the `input_reply` has been transmitted successfully,
-the runner starts a fresh timeout check schedule from the first interval
-(30 s).
+the runner continues the timeout check schedule using the timeout duration
+that was active when the input request arrived.
 
 **A53 — Stdin prompt template**
 
@@ -581,7 +599,7 @@ concurrently.
 | `compaction`       | `timestamp`, `summary`, `initial_message_count`, `compacted_message_count`, `final_message_count`, `total_tokens_before` |
 | `reflection`       | `timestamp`, `turn_index` (1-based turn number within current round), `auto_turns_taken` (rounds auto-continued so far this session), `complete` (bool), `feedback` (string or null) |
 | `timeout_check`    | `timestamp`, `elapsed_seconds`, `partial_output`                                           |
-| `timeout_response` | `timestamp`, `action` (`"wait"` or `"interrupt"`), `timeout_seconds` (int or null)         |
+| `timeout_response` | `timestamp`, `action` (`"wait"`, `"send_input"`, or `"interrupt"`), `timeout_seconds` (int or null), `value` (string or null), `error` (string or null) |
 | `stdin_request`    | `timestamp`, `tool_call_id`, `sequence` (1-based), `attempt` (1-based), `elapsed_seconds`, `prompt`, `value` (string or null), `interrupt` (bool or null), `error` (string or null) |
 | `escape`           | `timestamp`                                                                                |
 | `sigint`           | `timestamp`                                                                                |

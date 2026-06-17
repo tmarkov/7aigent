@@ -106,6 +106,12 @@ data ExecutionEvent
     | ExecutionCompleted Jupyter.ExecutionResult
     | ExecutionFailed String
 
+type TimeoutCheckResult =
+    { nextDecision :: TimeoutDecision
+    , loggedDecision :: TimeoutDecision
+    , inputError :: Maybe String
+    }
+
 type ParsedGitWritePlan =
     { wholeFiles :: Array { path :: String, oldPath :: Maybe String }
     , partialAllPatch :: Maybe String
@@ -394,14 +400,18 @@ runJuliaReplWithTimeoutChecks
                     Right event ->
                         handleExecutionEvent
                             startedAt timeoutSeconds partialRef eventVar sequenceRef event
-                    Left InterruptForTimeout -> do
+                    Left result | result.nextDecision == InterruptForTimeout -> do
                         svc.interruptKernel kernel
                         interruptedOutput <- liftEffect $ Ref.read partialRef
                         pure
                             { output: interruptedOutput <> "\n[interrupted]"
                             , toolInterrupted: true
                             }
-                    Left (WaitAfterTimeout nextTimeoutSeconds) ->
+                    Left result -> do
+                        let nextTimeoutSeconds =
+                                timeoutNextSeconds
+                                    timeoutSeconds
+                                    result.nextDecision
                         waitForResult startedAt nextTimeoutSeconds
                             partialRef eventVar sequenceRef
 
@@ -588,7 +598,7 @@ runJuliaReplWithTimeoutChecks
                 , elapsedSeconds: elapsed
                 , outputSoFar: partialOutput
                 }
-        decision <- case promptResult of
+        loggedDecision <- case promptResult of
             Left _ ->
                 pure (WaitAfterTimeout timeoutSeconds)
             Right requestText -> do
@@ -600,13 +610,30 @@ runJuliaReplWithTimeoutChecks
                 pure case result of
                     Just parsed -> parsed
                     Nothing -> WaitAfterTimeout timeoutSeconds
+        inputError <- case loggedDecision of
+            SendInputForTimeout value -> do
+                sendResult <- sendTimeoutInput value
+                pure case sendResult of
+                    Right _ -> Nothing
+                    Left err -> Just err
+            _ ->
+                pure Nothing
+        let nextDecision = case loggedDecision of
+                SendInputForTimeout _ -> WaitAfterTimeout timeoutSeconds
+                other -> other
         ts2 <- Timestamp <$> liftEffect svc.nowIso
         writeLogEvent ws sessionId (TimeoutResponse
             { timestamp: ts2
-            , action: timeoutDecisionAction decision
-            , timeoutSeconds: timeoutDecisionSeconds decision
+            , action: timeoutDecisionAction loggedDecision
+            , timeoutSeconds: timeoutDecisionSeconds loggedDecision
+            , value: timeoutDecisionValue loggedDecision
+            , error: inputError
             })
-        pure decision
+        pure { nextDecision, loggedDecision, inputError }
+
+    sendTimeoutInput :: String -> Aff (Either String Unit)
+    sendTimeoutInput _ =
+        pure (Left "timeout input sink unavailable")
 
     parseBoundedTimeoutDecision input = do
         decision <- parseTimeoutDecision input
@@ -624,11 +651,24 @@ runJuliaReplWithTimeoutChecks
         case decision of
             InterruptForTimeout -> "interrupt"
             WaitAfterTimeout _ -> "wait"
+            SendInputForTimeout _ -> "send_input"
 
     timeoutDecisionSeconds decision =
         case decision of
             InterruptForTimeout -> Nothing
             WaitAfterTimeout seconds -> Just seconds
+            SendInputForTimeout _ -> Nothing
+
+    timeoutDecisionValue decision =
+        case decision of
+            SendInputForTimeout value -> Just value
+            _ -> Nothing
+
+    timeoutNextSeconds fallbackSeconds decision =
+        case decision of
+            WaitAfterTimeout seconds -> seconds
+            SendInputForTimeout _ -> fallbackSeconds
+            InterruptForTimeout -> fallbackSeconds
 
     runDecisionCall
         :: forall decision

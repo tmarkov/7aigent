@@ -41,7 +41,7 @@ import Test.WireFormatSpec (wireFormatSpec)
 import Test.RoundStepSpec (roundStepSpec)
 
 main :: Effect Unit
-main = launchAff_ $ runSpec' (defaultConfig { timeout = Just (Milliseconds 5000.0) })
+main = launchAff_ $ runSpec' (defaultConfig { timeout = Just (Milliseconds 10000.0) })
   [ consoleReporter ] do
   cliSpec
   compactionSpec

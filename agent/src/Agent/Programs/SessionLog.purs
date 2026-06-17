@@ -202,6 +202,12 @@ encodeLogEventJson (TimeoutResponse r) =
         , Tuple "timeout_seconds" case r.timeoutSeconds of
             Nothing -> J.jsonNull
             Just seconds -> J.fromNumber (Int.toNumber seconds)
+        , Tuple "value" case r.value of
+            Nothing -> J.jsonNull
+            Just value -> J.fromString value
+        , Tuple "error" case r.error of
+            Nothing -> J.jsonNull
+            Just err -> J.fromString err
         ]
 encodeLogEventJson (StdinRequest r) =
     mkObj
@@ -374,10 +380,14 @@ decodeLogEventObj obj = do
             ts <- getStr obj "timestamp"
             action <- getStr obj "action"
             timeoutSeconds <- getNullableInt obj "timeout_seconds"
+            value <- getNullableString obj "value"
+            err <- getNullableString obj "error"
             Right $ TimeoutResponse
                 { timestamp: Timestamp ts
                 , action
                 , timeoutSeconds
+                , value
+                , error: err
                 }
         "stdin_request" -> do
             ts <- getStr obj "timestamp"

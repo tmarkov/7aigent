@@ -267,6 +267,8 @@ data LogEvent
       { timestamp :: Timestamp
       , action :: String
       , timeoutSeconds :: Maybe Int
+      , value :: Maybe String
+      , error :: Maybe String
       }
   | StdinRequest
       { timestamp :: Timestamp

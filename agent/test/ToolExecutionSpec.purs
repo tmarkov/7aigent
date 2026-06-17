@@ -124,6 +124,39 @@ toolExecutionSpec = do
                 map _.action responses `shouldEqual` [ "interrupt" ]
                 map _.timeoutSeconds responses `shouldEqual` [ Nothing ]
 
+        it "A17a: send_input decision is logged and waits when no sink is available" do
+            withWorkspace \ws -> do
+                sessionId <- allocateSessionId ws
+                mock <- liftEffect $ mkMockServices
+                    (mockOptions
+                        [ llmResult "{\"action\":\"send_input\",\"value\":\"123\\n\"}" 5 1 ])
+                let svc = mock.svc
+                        { executeCodeDetailedWithInput =
+                            \_ _ _ _ -> do
+                                delay (Milliseconds 1200.0)
+                                pure { output: "done", hadError: false }
+                        }
+                config <- requireConfig
+                result <- doTool
+                    svc ws sessionId
+                    (config { maxApiRetries = 0 })
+                    "key" mockKernelHandle mockSandboxHandle
+                    "{{json_schema}}" "{{prompt}}"
+                    emptyHistory
+                    { name: JuliaRepl
+                    , input: "{\"code\":\"run(`python -c 'input()'`)\",\"timeout_seconds\":1}"
+                    , id: ToolCallId "tc-timeout-input"
+                    }
+                    Set.empty
+                    zeroUsage
+                result.toolInterrupted `shouldEqual` false
+                events <- requireEvents ws sessionId
+                let responses = Array.mapMaybe asTimeoutResponse events
+                map _.action responses `shouldEqual` [ "send_input" ]
+                map _.value responses `shouldEqual` [ Just "123\n" ]
+                map _.error responses
+                    `shouldEqual` [ Just "timeout input sink unavailable" ]
+
     describe "A52-A56: julia_repl input request workflow" do
         it "A52a: stdin arrival cancels an in-flight timeout decision" do
             withWorkspace \ws -> do
@@ -643,6 +676,8 @@ type TimeoutResponseEvent =
     { timestamp :: Timestamp
     , action :: String
     , timeoutSeconds :: Maybe Int
+    , value :: Maybe String
+    , error :: Maybe String
     }
 
 type LlmQueryEvent =

@@ -142,7 +142,13 @@ timeoutCheckEvent timestamp elapsedSeconds partialOutput =
 
 timeoutResponseEvent :: String -> String -> Maybe Int -> LogEvent
 timeoutResponseEvent timestamp action timeoutSeconds =
-  TimeoutResponse { timestamp: Timestamp timestamp, action, timeoutSeconds }
+  TimeoutResponse
+    { timestamp: Timestamp timestamp
+    , action
+    , timeoutSeconds
+    , value: Nothing
+    , error: Nothing
+    }
 
 -- | Render an array of log events as a JSONL string (one JSON object
 -- per line), using the same encoding the runner uses for `log.jsonl`.
