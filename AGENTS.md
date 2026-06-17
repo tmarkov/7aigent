@@ -334,8 +334,4 @@ using `git mv` so history is preserved.
 - Write the subject line in the imperative mood: *"Add R14b absorption rule"*,
   not *"Added"* or *"Adding"*.
 - Reference requirement IDs in the subject or body when relevant.
-- Always include the co-author trailer:
-
-```
-Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
-```
+- Always include a co-author trailer, noting the AI tool used in development.
