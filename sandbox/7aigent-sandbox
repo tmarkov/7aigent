@@ -461,6 +461,7 @@ trap handle_signal INT TERM
 trap interrupt_runner USR1
 
 mkdir -p "$SOCKETS_DIR" "$BUNDLE_DIR" "$RUNTIME_DIR/git"
+mkfifo "$SOCKETS_DIR/stdin" || error "failed to create sandbox stdin FIFO"
 
 ensure_state_dir
 

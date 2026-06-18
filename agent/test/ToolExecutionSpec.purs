@@ -157,6 +157,46 @@ toolExecutionSpec = do
                 map _.error responses
                     `shouldEqual` [ Just "timeout input sink unavailable" ]
 
+        it "A17a + S8a: send_input decision writes to the sandbox stdin sink" do
+            withWorkspace \ws -> do
+                sessionId <- allocateSessionId ws
+                mock <- liftEffect $ mkMockServices
+                    (mockOptions
+                        [ llmResult "{\"action\":\"send_input\",\"value\":\"123\\n\"}" 5 1 ])
+                sentInput <- liftEffect $ Ref.new []
+                let sandbox = mockSandboxHandle
+                        { sendInput = \value _onError onSuccess -> do
+                            Ref.modify_ (_ <> [ value ]) sentInput
+                            onSuccess
+                        }
+                let svc = mock.svc
+                        { executeCodeDetailedWithInput =
+                            \_ _ _ _ -> do
+                                delay (Milliseconds 1200.0)
+                                pure { output: "done", hadError: false }
+                        }
+                config <- requireConfig
+                result <- doTool
+                    svc ws sessionId
+                    (config { maxApiRetries = 0 })
+                    "key" mockKernelHandle sandbox
+                    "{{json_schema}}" "{{prompt}}"
+                    emptyHistory
+                    { name: JuliaRepl
+                    , input: "{\"code\":\"run(`python -c 'input()'`)\",\"timeout_seconds\":1}"
+                    , id: ToolCallId "tc-timeout-input-sent"
+                    }
+                    Set.empty
+                    zeroUsage
+                result.toolInterrupted `shouldEqual` false
+                inputs <- liftEffect $ Ref.read sentInput
+                inputs `shouldEqual` [ "123\n" ]
+                events <- requireEvents ws sessionId
+                let responses = Array.mapMaybe asTimeoutResponse events
+                map _.action responses `shouldEqual` [ "send_input" ]
+                map _.value responses `shouldEqual` [ Just "123\n" ]
+                map _.error responses `shouldEqual` [ Nothing ]
+
     describe "A52-A56: julia_repl input request workflow" do
         it "A52a: stdin arrival cancels an in-flight timeout decision" do
             withWorkspace \ws -> do

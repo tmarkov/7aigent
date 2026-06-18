@@ -107,6 +107,16 @@ ZeroMQ IPC transport (`"transport": "ipc"`). No TCP sockets are used. The
 five Jupyter channels (shell, iopub, stdin, control, heartbeat) are each a
 Unix domain socket file under `/sockets/`.
 
+**S8a** — The launcher also creates a FIFO named `stdin` in the sockets
+directory and bind-mounts it at `/sockets/stdin` inside the sandbox. During
+startup, before `IJulia.run_kernel()` starts, Julia opens this FIFO read-write
+and redirects process fd 0 to it. Subprocesses launched by Julia therefore
+inherit the same stdin stream. The agent writes timeout-provided input to the
+host path `<runtime-dir>/sockets/stdin`. Because Julia holds the FIFO open
+read-write to keep a stable default stdin stream, this channel supports short
+interactive input bytes but does not guarantee EOF delivery to programs that
+read until end-of-file.
+
 **S9** — The launcher writes a `kernel.json` connection file to the sockets
 directory before starting the container. The file follows the Jupyter kernel
 connection file format with `"transport": "ipc"` and a randomly generated

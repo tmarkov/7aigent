@@ -325,14 +325,18 @@ same timeout duration that triggered the failed check. One
 `action = "interrupt"` for a validated interrupt decision. There is no hard
 cap on total wait time.
 
-**A17a** — If the validated timeout decision is `send_input`, the runner
-attempts to send the decision's `value` to the active timeout input sink. In
-Phase 2, before the sandbox stdin channel exists, the default sink reports
-that input is unavailable and the runner continues waiting using the same
-timeout duration that triggered the check. The `timeout_response` event still
-records the attempted input and the sink error. Later sandbox integrations may
-provide a sink that accepts the input; after a successful send, the runner
-continues waiting using the same timeout duration that triggered the check.
+**A17a** — If the validated timeout decision is `send_input`, the runner sends
+the decision's `value` to the sandbox global stdin FIFO defined by S8a. The
+value is sent exactly as supplied; the runner does not append a newline. This
+default sink is for short interactive input and does not provide an EOF
+contract. The encoded value must fit within the configured short-input bound
+used by the FIFO writer. The FIFO write must be nonblocking and bounded: if
+the value cannot be written completely within the short retry window, the
+runner treats the send as a sink error rather than blocking timeout handling.
+The runner then continues waiting using the same timeout duration that
+triggered the check. The `timeout_response` event records the attempted input.
+If the send succeeds, `error` is null. If the send fails, the runner records
+the sink error and still continues waiting using the same timeout duration.
 
 ---
 

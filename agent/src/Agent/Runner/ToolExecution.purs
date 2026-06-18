@@ -83,7 +83,7 @@ import Agent.Runner.Services (RunnerServices)
 import Agent.Services.Jupyter as Jupyter
 import Agent.Services.Jupyter (KernelHandle)
 import Agent.Services.Llm as Llm
-import Agent.Services.Sandbox (SandboxHandle)
+import Agent.Services.Sandbox (SandboxHandle, sendSandboxInput)
 
 foreign import decodeHexUtf8 :: String -> String
 foreign import nowEpochMilliseconds :: Effect Number
@@ -139,7 +139,7 @@ doTool
         , usageTotals :: Llm.LlmUsage
         }
 doTool
-    svc ws sessionId config apiKey kernel _sandbox timeoutTemplate stdinTemplate
+    svc ws sessionId config apiKey kernel sandbox timeoutTemplate stdinTemplate
     history tc knownHunks usageTotals = do
     ts <- Timestamp <$> liftEffect svc.nowIso
     writeLogEvent ws sessionId (EvtToolCall
@@ -156,7 +156,7 @@ doTool
     usageRef <- liftEffect $ Ref.new usageTotals
     { output: rawOut, hunks: hunks', toolInterrupted } <-
         dispatchTool
-            svc ws sessionId config apiKey kernel timeoutTemplate stdinTemplate
+            svc ws sessionId config apiKey kernel sandbox timeoutTemplate stdinTemplate
             tc knownHunks usageRef
 
     let proc = processToolOutput config.outputThresholdChars rawOut
@@ -186,6 +186,7 @@ dispatchTool
     -> Config
     -> String
     -> KernelHandle
+    -> SandboxHandle
     -> String
     -> String
     -> ToolCall
@@ -193,7 +194,7 @@ dispatchTool
     -> Ref.Ref Llm.LlmUsage
     -> Aff { output :: String, hunks :: Set HunkId, toolInterrupted :: Boolean }
 dispatchTool
-    svc ws sessionId config apiKey kernel timeoutTemplate stdinTemplate
+    svc ws sessionId config apiKey kernel sandbox timeoutTemplate stdinTemplate
     tc knownHunks usageRef =
     case tc.name of
         JuliaRepl -> do
@@ -209,6 +210,7 @@ dispatchTool
                         apiKey
                         kernel
                         tc.id
+                        sandbox
                         timeoutTemplate
                         stdinTemplate
                         usageRef
@@ -350,6 +352,7 @@ runJuliaReplWithTimeoutChecks
     -> String
     -> KernelHandle
     -> ToolCallId
+    -> SandboxHandle
     -> String
     -> String
     -> Ref.Ref Llm.LlmUsage
@@ -357,7 +360,7 @@ runJuliaReplWithTimeoutChecks
     -> Int
     -> Aff { output :: String, toolInterrupted :: Boolean }
 runJuliaReplWithTimeoutChecks
-    svc ws sessionId config apiKey kernel toolCallId
+    svc ws sessionId config apiKey kernel toolCallId sandbox
     timeoutTemplate stdinTemplate usageRef source initialTimeoutSeconds = do
     startedAt <- liftEffect nowEpochMilliseconds
     partialRef <- liftEffect $ Ref.new ""
@@ -632,8 +635,8 @@ runJuliaReplWithTimeoutChecks
         pure { nextDecision, loggedDecision, inputError }
 
     sendTimeoutInput :: String -> Aff (Either String Unit)
-    sendTimeoutInput _ =
-        pure (Left "timeout input sink unavailable")
+    sendTimeoutInput =
+        sendSandboxInput sandbox
 
     parseBoundedTimeoutDecision input = do
         decision <- parseTimeoutDecision input

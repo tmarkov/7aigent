@@ -24,6 +24,7 @@ import Test.ReflectionSpec (reflectionSpec)
 import Test.ReplSerializeSpec (replSerializeSpec)
 import Test.RetrySpec (retrySpec)
 import Test.SandboxPreflightSpec (sandboxPreflightSpec)
+import Test.SandboxInputSpec (sandboxInputSpec)
 import Test.SessionListingSpec (sessionListingSpec)
 import Test.SessionLogSpec (sessionLogSpec)
 import Test.SessionResumeSpec (sessionResumeSpec)
@@ -59,6 +60,7 @@ main = launchAff_ $ runSpec' (defaultConfig { timeout = Just (Milliseconds 10000
   replSerializeSpec
   retrySpec
   roundStepSpec
+  sandboxInputSpec
   sandboxPreflightSpec
   sessionListingSpec
   sessionLogSpec

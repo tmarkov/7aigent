@@ -8,4 +8,11 @@ using IJulia
 using SevenAigentREPL
 
 Core.eval(Base, :(have_color = false))
+
+const SEVENAIGENT_STDIN_FIFO = "/sockets/stdin"
+if ispath(SEVENAIGENT_STDIN_FIFO)
+    const SEVENAIGENT_STDIN_IO = open(SEVENAIGENT_STDIN_FIFO, read=true, write=true)
+    redirect_stdio(stdin=SEVENAIGENT_STDIN_IO)
+end
+
 IJulia.run_kernel()

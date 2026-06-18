@@ -12,6 +12,7 @@ Requirements tested:
   S4   — only the minimal runtime Nix store closure is mounted
   S7a  — runsc launcher enables host UDS creation for /sockets IPC
   S8   — transport is ipc
+  S8a  — global stdin FIFO is created under the sockets directory
   S9   — kernel.json fields and HMAC key
   S10  — /workspace bind mount is rw
   S10a — /workspace/.7aigent/state is required and read-only
@@ -346,6 +347,12 @@ class TestOCIConfig:
         mount = _find_mount(dry_run_output.config_json["mounts"], "/sockets")
         assert mount is not None, "/sockets mount missing"
         assert "ro" not in mount["options"], "/sockets must be rw"
+
+    def test_global_stdin_fifo_exists(self, dry_run_output):
+        """S8a: launcher creates the global stdin FIFO next to kernel.json."""
+        stdin_path = dry_run_output.kernel_json_path.parent / "stdin"
+        assert stdin_path.exists(), "global stdin FIFO missing"
+        assert stdin_path.is_fifo(), "global stdin path is not a FIFO"
 
     def test_root_is_readonly(self, dry_run_output):
         """S3: OCI root must be readonly."""

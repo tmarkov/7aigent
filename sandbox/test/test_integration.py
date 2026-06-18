@@ -9,6 +9,7 @@ Requirements tested:
   S2  — default runsc mode has no network access
   S6  — two OS threads: interrupt works during tight eval loop
   S8  — ZMQ IPC transport: kernel is reachable via Unix sockets
+  S8a — sandbox global stdin FIFO reaches Julia subprocesses
   S10a — readonly sandbox state mount rejects writes from inside the sandbox
   S11 — .git metadata is read-only from inside the sandbox
   S13 — kernel starts without runtime package installation
@@ -247,6 +248,11 @@ def raw_running_kernel(workspace):
 def execute_and_collect(km, code, timeout=30):
     """Send an execute_request and return (result_text, error_text)."""
     msg_id = km.execute(code)
+    return collect_iopub_for_msg(km, msg_id, timeout=timeout)
+
+
+def collect_iopub_for_msg(km, msg_id, timeout=30):
+    """Collect iopub output for an existing execute_request."""
     result_text = ""
     error_text = ""
 
@@ -304,6 +310,22 @@ class TestBasicExecution:
         )
         assert err == "", f"SevenAigentREPL not available: {err}"
         assert "true" in result.lower()
+
+    def test_global_stdin_fifo_reaches_subprocess(self, running_kernel):
+        """S8a: writes to the host FIFO are visible to subprocess stdin."""
+        stdin_path = running_kernel.runtime_dir / "sockets" / "stdin"
+        assert stdin_path.exists(), "global stdin FIFO missing"
+
+        msg_id = running_kernel.client.execute(
+            """
+            run(`python -c 'import sys; x=sys.stdin.readline().strip(); print(x)'`)
+            """
+        )
+        stdin_path.write_text("fifo-hello\n")
+        result, err = collect_iopub_for_msg(running_kernel.client, msg_id, timeout=30)
+
+        assert err == "", f"Unexpected error: {err}"
+        assert "fifo-hello" in result
 
     def test_exception_is_rendered_informatively(self, raw_running_kernel):
         """The live IJulia kernel should surface the actual exception text."""

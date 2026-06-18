@@ -1,4 +1,87 @@
 import { spawn } from "node:child_process";
+import * as fs from "node:fs";
+import * as path from "node:path";
+
+const STDIN_MAX_BYTES = 4096;
+const STDIN_WRITE_DEADLINE_MS = 250;
+const STDIN_WRITE_RETRY_MS = 10;
+
+function isWouldBlock(err) {
+  return err?.code === "EAGAIN" ||
+    err?.code === "EWOULDBLOCK" ||
+    err?.code === "ENXIO";
+}
+
+function closeFd(fd) {
+  try {
+    fs.close(fd, () => {});
+  } catch (_) {}
+}
+
+export function sendInputToFifoPath(fifoPath, value, onError, onSuccess) {
+  const buffer = Buffer.from(value, "utf8");
+  if (buffer.length > STDIN_MAX_BYTES) {
+    onError(`timeout input exceeds ${STDIN_MAX_BYTES} byte limit`);
+    return;
+  }
+
+  const deadline = Date.now() + STDIN_WRITE_DEADLINE_MS;
+  const flags = fs.constants.O_WRONLY | fs.constants.O_NONBLOCK;
+
+  const retry = (fn, onTimeout = null) => {
+    if (Date.now() >= deadline) {
+      if (onTimeout) onTimeout();
+      onError("timeout input sink would block");
+      return;
+    }
+    setTimeout(fn, STDIN_WRITE_RETRY_MS);
+  };
+
+  const openAndWrite = () => {
+    fs.open(fifoPath, flags, (openErr, fd) => {
+      if (openErr) {
+        if (isWouldBlock(openErr)) {
+          retry(openAndWrite);
+        } else {
+          onError(String(openErr?.message || openErr));
+        }
+        return;
+      }
+
+      const writeOnce = () => {
+        fs.write(fd, buffer, 0, buffer.length, null, (writeErr, written) => {
+          if (writeErr) {
+            if (isWouldBlock(writeErr)) {
+              retry(writeOnce, () => closeFd(fd));
+            } else {
+              closeFd(fd);
+              onError(String(writeErr?.message || writeErr));
+            }
+            return;
+          }
+
+          if (written !== buffer.length) {
+            closeFd(fd);
+            onError("timeout input write was partial");
+            return;
+          }
+
+          fs.close(fd, (closeErr) => {
+            if (closeErr) {
+              onError(String(closeErr?.message || closeErr));
+            } else {
+              onSuccess();
+            }
+          });
+        });
+      };
+
+      writeOnce();
+    });
+  };
+
+  openAndWrite();
+}
 
 // spawnSandboxImpl :: String
 //   -> (String -> Effect Unit)   -- onError
@@ -66,7 +149,16 @@ export const spawnSandboxImpl = (workspacePath) => (onError) => (onSuccess) => (
               proc.kill("SIGUSR1");
             } catch (_) {}
           };
-          onSuccess({ kernelJsonPath: trimmed, kill, interrupt })();
+          const stdinPath = path.join(path.dirname(trimmed), "stdin");
+          const sendInput = (value) => (onError) => (onSuccess) => () => {
+            sendInputToFifoPath(
+              stdinPath,
+              value,
+              (err) => onError(err)(),
+              () => onSuccess(),
+            );
+          };
+          onSuccess({ kernelJsonPath: trimmed, kill, interrupt, sendInput })();
           return;
         }
     }

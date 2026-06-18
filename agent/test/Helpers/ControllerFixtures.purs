@@ -56,6 +56,7 @@ mockSandboxHandle =
     { kernelJsonPath: "/tmp/mock-kernel.json"
     , kill: \onDone -> onDone unit
     , interrupt: pure unit
+    , sendInput: \_ onError _ -> onError "timeout input sink unavailable"
     }
 
 -- | Set the environment variable that readApiKey will look for.
