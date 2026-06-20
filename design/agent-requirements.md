@@ -36,8 +36,8 @@ The runner connects to the sandbox over the Jupyter messaging protocol
 
 ### ReACT Loop
 
-**A1** — The runner starts with a user message, then begins a round (A48).
-Within a round, it executes turns. Each turn proceeds as follows:
+**A1** — Within a round (A48), the runner executes turns. Each turn proceeds as
+follows:
 
 1. Send the current conversation history to the LLM.
 2. Stream the LLM response to the terminal.
@@ -55,7 +55,8 @@ step (A48) is triggered in the same way as step 4.
 **A2** — On startup, before the first user prompt, the runner:
 
 1. Ensures all workspace bootstrap files and directories are present (A2a).
-2. Reads and validates `config.toml` (A37–A39).
+2. Reads and validates `config.toml` (A37–A39), all runner-owned substitution
+   templates (A23), and the initial-message file when present (A22b).
 3. Performs the pre-launch git trust-state check (A2b–A2d).
 4. Spawns the sandbox via `7aigent-sandbox` with the current working directory
    as the workspace path.
@@ -78,15 +79,19 @@ printed to the terminal for each file or directory created (e.g.
 | `.7aigent/system_prompt.md` | `config/system_prompt.md` |
 | `.7aigent/compaction_prompt.md` | `config/compaction_prompt.md` |
 | `.7aigent/summary_message.md` | `config/summary_message.md` |
+| `.7aigent/user_message.md` | `config/user_message.md` |
 | `.7aigent/steering_message.md` | `config/steering_message.md` |
 | `.7aigent/reflection_prompt.md` | `config/reflection_prompt.md` |
 | `.7aigent/timeout_prompt.md` | `config/timeout_prompt.md` |
 | `.7aigent/stdin_prompt.md` | `config/stdin_prompt.md` |
 | `.7aigent/startup.jl` | `config/startup.jl` |
+| `.7aigent/initial_message.md` | `config/initial_message.md` |
 
 After placing any missing files, the runner proceeds to validate `config.toml`
-(A37–A39). If required fields in `config.toml` still hold placeholder values,
-the runner exits with an informative error directing the user to edit the file.
+(A37–A39), all runner-owned substitution templates (A23), and the
+initial-message file when present (A22b). If required fields in `config.toml`
+still hold placeholder values, the runner exits with an informative error
+directing the user to edit the file.
 
 **A2b** — Before spawning the sandbox, the runner checks whether
 `.7aigent/state/nogit` exists and whether `.git` exists in the workspace root.
@@ -226,7 +231,8 @@ The interrupted turn is recorded in the session log as an `escape` event
    conversation history; any partial tool call is discarded.
 2. If a tool is running, interrupt it. A `tool_result` event is written to
    the session log with any output produced so far, with `\n[interrupted]`
-   appended to the output text.
+   appended to the output text. The interrupted `tool_result` uses the same
+   `origin` value as the interrupted `tool_call`.
    - For `julia_repl`: send an `interrupt_request` to the Jupyter control
      channel and wait for the kernel to recover (per S18–S19).
     - For `git_stage` or `git_commit`: send SIGINT to the host-side tool
@@ -490,10 +496,11 @@ connected, the runner executes the following startup sequence in the kernel:
 2. The contents of `.7aigent/startup.jl`
 
 The Julia kernel's working directory inside the sandbox is `/workspace`. The
-default `startup.jl` (placed by A2a if absent) loads the codebase from
-`/workspace` into a `CodeTreeDB` bound to a well-known variable in `Main`.
-All output and errors from both expressions are captured and made available
-as `{{initial_repl_output}}` for the system prompt (A21).
+startup file prepares the REPL state for the session. Its output is captured
+for terminal display and diagnostics only; startup output is not substituted
+into the system prompt or otherwise treated as model context. Any initial
+model-visible tool result is provided by the initial seed mechanism specified
+in A22b–A22c.
 
 **A20** — If either startup expression raises an error, the runner prints the
 error to the terminal and exits with a non-zero status before prompting for
@@ -538,7 +545,7 @@ attempts finish or execution is interrupted.
 
 ---
 
-### System Prompt
+### Prompt and Initial Context
 
 **A21** — The system prompt is read from `.7aigent/system_prompt.md` in the
 workspace directory. The file is a Markdown template: occurrences of
@@ -554,19 +561,100 @@ keyword definition says so. A supported keyword omitted from the template has
 no effect. An unrecognised `{{keyword}}` is an error under the validation rule
 for that template.
 
-**A22** — The supported placeholders are:
+**A22** — The supported placeholders for `.7aigent/system_prompt.md` are:
 
 | Keyword                    | Replaced with                                                                 |
 |----------------------------|-------------------------------------------------------------------------------|
-| `{{initial_repl_output}}`  | Output of the Julia startup sequence (A19)                                    |
 | `{{agents_md}}`            | Full contents of `AGENTS.md` in the workspace root; empty string if absent    |
 | `{{startup_jl}}`           | Full contents of `.7aigent/startup.jl`                                        |
 | `{{datetime}}`             | Current date and time in ISO 8601 format                                      |
 | `{{model}}`                | The model name from config (A37)                                              |
 
-**A23** — Any `{{keyword}}` in the template that does not appear in the table
-above causes the runner to exit with an informative error before the session
-starts.
+The system prompt must not receive startup output or the result of any REPL
+inspection as a template substitution. Runtime evidence from the REPL is
+represented as tool messages per A22c.
+
+**A22a** — The user's input is rendered through the workspace template
+`.7aigent/user_message.md` before it is appended to conversation history. The
+template uses the substitution rules from A21. Its supported placeholders are:
+
+| Keyword                    | Replaced with                                                                 |
+|----------------------------|-------------------------------------------------------------------------------|
+| `{{user_message}}`         | The raw user text supplied interactively, by `--prompt`, or by MCP `run`      |
+
+The rendered template text is appended to conversation history. The raw user
+text remains available for session logging and descriptions under A26–A27.
+
+**A22b** — When starting a new session, after A19 startup succeeds and after
+the first rendered user message has been appended, the runner reads
+`.7aigent/initial_message.md` as a workspace-owned complete assistant-message
+file. This file is not a `{{keyword}}` substitution template; any `{{...}}`
+text in it is literal assistant-message text. If the file is absent or contains
+only whitespace, no initial seed is performed. If it contains non-whitespace
+content, it must contain exactly one tool-call marker matching this grammar:
+
+```text
+marker        ::= "<<" ws? "julia_repl" ws? "(" ws? code ws? "," ws? timeout ws? ")" ws? ">>"
+code          ::= JSON string literal
+timeout       ::= positive base-10 integer without sign
+ws            ::= any sequence of ASCII space, tab, CR, or LF
+```
+
+A JSON string literal is parsed with the standard JSON string rules: it is
+double-quoted, supports JSON escapes such as `\"`, `\\`, and `\n`, and may
+represent multiline Julia source through escaped newlines. The decoded string
+becomes the `julia_repl.code` value. `timeout` becomes the
+`julia_repl.timeout_seconds` value and is validated by the same rules as
+ordinary `julia_repl` input (A4). The marker is removed from the assistant
+message text and converted into a synthetic `julia_repl` tool call. All text
+before and after the marker, including surrounding whitespace, remains the
+assistant message `content`.
+
+The runner performs one pre-round seed before the first round begins by:
+
+1. appending the synthetic assistant message described by
+   `.7aigent/initial_message.md`;
+2. executing the embedded `julia_repl` tool call through the same tool path used
+   for ordinary model-requested tool calls; and
+3. appending the resulting tool message to conversation history.
+
+The initial seed may depend on bindings created by `.7aigent/startup.jl`. If
+workspace authors change startup so those bindings no longer exist, they are
+responsible for changing or disabling `.7aigent/initial_message.md`.
+
+The initial seed is performed at most once for a session. It is not
+performed before later user messages in the same session and is not re-run
+during session resumption; resumed sessions reconstruct any prior seeded
+messages from `log.jsonl` under A31.
+
+**A22c** — The initial seed is ordinary tool execution, not a special
+startup-output channel. It uses the normal tool execution, output collection,
+output-threshold handling, timeout/input handling, terminal display, session
+logging, and conversation-history representation for the selected tool. If the
+initial seed tool execution returns an error result, that error is captured as
+the tool result and the session continues to the first model-generated
+assistant response unless the normal tool path itself fails catastrophically.
+
+The synthetic assistant message and its tool result are logged and reconstructed
+using the same `llm_response`, `tool_call`, and `tool_result` events as ordinary
+assistant tool use, with provenance recorded under A26. They participate in
+compaction, resume, and later LLM requests as ordinary conversation messages.
+
+If the initial seed is a `julia_repl` call, its input participates in definition
+extraction under A29–A30 exactly like any other Julia tool call. This does not
+re-run the seed during resume; it only replays pure definitions extracted from
+logged Julia input as part of the normal resume mechanism.
+
+**A23** — During startup, before spawning the sandbox, the runner reads and
+validates every runner-owned `{{keyword}}` substitution template file placed by
+A2a: system prompt, user message, compaction prompt, summary message, steering
+message, reflection prompt, timeout prompt, and stdin prompt. Any
+`{{keyword}}` in one of these templates that is not listed for that template
+causes the runner to exit with an informative error before the session starts.
+Julia source files such as `.7aigent/startup.jl` and complete-message files
+such as `.7aigent/initial_message.md` are not `{{keyword}}` substitution
+templates and are not subject to placeholder validation. The runner validates
+`.7aigent/initial_message.md` under A22b instead.
 
 ---
 
@@ -594,11 +682,11 @@ concurrently.
 | Event type         | Fields                                                                                     |
 |--------------------|--------------------------------------------------------------------------------------------|
 | `session_start`    | `id`, `timestamp`, `workspace`, `model`, `resumed_from` (id or null)                      |
-| `user_message`     | `timestamp`, `content`, `source` (`"user"` or `"reflection"`; omitted for human input)    |
-| `llm_response`     | `timestamp`, `content`                                                                     |
+| `user_message`     | `timestamp`, `content`, `raw_content`, `source` (`"user"` or `"reflection"`) |
+| `llm_response`     | `timestamp`, `content`, `origin` (`"model"` or `"initial_seed"`)                          |
 | `llm_query`        | `timestamp`, `purpose`, `input`                                                            |
-| `tool_call`        | `timestamp`, `tool`, `tool_call_id`, `input`                                               |
-| `tool_result`      | `timestamp`, `tool_call_id`, `output`, `truncated` (bool)                                  |
+| `tool_call`        | `timestamp`, `tool`, `tool_call_id`, `input`, `origin` (`"model"` or `"initial_seed"`)     |
+| `tool_result`      | `timestamp`, `tool_call_id`, `output`, `truncated` (bool), `origin` (`"model"` or `"initial_seed"`) |
 | `token_usage`      | `timestamp`, `input_tokens`, `cached_input_tokens`, `output_tokens`, `total_session_input_tokens`, `total_session_cached_input_tokens`, `total_session_output_tokens` |
 | `compaction`       | `timestamp`, `summary`, `initial_message_count`, `compacted_message_count`, `final_message_count`, `total_tokens_before` |
 | `reflection`       | `timestamp`, `turn_index` (1-based turn number within current round), `auto_turns_taken` (rounds auto-continued so far this session), `complete` (bool), `feedback` (string or null) |
@@ -620,8 +708,19 @@ on behalf of the Julia REPL rather than the main conversation loop. The event's
 `purpose` describes the query kind (currently `summary`), and `input` stores the
 serialized REPL-to-runner request payload that triggered the query.
 
-**A27** — The session description used in listings (A40) is the content of
-the first `user_message` event, truncated to 120 characters.
+For human-input user messages, `content` is the rendered `.7aigent/user_message.md`
+template and `raw_content` is the raw text supplied interactively, by
+`--prompt`, or by MCP `run`, with `source = "user"`. For reflection messages,
+`raw_content` is omitted or null.
+
+For normal LLM-generated assistant responses and their tool calls/results,
+`origin` is `"model"`. For the synthetic initial seed assistant message, tool
+call, and tool result from A22b, `origin` is `"initial_seed"`.
+
+**A27** — The session description used in listings (A40) is the `raw_content`
+of the first human-input `user_message` event, truncated to 120 characters. For
+legacy logs or malformed events where `raw_content` is absent, the runner falls
+back to that event's `content`.
 
 ---
 
@@ -684,17 +783,23 @@ session resumption.
    is skipped with a warning printed to the terminal.
 4. If `julia_state.jls` exists, executing a deserialization snippet in the
    kernel that loads it and rebinds all saved globals into `Main`. If the
-   file is absent, this step is skipped with a warning.
-5. Reconstructing the conversation history from `log.jsonl` such that the
-   in-memory conversation is identical to what it was at session end,
-   including any compactions that occurred during the session. The
-   `tool_call_id` field in `tool_call` and `tool_result` events is used to
-   pair tool calls with their results when reconstructing the message list.
-   The `{{datetime}}` placeholder in the system prompt is re-substituted with
-   the current date and time at resume time.
+   file is absent, this step is skipped with a warning. In that case, the
+   kernel contains only startup state plus any pure definitions replayed from
+   `julia_defs.jl`; non-definition effects from earlier Julia tool calls,
+   including the initial seed, are not reconstructed.
+5. Reconstructing the conversation history from `log.jsonl`, including any
+   compactions that occurred during the session. The system prompt is
+   re-rendered from the current `.7aigent/system_prompt.md` template at resume
+   time, so current-valued placeholders such as `{{datetime}}` receive
+   resume-time values. All non-system historical messages are reconstructed
+   from logged rendered content. The `tool_call_id` field in `tool_call` and
+   `tool_result` events is used to pair tool calls with their results when
+   reconstructing the message list. Historical user messages are reconstructed
+   from their logged rendered `content`; they are not re-rendered from
+   `raw_content` or from the current `.7aigent/user_message.md` template.
 6. Writing a `session_start` event with `resumed_from` set to the original
    session ID.
-7. Entering the ReACT loop with the restored conversation history.
+7. Entering the ReACT loop with the current conversation history.
 
 **A32** — If deserialization of any individual global fails (e.g. the type
 is no longer defined, or the serialized format is incompatible), that global
@@ -956,10 +1061,14 @@ conversation history.
 
 **A48 — Round lifecycle**
 
-A round begins when the runner receives a user message (or when a reflection
-feedback message is injected per A50). The round consists of successive turns
-executed as described in A1. After each turn ends, the runner performs a
-reflection call (A49). The round ends when either:
+A round begins when the runner receives a human-input user message with
+`source = "user"` or when a reflection feedback message with
+`source = "reflection"` is injected per A50. For the first user message of a
+new session, the round begins after any initial seed required by A22b has
+completed. On session resumption, step 7 of A31 enters the ReACT loop with the
+current conversation history and thereby resumes normal round execution. The
+round consists of successive turns executed as described in A1. After each turn
+ends, the runner performs a reflection call (A49). The round ends when either:
 
 - the reflection returns `complete: true`, or
 - the number of turns completed in the round equals `max_turns_per_round`.
