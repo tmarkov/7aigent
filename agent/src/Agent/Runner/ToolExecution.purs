@@ -129,6 +129,7 @@ doTool
     -> String
     -> String
     -> ConversationHistory
+    -> String
     -> ToolCall
     -> Set HunkId
     -> Llm.LlmUsage
@@ -140,13 +141,14 @@ doTool
         }
 doTool
     svc ws sessionId config apiKey kernel sandbox timeoutTemplate stdinTemplate
-    history tc knownHunks usageTotals = do
+    history origin tc knownHunks usageTotals = do
     ts <- Timestamp <$> liftEffect svc.nowIso
     writeLogEvent ws sessionId (EvtToolCall
         { timestamp: ts
         , toolName: tc.name
         , toolCallId: tc.id
         , input: tc.input
+        , origin
         })
     liftEffect $ svc.printLn ("\n[Tool: " <> renderToolName tc.name <> "]")
     let inputSummary = summarizeToolInput tc.name tc.input
@@ -168,6 +170,7 @@ doTool
         , toolCallId: tc.id
         , output: proc.fullOutput
         , truncated: proc.truncated
+        , origin
         })
 
     let toolMsg = ToolResultMessage { toolCallId: tc.id, output: proc.llmFacing }

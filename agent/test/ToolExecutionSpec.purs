@@ -77,6 +77,7 @@ toolExecutionSpec = do
                     "key" mockKernelHandle mockSandboxHandle
                     "{{json_schema}}" "{{prompt}}"
                     emptyHistory
+                    "model"
                     { name: JuliaRepl
                     , input: "{\"code\":\"sleep(2)\",\"timeout_seconds\":1}"
                     , id: ToolCallId "tc-timeout-wait"
@@ -110,6 +111,7 @@ toolExecutionSpec = do
                     "key" mockKernelHandle mockSandboxHandle
                     "{{json_schema}}" "{{prompt}}"
                     emptyHistory
+                    "model"
                     { name: JuliaRepl
                     , input: "{\"code\":\"while true; sleep(1); end\",\"timeout_seconds\":1}"
                     , id: ToolCallId "tc-timeout-interrupt"
@@ -143,6 +145,7 @@ toolExecutionSpec = do
                     "key" mockKernelHandle mockSandboxHandle
                     "{{json_schema}}" "{{prompt}}"
                     emptyHistory
+                    "model"
                     { name: JuliaRepl
                     , input: "{\"code\":\"run(`python -c 'input()'`)\",\"timeout_seconds\":1}"
                     , id: ToolCallId "tc-timeout-input"
@@ -182,6 +185,7 @@ toolExecutionSpec = do
                     "key" mockKernelHandle sandbox
                     "{{json_schema}}" "{{prompt}}"
                     emptyHistory
+                    "model"
                     { name: JuliaRepl
                     , input: "{\"code\":\"run(`python -c 'input()'`)\",\"timeout_seconds\":1}"
                     , id: ToolCallId "tc-timeout-input-sent"
@@ -240,6 +244,7 @@ toolExecutionSpec = do
                             svc ws sessionId config "key" mockKernelHandle
                             mockSandboxHandle "{{json_schema}}" "{{prompt}}"
                             emptyHistory
+                    "model"
                             { name: JuliaRepl
                             , input: "{\"code\":\"readline()\",\"timeout_seconds\":1}"
                             , id: ToolCallId "tc-cancel-timeout"
@@ -286,6 +291,7 @@ toolExecutionSpec = do
                             svc ws sessionId config "key" mockKernelHandle
                             mockSandboxHandle "{{json_schema}}" "{{prompt}}"
                             emptyHistory
+                    "model"
                             { name: JuliaRepl
                             , input: "{\"code\":\"readline()\",\"timeout_seconds\":30}"
                             , id: ToolCallId "tc-cancel-input"
@@ -358,6 +364,7 @@ toolExecutionSpec = do
                             svc ws sessionId config "key" mockKernelHandle
                             mockSandboxHandle "{{json_schema}}" "{{prompt}}"
                             emptyHistory
+                    "model"
                             { name: JuliaRepl
                             , input: "{\"code\":\"summarize!([\\\"node-1\\\"])\",\"timeout_seconds\":1}"
                             , id: ToolCallId "tc-summary"
@@ -418,6 +425,7 @@ toolExecutionSpec = do
                     svc ws sessionId config "key" mockKernelHandle
                     mockSandboxHandle "{{json_schema}}" "{{prompt}}"
                     emptyHistory
+                    "model"
                     { name: JuliaRepl
                     , input: "{\"code\":\"summarize!([\\\"node-1\\\"])\",\"timeout_seconds\":30}"
                     , id: ToolCallId "tc-summary-error"
@@ -456,6 +464,7 @@ toolExecutionSpec = do
                     svc ws sessionId config "key" mockKernelHandle
                     mockSandboxHandle "{{json_schema}}" "{{prompt}}"
                     emptyHistory
+                    "model"
                     { name: JuliaRepl
                     , input: "{\"code\":\"malformed direct summary RPC\",\"timeout_seconds\":30}"
                     , id: ToolCallId "tc-summary-invalid-request"
@@ -487,6 +496,7 @@ toolExecutionSpec = do
                     mockSandboxHandle "{{json_schema}}"
                     "{{prompt}}\n{{json_schema}}"
                     emptyHistory
+                    "model"
                     { name: JuliaRepl
                     , input: "{\"code\":\"readline(); readline()\",\"timeout_seconds\":30}"
                     , id: ToolCallId "tc-stdin"
@@ -519,6 +529,7 @@ toolExecutionSpec = do
                     mock.svc ws sessionId config "key" mockKernelHandle
                     mockSandboxHandle "{{json_schema}}" "{{prompt}}"
                     emptyHistory
+                    "model"
                     { name: JuliaRepl
                     , input: "{\"code\":\"readline()\",\"timeout_seconds\":30}"
                     , id: ToolCallId "tc-retry"
@@ -555,6 +566,7 @@ toolExecutionSpec = do
                     mock.svc ws sessionId config "key" mockKernelHandle
                     mockSandboxHandle "{{json_schema}}" "{{prompt}}"
                     emptyHistory
+                    "model"
                     { name: JuliaRepl
                     , input: "{\"code\":\"readline()\",\"timeout_seconds\":30}"
                     , id: ToolCallId "tc-api-retry"
@@ -578,6 +590,7 @@ toolExecutionSpec = do
                     mock.svc ws sessionId config "key" mockKernelHandle
                     mockSandboxHandle "{{json_schema}}" "{{prompt}}"
                     emptyHistory
+                    "model"
                     { name: JuliaRepl
                     , input: "{\"code\":\"readline()\",\"timeout_seconds\":30}"
                     , id: ToolCallId "tc-visible-input"
@@ -614,6 +627,7 @@ toolExecutionSpec = do
                     svc ws sessionId config "key" mockKernelHandle
                     mockSandboxHandle "{{json_schema}}" "{{prompt}}"
                     emptyHistory
+                    "model"
                     { name: JuliaRepl
                     , input: "{\"code\":\"readline()\",\"timeout_seconds\":30}"
                     , id: ToolCallId "tc-reply-failed"
@@ -637,6 +651,7 @@ toolExecutionSpec = do
                     mock.svc ws sessionId config "key" mockKernelHandle
                     mockSandboxHandle "{{json_schema}}" "{{prompt}}"
                     emptyHistory
+                    "model"
                     { name: JuliaRepl
                     , input: "{\"code\":\"readline()\",\"timeout_seconds\":30}"
                     , id: ToolCallId "tc-interrupt"
@@ -667,6 +682,7 @@ toolExecutionSpec = do
                     mock.svc ws sessionId config "key" mockKernelHandle
                     mockSandboxHandle "{{json_schema}}" "{{prompt}}"
                     emptyHistory
+                    "model"
                     { name: JuliaRepl
                     , input: "{\"code\":\"readline()\",\"timeout_seconds\":30}"
                     , id: ToolCallId "tc-exhausted"

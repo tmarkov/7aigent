@@ -47,6 +47,7 @@ import Agent.Types
     , LogEvent(..)
     , extractContent
     , renderTimestamp
+    , unwrapConversationHistory
     )
 import Agent.Programs.Config (parseConfig, readApiKey, placeDefaultConfigs)
 import Agent.Programs.SessionLog
@@ -56,6 +57,7 @@ import Agent.Programs.SessionLog
 import Agent.Programs.SessionListing (formatSessionListing, SessionMeta)
 import Agent.Programs.SessionResume (loadSessionForResume, ResumeResult(..))
 import Agent.Programs.Template (substituteTemplate)
+import Agent.Programs.InitialMessage (ParsedInitialMessage, parseInitialMessage)
 import Agent.Programs.ReactStep (reactStep, NextStep(..))
 import Agent.Programs.Steering (buildSteeringMessage)
 import Agent.Programs.ToolStep (ToolPostMode(..), ToolStepDecision(..), toolStepDecision)
@@ -188,7 +190,7 @@ loadMeta ws n = do
         Left _ -> pure Nothing
         Right evts ->
             let startEv  = Array.find isSessionStart evts
-                firstMsg = Array.find isUserMessage evts
+                firstMsg = Array.find isHumanUserMessage evts
                 endEv    = Array.find isSessionEnd evts
             in case startEv of
                 Just (SessionStart r) -> pure $ Just
@@ -201,12 +203,14 @@ loadMeta ws n = do
                     }
                 _ -> pure Nothing
   where
-    userMsgContent (EvtUserMessage m) = Just m.content
+    userMsgContent (EvtUserMessage m)
+        | m.source == Just "reflection" = Nothing
+        | otherwise = Just (fromMaybe m.content m.rawContent)
     userMsgContent _                  = Nothing
     isSessionStart (SessionStart _)   = true
     isSessionStart _                  = false
-    isUserMessage (EvtUserMessage _)  = true
-    isUserMessage _                   = false
+    isHumanUserMessage (EvtUserMessage m) = m.source /= Just "reflection"
+    isHumanUserMessage _                  = false
     isSessionEnd (SessionEnd _)       = true
     isSessionEnd _                    = false
 
@@ -283,6 +287,13 @@ startSession svc ws@(WorkspacePath wp) resumedFrom existingHistory resumeState p
             exit1 svc
         Right k -> pure k
 
+    startupFilesR <- validateStartupFiles svc ws config (resumedFrom == Nothing)
+    startupFiles <- case startupFilesR of
+        Left _ ->
+            exit1 svc
+        Right validated ->
+            pure validated
+
     preflight <- runSandboxPreflight ws (promptSandboxPreflight svc)
     case preflight of
         HaltStartup -> do
@@ -324,12 +335,12 @@ startSession svc ws@(WorkspacePath wp) resumedFrom existingHistory resumeState p
 
     -- A19: run Julia startup sequence
     startupResult <- runStartupSequence svc ws kernel
-    startupOutput <- case startupResult of
+    case startupResult of
         Left _ -> do
             cleanupSandbox
             exit1 svc
-        Right output ->
-            pure output
+        Right _ ->
+            pure unit
 
     case resumedFrom, resumeState of
         Just priorSid, Just resumeData ->
@@ -338,7 +349,7 @@ startSession svc ws@(WorkspacePath wp) resumedFrom existingHistory resumeState p
             pure unit
 
     -- A21-A22: build system prompt
-    systemPromptR <- buildSystemPrompt svc ws config startupOutput
+    systemPromptR <- buildSystemPrompt svc ws config
     systemPrompt <- case systemPromptR of
         Left _ -> do
             cleanupSandbox
@@ -366,8 +377,13 @@ startSession svc ws@(WorkspacePath wp) resumedFrom existingHistory resumeState p
                 addMsg (ConversationHistory { messages: [] })
                     (SystemMessage { content: systemPrompt })
             Just _ ->
-                -- Replace the system message's datetime placeholder on resume
-                existingHistory
+                ConversationHistory
+                    { messages:
+                        [{ message: SystemMessage { content: systemPrompt }
+                         , tokens: estimateTokens systemPrompt
+                         }] <>
+                        unwrapConversationHistory existingHistory
+                    }
 
     -- Enter the main user ↔ LLM loop
     steeringTmpl    <- loadSteeringTemplate svc ws cleanupSandbox
@@ -379,7 +395,10 @@ startSession svc ws@(WorkspacePath wp) resumedFrom existingHistory resumeState p
     exitCode <- runUserLoop svc
         ws sessionId config apiKey kernel sandbox
         steeringTmpl reflectionTmpl executionTemplates
-        initHistory Set.empty zeroLlmUsage 0 prompt
+        initHistory Set.empty zeroLlmUsage 0
+        startupFiles.userMessageTemplate
+        (if resumedFrom == Nothing then startupFiles.initialSeed else Nothing)
+        prompt
 
     -- Cleanup
     cleanupSandbox
@@ -463,13 +482,255 @@ wrapDefinitionReplay expr = String.joinWith "\n"
 -- A21-A22: system prompt template
 -- ---------------------------------------------------------------------------
 
-buildSystemPrompt :: RunnerServices -> WorkspacePath -> Config -> String -> Aff (Either AppError String)
-buildSystemPrompt svc (WorkspacePath wp) config startupOutput = do
-    tmplR <- attempt (FS.readTextFile UTF8 (wp <> "/.7aigent/system_prompt.md"))
-    let tmpl = case tmplR of
-            Left _  -> ""
-            Right t -> t
+validateStartupFiles
+    :: RunnerServices
+    -> WorkspacePath
+    -> Config
+    -> Boolean
+    -> Aff (Either AppError
+        { userMessageTemplate :: String
+        , initialSeed :: Maybe ParsedInitialMessage
+        })
+validateStartupFiles svc ws@(WorkspacePath wp) config validateInitialSeed = do
+    systemPromptR <- buildSystemPrompt svc ws config
+    case systemPromptR of
+        Left err ->
+            pure (Left err)
+        Right _ -> do
+            userMessageTemplateR <- readAndValidateTemplate svc
+                (wp <> "/.7aigent/user_message.md")
+                "user_message.md"
+                (Map.fromFoldable [Tuple "user_message" ""])
+            case userMessageTemplateR of
+                Left err -> pure (Left err)
+                Right userMessageTemplate -> do
+                    otherValidation <- validateNonSystemTemplates svc wp
+                    case otherValidation of
+                        Left err -> pure (Left err)
+                        Right _ -> do
+                            if validateInitialSeed then do
+                                    initialTextR <- readInitialMessageText
+                                        (wp <> "/.7aigent/initial_message.md")
+                                    initialText <- case initialTextR of
+                                        Left err -> do
+                                            liftEffect $ svc.printErr
+                                                ("Error in initial_message.md: " <> show err)
+                                            pure (Left err)
+                                        Right text ->
+                                            pure (Right text)
+                                    case initialText of
+                                        Left err ->
+                                            pure (Left err)
+                                        Right seedText ->
+                                            case parseInitialMessage config.maxReplTimeoutSeconds seedText of
+                                                Left err -> do
+                                                    liftEffect $ svc.printErr ("Error in initial_message.md: " <> err)
+                                                    pure (Left (TemplateError ("initial_message.md: " <> err)))
+                                                Right initialSeed ->
+                                                    pure (Right { userMessageTemplate, initialSeed })
+                            else
+                                pure (Right { userMessageTemplate, initialSeed: Nothing })
 
+validateNonSystemTemplates
+    :: RunnerServices
+    -> String
+    -> Aff (Either AppError Unit)
+validateNonSystemTemplates svc wp = do
+    let validations =
+            [ { file: "compaction_prompt.md"
+              , vars: Map.fromFoldable
+                    [ Tuple "initial_messages" ""
+                    , Tuple "compacted_messages" ""
+                    , Tuple "final_messages" ""
+                    , Tuple "julia_state" ""
+                    ]
+              }
+            , { file: "summary_message.md"
+              , vars: Map.fromFoldable [Tuple "summary" ""]
+              }
+            , { file: "steering_message.md"
+              , vars: Map.fromFoldable
+                    [ Tuple "julia_state" ""
+                    , Tuple "turn_tokens" ""
+                    , Tuple "turn_token_limit" ""
+                    , Tuple "compaction_threshold" ""
+                    , Tuple "turn_index" ""
+                    , Tuple "max_turns_per_round" ""
+                    , Tuple "auto_turns_taken" ""
+                    ]
+              }
+            , { file: "reflection_prompt.md"
+              , vars: Map.fromFoldable
+                    [ Tuple "turn_index" ""
+                    , Tuple "auto_turns_taken" ""
+                    , Tuple "max_turns_per_round" ""
+                    , Tuple "julia_state" ""
+                    ]
+              }
+            , { file: "timeout_prompt.md"
+              , vars: Map.fromFoldable
+                    [ Tuple "julia_source" ""
+                    , Tuple "elapsed_time" ""
+                    , Tuple "output_so_far" ""
+                    , Tuple "json_schema" ""
+                    ]
+              }
+            , { file: "stdin_prompt.md"
+              , vars: Map.fromFoldable
+                    [ Tuple "julia_source" ""
+                    , Tuple "elapsed_time" ""
+                    , Tuple "output_so_far" ""
+                    , Tuple "prompt" ""
+                    , Tuple "json_schema" ""
+                    ]
+              }
+            ]
+    go validations
+  where
+    go entries = case Array.uncons entries of
+        Nothing ->
+            pure (Right unit)
+        Just { head: entry, tail: rest } -> do
+            textR <- readAndValidateTemplate svc
+                (wp <> "/.7aigent/" <> entry.file)
+                entry.file
+                entry.vars
+            case textR of
+                Left err -> pure (Left err)
+                Right _ -> go rest
+
+readAndValidateTemplate
+    :: RunnerServices
+    -> String
+    -> String
+    -> Map.Map String String
+    -> Aff (Either AppError String)
+readAndValidateTemplate svc path label vars = do
+    textR <- readFileOrError path label
+    case textR of
+        Left err -> do
+            liftEffect $ svc.printErr ("Error in " <> label <> ": " <> show err)
+            pure (Left err)
+        Right text ->
+            validateTemplateText svc label vars text
+
+readAndRenderTemplate
+    :: RunnerServices
+    -> String
+    -> String
+    -> Map.Map String String
+    -> Aff (Either AppError String)
+readAndRenderTemplate svc path label vars = do
+    textR <- readFileOrError path label
+    case textR of
+        Left err -> do
+            liftEffect $ svc.printErr ("Error in " <> label <> ": " <> show err)
+            pure (Left err)
+        Right text ->
+            renderTemplateText svc label vars text
+
+validateTemplateText
+    :: RunnerServices
+    -> String
+    -> Map.Map String String
+    -> String
+    -> Aff (Either AppError String)
+validateTemplateText svc label vars text =
+    case substituteTemplate vars text of
+        Left err -> do
+            liftEffect $ svc.printErr ("Error in " <> label <> ": " <> show err)
+            pure (Left (TemplateError (label <> ": " <> show err)))
+        Right _ ->
+            pure (Right text)
+
+renderTemplateText
+    :: RunnerServices
+    -> String
+    -> Map.Map String String
+    -> String
+    -> Aff (Either AppError String)
+renderTemplateText svc label vars text =
+    case substituteTemplate vars text of
+        Left err -> do
+            liftEffect $ svc.printErr ("Error in " <> label <> ": " <> show err)
+            pure (Left (TemplateError (label <> ": " <> show err)))
+        Right rendered ->
+            pure (Right rendered)
+
+readFileOrError :: String -> String -> Aff (Either AppError String)
+readFileOrError path label = do
+    contentR <- attempt (FS.readTextFile UTF8 path)
+    pure case contentR of
+        Left err -> Left (TemplateError (label <> ": " <> message err))
+        Right text -> Right text
+
+readInitialMessageText :: String -> Aff (Either AppError String)
+readInitialMessageText path = do
+    contentR <- attempt (FS.readTextFile UTF8 path)
+    pure case contentR of
+        Right text ->
+            Right text
+        Left err ->
+            let errMsg = message err
+                lowerMsg = String.toLower errMsg
+            in if String.contains (String.Pattern "ENOENT") errMsg
+                || String.contains (String.Pattern "no such file") lowerMsg then
+                Right ""
+            else
+                Left (TemplateError ("initial_message.md: " <> errMsg))
+
+renderUserMessage :: String -> String -> Either AppError String
+renderUserMessage template userMessage =
+    substituteTemplate
+        (Map.fromFoldable [Tuple "user_message" userMessage])
+        template
+
+applyInitialSeed
+    :: RunnerServices
+    -> WorkspacePath
+    -> SessionId
+    -> Config
+    -> String
+    -> Jupyter.KernelHandle
+    -> Sandbox.SandboxHandle
+    -> ExecutionTemplates
+    -> ConversationHistory
+    -> Set HunkId
+    -> Llm.LlmUsage
+    -> ParsedInitialMessage
+    -> Aff
+        { history :: ConversationHistory
+        , knownHunks :: Set HunkId
+        , usageTotals :: Llm.LlmUsage
+        }
+applyInitialSeed
+    svc ws sessionId config apiKey kernel sandbox executionTemplates
+    history knownHunks usageTotals seed = do
+    ts <- getTs svc
+    writeLogEvent ws sessionId
+        (EvtLlmResponse
+            { timestamp: ts
+            , content: seed.assistantContent
+            , origin: "initial_seed"
+            })
+    let historyWithAssistant =
+            addMsg history
+                (AssistantMessage
+                    { content: seed.assistantContent
+                    , toolCalls: [seed.toolCall]
+                    })
+    toolResult <- doTool
+        svc ws sessionId config apiKey kernel sandbox
+        executionTemplates.timeout executionTemplates.stdin
+        historyWithAssistant "initial_seed" seed.toolCall knownHunks usageTotals
+    pure
+        { history: toolResult.history
+        , knownHunks: toolResult.hunks
+        , usageTotals: toolResult.usageTotals
+        }
+
+buildSystemPrompt :: RunnerServices -> WorkspacePath -> Config -> Aff (Either AppError String)
+buildSystemPrompt svc (WorkspacePath wp) config = do
     startupJlR <- attempt (FS.readTextFile UTF8 (wp <> "/.7aigent/startup.jl"))
     let startupJl = case startupJlR of
             Left _  -> ""
@@ -483,17 +744,15 @@ buildSystemPrompt svc (WorkspacePath wp) config startupOutput = do
     ts <- getTs svc
     let (ModelName model) = config.model
     let vars = Map.fromFoldable
-            [ Tuple "initial_repl_output" startupOutput
-            , Tuple "agents_md" agentsMd
+            [ Tuple "agents_md" agentsMd
             , Tuple "startup_jl" startupJl
             , Tuple "datetime" (renderTimestamp ts)
             , Tuple "model" model
             ]
-    case substituteTemplate vars tmpl of
-        Left err -> do
-            liftEffect $ svc.printErr ("Error in system_prompt.md: " <> show err)
-            pure (Left (TemplateError ("system_prompt.md: " <> show err)))
-        Right s -> pure (Right s)
+    readAndRenderTemplate svc
+        (wp <> "/.7aigent/system_prompt.md")
+        "system_prompt.md"
+        vars
 
 -- ---------------------------------------------------------------------------
 -- A1: outer loop — user prompt ↔ LLM loop
@@ -514,12 +773,15 @@ runUserLoop
     -> Set HunkId
     -> Llm.LlmUsage
     -> Int
+    -> String
+    -> Maybe ParsedInitialMessage
     -> Maybe String
     -> Aff Int
 runUserLoop
     svc ws sessionId config apiKey kernel sandbox
     steeringTemplate reflectionTemplate executionTemplates history
-    knownHunks usageTotals autoTurnsTaken maybePrompt = do
+    knownHunks usageTotals autoTurnsTaken
+    userMessageTemplate initialSeed maybePrompt = do
     line <- case maybePrompt of
         Just p -> do
             liftEffect $ svc.printLn ("\n> " <> p)
@@ -535,15 +797,39 @@ runUserLoop
         pure 0
     else do
 
-        ts <- getTs svc
-        writeLogEvent ws sessionId (EvtUserMessage { timestamp: ts, content: line, source: Nothing })
+        let renderedLineR = renderUserMessage userMessageTemplate line
+        renderedLine <- case renderedLineR of
+            Left err -> do
+                liftEffect $ svc.printErr ("Error in user_message.md: " <> show err)
+                exit1 svc
+            Right rendered ->
+                pure rendered
 
-        let history' = addMsg history (UserMessage { content: line })
+        ts <- getTs svc
+        writeLogEvent ws sessionId (EvtUserMessage
+            { timestamp: ts
+            , content: renderedLine
+            , rawContent: Just line
+            , source: Just "user"
+            })
+
+        let history' = addMsg history (UserMessage { content: renderedLine })
+        seeded <- case initialSeed of
+            Nothing ->
+                pure
+                    { history: history'
+                    , knownHunks
+                    , usageTotals
+                    }
+            Just seed ->
+                applyInitialSeed
+                    svc ws sessionId config apiKey kernel sandbox
+                    executionTemplates history' knownHunks usageTotals seed
         roundResult <-
             runRound
                 svc ws sessionId config apiKey kernel sandbox
-                steeringTemplate reflectionTemplate executionTemplates history'
-                knownHunks usageTotals autoTurnsTaken
+                steeringTemplate reflectionTemplate executionTemplates seeded.history
+                seeded.knownHunks seeded.usageTotals autoTurnsTaken
         liftEffect $ svc.printLn (renderSessionTokenUsage roundResult.usageTotals)
 
         case roundResult.error, maybePrompt of
@@ -552,7 +838,7 @@ runUserLoop
                     svc ws sessionId config apiKey kernel sandbox
                     steeringTemplate reflectionTemplate executionTemplates
                     roundResult.history roundResult.knownHunks roundResult.usageTotals
-                    roundResult.autoTurnsTaken Nothing
+                    roundResult.autoTurnsTaken userMessageTemplate Nothing Nothing
             Just _, _ -> do
                 finishSession svc ws sessionId kernel roundResult.history SessionEndedError
                 pure 1
@@ -564,7 +850,7 @@ runUserLoop
                     svc ws sessionId config apiKey kernel sandbox
                     steeringTemplate reflectionTemplate executionTemplates
                     roundResult.history roundResult.knownHunks roundResult.usageTotals
-                    roundResult.autoTurnsTaken Nothing
+                    roundResult.autoTurnsTaken userMessageTemplate Nothing Nothing
 
 -- ---------------------------------------------------------------------------
 -- A1: inner loop — LLM calls + tool execution
@@ -620,7 +906,7 @@ runReactLoop
             response@(LlmResponse r) -> do
                 ts <- getTs svc
                 writeLogEvent ws sessionId
-                    (EvtLlmResponse { timestamp: ts, content: r.content })
+                    (EvtLlmResponse { timestamp: ts, content: r.content, origin: "model" })
 
                 let usageTotals' = addLlmUsage usageTotals result.usage
                 writeLogEvent ws sessionId (TokenUsage
@@ -683,7 +969,7 @@ runReactLoop
                             doTool
                                 svc ws sessionId config apiKey kernel sandbox
                                 executionTemplates.timeout executionTemplates.stdin
-                                history' tc knownHunks usageTotals'
+                                history' "model" tc knownHunks usageTotals'
                         case toolR of
                             Left err -> do
                                 let errMsg = message err
@@ -705,7 +991,7 @@ runReactLoop
                             doTool
                                 svc ws sessionId config apiKey kernel sandbox
                                 executionTemplates.timeout executionTemplates.stdin
-                                history' tc knownHunks usageTotals'
+                                history' "model" tc knownHunks usageTotals'
                         case toolR of
                             Left err -> do
                                 let errMsg = message err
@@ -727,7 +1013,7 @@ runReactLoop
                             doTool
                                 svc ws sessionId config apiKey kernel sandbox
                                 executionTemplates.timeout executionTemplates.stdin
-                                history' tc knownHunks usageTotals'
+                                history' "model" tc knownHunks usageTotals'
                         case toolR of
                             Left err -> do
                                 let errMsg = message err
@@ -838,19 +1124,9 @@ getJuliaState svc kernel = do
             | otherwise -> String.trim execResult.output
 
 -- | Load and validate the steering_message.md template.
--- | Falls back to a built-in default if the file is absent.
--- | Calls `cleanup` then exits if the template contains unknown keywords.
+-- | Calls `cleanup` then exits if the template cannot be read or contains unknown keywords.
 loadSteeringTemplate :: RunnerServices -> WorkspacePath -> Aff Unit -> Aff String
 loadSteeringTemplate svc (WorkspacePath wp) cleanup = do
-    let defaultTmpl = String.joinWith "\n"
-            [ "**Turn status:** {{turn_tokens}}/{{turn_token_limit}} tokens"
-            , "(compaction threshold: {{compaction_threshold}})"
-            , "{{julia_state}}"
-            ]
-    tmplR <- attempt (FS.readTextFile UTF8 (wp <> "/.7aigent/steering_message.md"))
-    let tmpl = case tmplR of
-            Left  _ -> defaultTmpl
-            Right t -> t
     let validateVars = Map.fromFoldable
             [ Tuple "julia_state"          ""
             , Tuple "turn_tokens"          ""
@@ -860,70 +1136,56 @@ loadSteeringTemplate svc (WorkspacePath wp) cleanup = do
             , Tuple "max_turns_per_round"  ""
             , Tuple "auto_turns_taken"     ""
             ]
-    case substituteTemplate validateVars tmpl of
-        Left err -> do
-            liftEffect $ svc.printErr ("Error in steering_message.md: " <> show err)
+    tmplR <- readAndValidateTemplate svc
+        (wp <> "/.7aigent/steering_message.md")
+        "steering_message.md"
+        validateVars
+    case tmplR of
+        Left _ -> do
             cleanup
             exit1 svc
-        Right _ -> pure tmpl
+        Right tmpl -> pure tmpl
 
 -- | Load and validate the reflection_prompt.md template.
--- | Falls back to a built-in default if the file is absent.
--- | Calls `cleanup` then exits if the template contains unknown keywords.
+-- | Calls `cleanup` then exits if the template cannot be read or contains unknown keywords.
 loadReflectionTemplate :: RunnerServices -> WorkspacePath -> Aff Unit -> Aff String
 loadReflectionTemplate svc (WorkspacePath wp) cleanup = do
-    let defaultTmpl = String.joinWith "\n"
-            [ "You are reviewing the progress of an ongoing agent session."
-            , "Turn index (within round): {{turn_index}}"
-            , "Auto-turns taken this session: {{auto_turns_taken}}"
-            , "Max turns per round: {{max_turns_per_round}}"
-            , "Current Julia state:\n{{julia_state}}"
-            , ""
-            , "Reply with JSON: {\"complete\": true} if the task is done,"
-            , "or {\"complete\": false, \"feedback\": \"<next steps>\"} if not."
-            ]
-    tmplR <- attempt (FS.readTextFile UTF8 (wp <> "/.7aigent/reflection_prompt.md"))
-    let tmpl = case tmplR of
-            Left  _ -> defaultTmpl
-            Right t -> t
     let validateVars = Map.fromFoldable
             [ Tuple "turn_index"         ""
             , Tuple "auto_turns_taken"   ""
             , Tuple "max_turns_per_round" ""
             , Tuple "julia_state"        ""
             ]
-    case substituteTemplate validateVars tmpl of
-        Left err -> do
-            liftEffect $ svc.printErr ("Error in reflection_prompt.md: " <> show err)
+    tmplR <- readAndValidateTemplate svc
+        (wp <> "/.7aigent/reflection_prompt.md")
+        "reflection_prompt.md"
+        validateVars
+    case tmplR of
+        Left _ -> do
             cleanup
             exit1 svc
-        Right _ -> pure tmpl
+        Right tmpl -> pure tmpl
 
 loadTimeoutTemplate :: RunnerServices -> WorkspacePath -> Aff Unit -> Aff String
 loadTimeoutTemplate svc (WorkspacePath wp) cleanup = do
-    tmplR <- attempt (FS.readTextFile UTF8 (wp <> "/.7aigent/timeout_prompt.md"))
-    let tmpl = case tmplR of
-            Left _ -> "{{julia_source}}\n{{elapsed_time}}\n{{output_so_far}}\n{{json_schema}}"
-            Right text -> text
     let validateVars = Map.fromFoldable
             [ Tuple "julia_source" ""
             , Tuple "elapsed_time" ""
             , Tuple "output_so_far" ""
             , Tuple "json_schema" ""
             ]
-    case substituteTemplate validateVars tmpl of
-        Left err -> do
-            liftEffect $ svc.printErr ("Error in timeout_prompt.md: " <> show err)
+    tmplR <- readAndValidateTemplate svc
+        (wp <> "/.7aigent/timeout_prompt.md")
+        "timeout_prompt.md"
+        validateVars
+    case tmplR of
+        Left _ -> do
             cleanup
             exit1 svc
-        Right _ -> pure tmpl
+        Right tmpl -> pure tmpl
 
 loadStdinTemplate :: RunnerServices -> WorkspacePath -> Aff Unit -> Aff String
 loadStdinTemplate svc (WorkspacePath wp) cleanup = do
-    tmplR <- attempt (FS.readTextFile UTF8 (wp <> "/.7aigent/stdin_prompt.md"))
-    let tmpl = case tmplR of
-            Left _ -> "{{prompt}}\n{{json_schema}}"
-            Right text -> text
     let validateVars = Map.fromFoldable
             [ Tuple "julia_source" ""
             , Tuple "elapsed_time" ""
@@ -931,12 +1193,15 @@ loadStdinTemplate svc (WorkspacePath wp) cleanup = do
             , Tuple "prompt" ""
             , Tuple "json_schema" ""
             ]
-    case substituteTemplate validateVars tmpl of
-        Left err -> do
-            liftEffect $ svc.printErr ("Error in stdin_prompt.md: " <> show err)
+    tmplR <- readAndValidateTemplate svc
+        (wp <> "/.7aigent/stdin_prompt.md")
+        "stdin_prompt.md"
+        validateVars
+    case tmplR of
+        Left _ -> do
             cleanup
             exit1 svc
-        Right _ -> pure tmpl
+        Right tmpl -> pure tmpl
 
 -- ---------------------------------------------------------------------------
 -- A49-A50: Round orchestration and reflection
@@ -1068,7 +1333,11 @@ runRound
                                 Just fb -> fb
                         ts <- getTs svc
                         writeLogEvent ws sessionId (EvtUserMessage
-                            { timestamp: ts, content: feedbackMsg, source: Just "reflection" })
+                            { timestamp: ts
+                            , content: feedbackMsg
+                            , rawContent: Nothing
+                            , source: Just "reflection"
+                            })
                         let hist' = addMsg loopResult.history (UserMessage { content: feedbackMsg })
                         go hist' loopResult.knownHunks reflR.usageTotals (auto + 1) (turnIndex + 1)
 
@@ -1088,86 +1357,100 @@ doCompact
     -> Llm.LlmUsage
     -> Aff (Either AppError { history :: ConversationHistory, usageTotals :: Llm.LlmUsage })
 doCompact svc ws@(WorkspacePath wp) sessionId config apiKey kernel requestTokensBefore history usageTotals = do
-    compactTmplR <- attempt (FS.readTextFile UTF8 (wp <> "/.7aigent/compaction_prompt.md"))
-    summaryTmplR <- attempt (FS.readTextFile UTF8 (wp <> "/.7aigent/summary_message.md"))
-    let compactTmpl = case compactTmplR of
-            Left _ -> "Summarise:\n{{compacted_messages}}"
-            Right t -> t
-    let summaryTmpl = case summaryTmplR of
-            Left _ -> "{{summary}}"
-            Right t -> t
+    compactTmplR <- readAndValidateTemplate svc
+        (wp <> "/.7aigent/compaction_prompt.md")
+        "compaction_prompt.md"
+        (Map.fromFoldable
+            [ Tuple "initial_messages" ""
+            , Tuple "compacted_messages" ""
+            , Tuple "final_messages" ""
+            , Tuple "julia_state" ""
+            ])
+    summaryTmplR <- readAndValidateTemplate svc
+        (wp <> "/.7aigent/summary_message.md")
+        "summary_message.md"
+        (Map.fromFoldable [Tuple "summary" ""])
+    case compactTmplR, summaryTmplR of
+        Left err, _ ->
+            pure (Left err)
+        _, Left err ->
+            pure (Left err)
+        Right compactTmpl, Right summaryTmpl -> do
 
-    let plan = buildCompactionPlan config.preserveInitial config.preserveFinal history
-    let render msgs = String.joinWith "\n---\n" (map showMsg msgs)
-    juliaState <- getJuliaState svc kernel
-    let promptVars = Map.fromFoldable
-            [ Tuple "initial_messages"   (render plan.initialBlock)
-            , Tuple "compacted_messages" (render plan.compactedBlock)
-            , Tuple "final_messages"     (render plan.finalBlock)
-            , Tuple "julia_state"        juliaState
-            ]
-    let promptText = case substituteTemplate promptVars compactTmpl of
-            Left _ -> render plan.compactedBlock
-            Right t -> t
+            let plan = buildCompactionPlan config.preserveInitial config.preserveFinal history
+            let render msgs = String.joinWith "\n---\n" (map showMsg msgs)
+            juliaState <- getJuliaState svc kernel
+            let promptVars = Map.fromFoldable
+                    [ Tuple "initial_messages"   (render plan.initialBlock)
+                    , Tuple "compacted_messages" (render plan.compactedBlock)
+                    , Tuple "final_messages"     (render plan.finalBlock)
+                    , Tuple "julia_state"        juliaState
+                    ]
+            let promptText = fromMaybe
+                    (render plan.compactedBlock)
+                    (case substituteTemplate promptVars compactTmpl of
+                        Left _ -> Nothing
+                        Right t -> Just t)
 
-    let compactHistory = ConversationHistory
-            { messages: [{ message: UserMessage { content: promptText }, tokens: TokenCount 0 }] }
+            let compactHistory = ConversationHistory
+                    { messages: [{ message: UserMessage { content: promptText }, tokens: TokenCount 0 }] }
 
-    liftEffect $ svc.printStr "[Compacting context...]"
-    summaryR <- svc.callLlm config apiKey compactHistory
-        { responseFormat: Llm.TextResponse
-        , toolsEnabled: true
-        , retryMode: Llm.RetryApiErrors
-        , onToken: const (pure unit)
-        }
-    liftEffect $ svc.printLn ""
+            liftEffect $ svc.printStr "[Compacting context...]"
+            summaryR <- svc.callLlm config apiKey compactHistory
+                { responseFormat: Llm.TextResponse
+                , toolsEnabled: true
+                , retryMode: Llm.RetryApiErrors
+                , onToken: const (pure unit)
+                }
+            liftEffect $ svc.printLn ""
 
-    case summaryR of
-        Left _ -> pure (Right { history, usageTotals })
-        Right result -> case result.response of
-            LlmResponse r -> do
-                ts <- getTs svc
-                let usageTotals' = addLlmUsage usageTotals result.usage
-                writeLogEvent ws sessionId (TokenUsage
-                    { timestamp: ts
-                    , inputTokens: result.usage.inputTokens
-                    , cachedInputTokens: result.usage.cachedInputTokens
-                    , outputTokens: result.usage.outputTokens
-                    , totalSessionInputTokens: usageTotals'.inputTokens
-                    , totalSessionCachedInputTokens: usageTotals'.cachedInputTokens
-                    , totalSessionOutputTokens: usageTotals'.outputTokens
-                    })
+            case summaryR of
+                Left _ -> pure (Right { history, usageTotals })
+                Right result -> case result.response of
+                    LlmResponse r -> do
+                        ts <- getTs svc
+                        let usageTotals' = addLlmUsage usageTotals result.usage
+                        writeLogEvent ws sessionId (TokenUsage
+                            { timestamp: ts
+                            , inputTokens: result.usage.inputTokens
+                            , cachedInputTokens: result.usage.cachedInputTokens
+                            , outputTokens: result.usage.outputTokens
+                            , totalSessionInputTokens: usageTotals'.inputTokens
+                            , totalSessionCachedInputTokens: usageTotals'.cachedInputTokens
+                            , totalSessionOutputTokens: usageTotals'.outputTokens
+                            })
 
-                let summary = r.content
-                let summaryMsg = case substituteTemplate
-                        (Map.fromFoldable [Tuple "summary" summary]) summaryTmpl of
-                        Left _ -> summary
-                        Right t -> t
+                        let summary = r.content
+                        let summaryMsg = fromMaybe summary
+                                (case substituteTemplate
+                                    (Map.fromFoldable [Tuple "summary" summary]) summaryTmpl of
+                                    Left _ -> Nothing
+                                    Right t -> Just t)
 
-                let newMsgs =
-                        map toE plan.initialBlock <>
-                        [{ message: UserMessage { content: summaryMsg }
-                         , tokens: estimateTokens summaryMsg
-                          }] <>
-                        map toE plan.finalBlock
-                let newHistory = ConversationHistory { messages: newMsgs }
-                let totalTokensAfter = foldl (\acc entry -> acc + unwrapTc entry.tokens) 0 newMsgs
-                let TokenCount threshold = config.compactionThreshold
-                if totalTokensAfter > threshold then
-                    pure (Left (CompactionError "Context is too large to compact. Start a new session."))
-                else do
-                    writeLogEvent ws sessionId (Compaction
-                        { timestamp: ts
-                        , summary
-                        , initialMessageCount:  Array.length plan.initialBlock
-                        , compactedMessageCount: Array.length plan.compactedBlock
-                        , finalMessageCount:    Array.length plan.finalBlock
-                        , totalTokensBefore:    unwrapTc requestTokensBefore
-                        })
-                    pure (Right
-                        { history: newHistory
-                        , usageTotals: usageTotals'
-                        })
+                        let newMsgs =
+                                map toE plan.initialBlock <>
+                                [{ message: UserMessage { content: summaryMsg }
+                                 , tokens: estimateTokens summaryMsg
+                                  }] <>
+                                map toE plan.finalBlock
+                        let newHistory = ConversationHistory { messages: newMsgs }
+                        let totalTokensAfter = foldl (\acc entry -> acc + unwrapTc entry.tokens) 0 newMsgs
+                        let TokenCount threshold = config.compactionThreshold
+                        if totalTokensAfter > threshold then
+                            pure (Left (CompactionError "Context is too large to compact. Start a new session."))
+                        else do
+                            writeLogEvent ws sessionId (Compaction
+                                { timestamp: ts
+                                , summary
+                                , initialMessageCount:  Array.length plan.initialBlock
+                                , compactedMessageCount: Array.length plan.compactedBlock
+                                , finalMessageCount:    Array.length plan.finalBlock
+                                , totalTokensBefore:    unwrapTc requestTokensBefore
+                                })
+                            pure (Right
+                                { history: newHistory
+                                , usageTotals: usageTotals'
+                                })
   where
     toE m = { message: m, tokens: estimateTokens (extractContent m) }
 
@@ -1231,94 +1514,122 @@ runMcpSession
 runMcpSession svc ws@(WorkspacePath wp) config apiKey message = do
     sessionId <- allocateSessionId ws
 
-    sbxR <- svc.spawnSandbox ws
-    sandbox <- case sbxR of
-        Left err ->
-            pure (Left (McpFailure ("Sandbox error: " <> show err)))
-        Right s -> pure (Right s)
+    startupFilesR <- validateStartupFiles svc ws config true
+    startupFiles <- case startupFilesR of
+        Left _ ->
+            pure (Left (McpFailure "Template validation failed"))
+        Right validated ->
+            pure (Right validated)
 
-    case sandbox of
+    case startupFiles of
         Left e -> pure e
-        Right s -> do
-            let cleanup = svc.killSandbox s
+        Right files -> do
+            sbxR <- svc.spawnSandbox ws
+            sandbox <- case sbxR of
+                Left err ->
+                    pure (Left (McpFailure ("Sandbox error: " <> show err)))
+                Right s -> pure (Right s)
 
-            kernelR <- svc.connectKernel s.kernelJsonPath
-            case kernelR of
-                Left err -> do
-                    cleanup
-                    pure (McpFailure ("Kernel error: " <> show err))
-                Right kernel -> do
-                    let cleanupAll = do
-                            liftEffect $ svc.closeKernel kernel
-                            svc.killSandbox s
+            case sandbox of
+                Left e -> pure e
+                Right s -> do
+                    let cleanup = svc.killSandbox s
 
-                    startupResult <- runStartupSequence svc ws kernel
-                    startupOutput <- case startupResult of
-                        Left _       -> do
-                            cleanupAll
-                            pure (Left (McpFailure "Startup failed"))
-                        Right output -> pure (Right output)
+                    kernelR <- svc.connectKernel s.kernelJsonPath
+                    case kernelR of
+                        Left err -> do
+                            cleanup
+                            pure (McpFailure ("Kernel error: " <> show err))
+                        Right kernel -> do
+                            let cleanupAll = do
+                                    liftEffect $ svc.closeKernel kernel
+                                    svc.killSandbox s
 
-                    case startupOutput of
-                        Left e -> pure e
-                        Right output -> do
-                            systemPromptR <- buildSystemPrompt svc ws config output
-                            case systemPromptR of
-                                Left _ -> do
+                            startupResult <- runStartupSequence svc ws kernel
+                            startupOk <- case startupResult of
+                                Left _       -> do
                                     cleanupAll
-                                    pure (McpFailure "Could not build system prompt")
-                                Right systemPrompt -> do
-                                    ts <- getTs svc
-                                    writeLogEvent ws sessionId (SessionStart
-                                        { id: sessionId
-                                        , timestamp: ts
-                                        , workspace: wp
-                                        , model: config.model
-                                        , resumedFrom: Nothing
-                                        })
-                                    writeLogEvent ws sessionId (EvtSystemPrompt
-                                        { timestamp: ts
-                                        , content: systemPrompt
-                                        })
-                                    writeLogEvent ws sessionId (EvtUserMessage
-                                        { timestamp: ts
-                                        , content: message
-                                        , source: Nothing
-                                        })
+                                    pure (Left (McpFailure "Startup failed"))
+                                Right _ -> pure (Right unit)
 
-                                    steeringTmpl   <- loadSteeringTemplate svc   ws cleanupAll
-                                    reflectionTmpl <- loadReflectionTemplate svc ws cleanupAll
-                                    timeoutTmpl    <- loadTimeoutTemplate svc ws cleanupAll
-                                    stdinTmpl      <- loadStdinTemplate svc ws cleanupAll
-                                    let executionTemplates =
-                                            { timeout: timeoutTmpl, stdin: stdinTmpl }
+                            case startupOk of
+                                Left e -> pure e
+                                Right _ -> do
+                                    systemPromptR <- buildSystemPrompt svc ws config
+                                    case systemPromptR of
+                                        Left _ -> do
+                                            cleanupAll
+                                            pure (McpFailure "Could not build system prompt")
+                                        Right systemPrompt -> do
+                                            case renderUserMessage files.userMessageTemplate message of
+                                                Left _ -> do
+                                                    cleanupAll
+                                                    pure (McpFailure "Could not render user_message.md")
+                                                Right renderedMessage -> do
+                                                    ts <- getTs svc
+                                                    writeLogEvent ws sessionId (SessionStart
+                                                        { id: sessionId
+                                                        , timestamp: ts
+                                                        , workspace: wp
+                                                        , model: config.model
+                                                        , resumedFrom: Nothing
+                                                        })
+                                                    writeLogEvent ws sessionId (EvtSystemPrompt
+                                                        { timestamp: ts
+                                                        , content: systemPrompt
+                                                        })
+                                                    writeLogEvent ws sessionId (EvtUserMessage
+                                                        { timestamp: ts
+                                                        , content: renderedMessage
+                                                        , rawContent: Just message
+                                                        , source: Just "user"
+                                                        })
 
-                                    let initHistory =
-                                            addMsg
-                                                (addMsg (ConversationHistory { messages: [] })
-                                                    (SystemMessage { content: systemPrompt }))
-                                                (UserMessage { content: message })
+                                                    steeringTmpl   <- loadSteeringTemplate svc   ws cleanupAll
+                                                    reflectionTmpl <- loadReflectionTemplate svc ws cleanupAll
+                                                    timeoutTmpl    <- loadTimeoutTemplate svc ws cleanupAll
+                                                    stdinTmpl      <- loadStdinTemplate svc ws cleanupAll
+                                                    let executionTemplates =
+                                                            { timeout: timeoutTmpl, stdin: stdinTmpl }
 
-                                    roundResult <- runRound svc ws sessionId config apiKey kernel s
-                                        steeringTmpl reflectionTmpl executionTemplates initHistory
-                                        Set.empty zeroLlmUsage 0
+                                                    let baseHistory =
+                                                            addMsg
+                                                                (addMsg (ConversationHistory { messages: [] })
+                                                                    (SystemMessage { content: systemPrompt }))
+                                                                (UserMessage { content: renderedMessage })
 
-                                    finishSession svc ws sessionId kernel
-                                        roundResult.history
-                                        (case roundResult.error of
-                                            Just _ -> SessionEndedError
-                                            Nothing -> SessionEndedPrompt)
-                                    cleanupAll
+                                                    seeded <- case files.initialSeed of
+                                                        Nothing ->
+                                                            pure
+                                                                { history: baseHistory
+                                                                , knownHunks: Set.empty
+                                                                , usageTotals: zeroLlmUsage
+                                                                }
+                                                        Just seed ->
+                                                            applyInitialSeed
+                                                                svc ws sessionId config apiKey kernel s
+                                                                executionTemplates baseHistory Set.empty zeroLlmUsage seed
 
-                                    pure $ case roundResult.error of
-                                        Just err ->
-                                            McpFailure ("Session error: " <> show err)
-                                        Nothing ->
-                                            case extractFinalMessage roundResult.history of
-                                                Nothing  ->
-                                                    McpFailure "Agent produced no response"
-                                                Just msg ->
-                                                    McpSuccess msg
+                                                    roundResult <- runRound svc ws sessionId config apiKey kernel s
+                                                        steeringTmpl reflectionTmpl executionTemplates seeded.history
+                                                        seeded.knownHunks seeded.usageTotals 0
+
+                                                    finishSession svc ws sessionId kernel
+                                                        roundResult.history
+                                                        (case roundResult.error of
+                                                            Just _ -> SessionEndedError
+                                                            Nothing -> SessionEndedPrompt)
+                                                    cleanupAll
+
+                                                    pure $ case roundResult.error of
+                                                        Just err ->
+                                                            McpFailure ("Session error: " <> show err)
+                                                        Nothing ->
+                                                            case extractFinalMessage roundResult.history of
+                                                                Nothing  ->
+                                                                    McpFailure "Agent produced no response"
+                                                                Just msg ->
+                                                                    McpSuccess msg
 
 -- | Start the MCP HTTP server on the given port (A43).
 -- | Reads config once at startup; each tool invocation spawns its own sandbox.

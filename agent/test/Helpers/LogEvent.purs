@@ -52,12 +52,22 @@ systemPromptEvent timestamp content =
 
 userMessageEvent :: String -> String -> LogEvent
 userMessageEvent timestamp content =
-  EvtUserMessage { timestamp: Timestamp timestamp, content, source: Nothing }
+  EvtUserMessage
+    { timestamp: Timestamp timestamp
+    , content
+    , rawContent: Just content
+    , source: Just "user"
+    }
 
 -- | Build a user message injected by the reflection mechanism.
 reflectionUserMessageEvent :: String -> String -> LogEvent
 reflectionUserMessageEvent timestamp content =
-  EvtUserMessage { timestamp: Timestamp timestamp, content, source: Just "reflection" }
+  EvtUserMessage
+    { timestamp: Timestamp timestamp
+    , content
+    , rawContent: Nothing
+    , source: Just "reflection"
+    }
 
 -- | Build a reflection log event (A48–A50).
 reflectionEvent
@@ -78,7 +88,7 @@ reflectionEvent r = EvtReflection
 
 llmResponseEvent :: String -> String -> LogEvent
 llmResponseEvent timestamp content =
-  EvtLlmResponse { timestamp: Timestamp timestamp, content }
+  EvtLlmResponse { timestamp: Timestamp timestamp, content, origin: "model" }
 
 llmQueryEvent :: String -> String -> String -> LogEvent
 llmQueryEvent timestamp purpose input =
@@ -91,11 +101,18 @@ toolCallEvent timestamp toolName toolCallId input =
     , toolName: toolNameFromString toolName
     , toolCallId
     , input
+    , origin: "model"
     }
 
 toolResultEvent :: String -> ToolCallId -> String -> Boolean -> LogEvent
 toolResultEvent timestamp toolCallId output truncated =
-  ToolResult { timestamp: Timestamp timestamp, toolCallId, output, truncated }
+  ToolResult
+    { timestamp: Timestamp timestamp
+    , toolCallId
+    , output
+    , truncated
+    , origin: "model"
+    }
 
 tokenUsageEvent :: String -> TokenCount -> TokenCount -> LogEvent
 tokenUsageEvent timestamp inputTokens outputTokens = TokenUsage

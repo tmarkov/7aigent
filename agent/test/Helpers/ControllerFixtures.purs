@@ -37,7 +37,6 @@ minimalSystemPrompt = """
 You are a test agent.
 Model: {{model}}
 Date: {{datetime}}
-Startup output: {{initial_repl_output}}
 Startup script: {{startup_jl}}
 Project guide: {{agents_md}}
 """

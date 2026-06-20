@@ -219,8 +219,17 @@ data LogEvent
       , resumedFrom :: Maybe SessionId
       }
   | EvtSystemPrompt { timestamp :: Timestamp, content :: String }
-  | EvtUserMessage { timestamp :: Timestamp, content :: String, source :: Maybe String }
-  | EvtLlmResponse { timestamp :: Timestamp, content :: String }
+  | EvtUserMessage
+      { timestamp :: Timestamp
+      , content :: String
+      , rawContent :: Maybe String
+      , source :: Maybe String
+      }
+  | EvtLlmResponse
+      { timestamp :: Timestamp
+      , content :: String
+      , origin :: String
+      }
   | EvtLlmQuery
       { timestamp :: Timestamp
       , purpose :: String
@@ -231,12 +240,14 @@ data LogEvent
       , toolName :: ToolName
       , toolCallId :: ToolCallId
       , input :: String
+      , origin :: String
       }
   | ToolResult
       { timestamp :: Timestamp
       , toolCallId :: ToolCallId
       , output :: String
       , truncated :: Boolean
+      , origin :: String
       }
   | TokenUsage
       { timestamp :: Timestamp

@@ -36,15 +36,6 @@ templateSpec = do
         Right result -> result `shouldEqual` "Model: claude-opus"
         Left err -> fail (show err)
 
-    it "A21: replaces {{initial_repl_output}} with REPL output" do
-      let subs = Map.singleton "initial_repl_output" "db loaded, 42 nodes"
-      let template = "Startup:\n```\n{{initial_repl_output}}\n```"
-      case substituteTemplate subs template of
-        Right result ->
-          String.contains (String.Pattern "db loaded, 42 nodes") result
-            `shouldEqual` true
-        Left err -> fail (show err)
-
     it "A22: replaces {{agents_md}} with file content or empty string" do
       let subs = Map.singleton "agents_md" ""
       let template = "Guide: {{agents_md}}"
@@ -76,15 +67,33 @@ templateSpec = do
       let subs = Map.fromFoldable
             [ Tuple "datetime" "2026-01-15"
             , Tuple "model" "test-model"
-            , Tuple "initial_repl_output" "ok"
             , Tuple "agents_md" "# Guide"
             , Tuple "startup_jl" "using CodeTree"
             ]
-      let template = "{{datetime}} {{model}} {{initial_repl_output}} {{agents_md}} {{startup_jl}}"
+      let template = "{{datetime}} {{model}} {{agents_md}} {{startup_jl}}"
       case substituteTemplate subs template of
         Right result ->
           result `shouldEqual`
-            "2026-01-15 test-model ok # Guide using CodeTree"
+            "2026-01-15 test-model # Guide using CodeTree"
+        Left err -> fail (show err)
+
+    it "A21 + A23: system prompt rejects {{initial_repl_output}}" do
+      let subs = Map.fromFoldable
+            [ Tuple "datetime" "2026-01-15"
+            , Tuple "model" "test-model"
+            , Tuple "agents_md" "# Guide"
+            , Tuple "startup_jl" "using CodeTree"
+            ]
+      let template = "{{datetime}} {{model}} {{initial_repl_output}}"
+      substituteTemplate subs template `shouldSatisfy` isLeft
+
+  describe "A22a: user_message template substitution" do
+
+    it "A22a: replaces {{user_message}} with the raw user text" do
+      let subs = Map.singleton "user_message" "Implement A22b"
+      let template = "Task wrapper:\n{{user_message}}"
+      case substituteTemplate subs template of
+        Right result -> result `shouldEqual` "Task wrapper:\nImplement A22b"
         Left err -> fail (show err)
 
   ---------------------------------------------------------------------------

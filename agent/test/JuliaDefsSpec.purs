@@ -106,38 +106,38 @@ juliaDefsSpec = do
 
     it "A29: extracts pure definitions from julia_repl tool calls" do
       let events =
-            [ EvtToolCall { timestamp: Timestamp "t1", toolName: JuliaRepl, toolCallId: ToolCallId "tc1", input: "struct Foo end" }
-            , EvtToolCall { timestamp: Timestamp "t2", toolName: JuliaRepl, toolCallId: ToolCallId "tc2", input: "println(\"hello\")" }
-            , EvtToolCall { timestamp: Timestamp "t3", toolName: JuliaRepl, toolCallId: ToolCallId "tc3", input: "f(x) = x + 1" }
+            [ EvtToolCall { timestamp: Timestamp "t1", toolName: JuliaRepl, toolCallId: ToolCallId "tc1", input: "struct Foo end", origin: "model" }
+            , EvtToolCall { timestamp: Timestamp "t2", toolName: JuliaRepl, toolCallId: ToolCallId "tc2", input: "println(\"hello\")", origin: "model" }
+            , EvtToolCall { timestamp: Timestamp "t3", toolName: JuliaRepl, toolCallId: ToolCallId "tc3", input: "f(x) = x + 1", origin: "model" }
             ]
       let defs = extractDefs events
       defs `shouldEqual` ["struct Foo end", "f(x) = x + 1"]
 
     it "A29: preserves execution order" do
       let events =
-            [ EvtToolCall { timestamp: Timestamp "t1", toolName: JuliaRepl, toolCallId: ToolCallId "tc1", input: "f(x) = x" }
-            , EvtToolCall { timestamp: Timestamp "t2", toolName: JuliaRepl, toolCallId: ToolCallId "tc2", input: "g(y) = y" }
+            [ EvtToolCall { timestamp: Timestamp "t1", toolName: JuliaRepl, toolCallId: ToolCallId "tc1", input: "f(x) = x", origin: "model" }
+            , EvtToolCall { timestamp: Timestamp "t2", toolName: JuliaRepl, toolCallId: ToolCallId "tc2", input: "g(y) = y", origin: "model" }
             ]
       let defs = extractDefs events
       defs `shouldEqual` ["f(x) = x", "g(y) = y"]
 
     it "A29: no julia_repl calls → empty" do
       let events =
-            [ EvtToolCall { timestamp: Timestamp "t1", toolName: GitStage, toolCallId: ToolCallId "tc1", input: "{\"what\":\"all\"}" }
+            [ EvtToolCall { timestamp: Timestamp "t1", toolName: GitStage, toolCallId: ToolCallId "tc1", input: "{\"what\":\"all\"}", origin: "model" }
             ]
       extractDefs events `shouldEqual` []
 
     it "A29: all side-effectful expressions → empty" do
       let events =
-            [ EvtToolCall { timestamp: Timestamp "t1", toolName: JuliaRepl, toolCallId: ToolCallId "tc1", input: "x = 42" }
-            , EvtToolCall { timestamp: Timestamp "t2", toolName: JuliaRepl, toolCallId: ToolCallId "tc2", input: "println(x)" }
+            [ EvtToolCall { timestamp: Timestamp "t1", toolName: JuliaRepl, toolCallId: ToolCallId "tc1", input: "x = 42", origin: "model" }
+            , EvtToolCall { timestamp: Timestamp "t2", toolName: JuliaRepl, toolCallId: ToolCallId "tc2", input: "println(x)", origin: "model" }
             ]
       extractDefs events `shouldEqual` []
 
     it "A29: ignores non-tool_call events" do
       let events =
-            [ EvtUserMessage { timestamp: Timestamp "t1", content: "hello", source: Nothing }
-            , EvtToolCall { timestamp: Timestamp "t2", toolName: JuliaRepl, toolCallId: ToolCallId "tc1", input: "struct S end" }
-            , EvtLlmResponse { timestamp: Timestamp "t3", content: "done" }
+            [ EvtUserMessage { timestamp: Timestamp "t1", content: "hello", rawContent: Just "hello", source: Just "user" }
+            , EvtToolCall { timestamp: Timestamp "t2", toolName: JuliaRepl, toolCallId: ToolCallId "tc1", input: "struct S end", origin: "model" }
+            , EvtLlmResponse { timestamp: Timestamp "t3", content: "done", origin: "model" }
             ]
       extractDefs events `shouldEqual` ["struct S end"]

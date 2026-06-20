@@ -33,6 +33,7 @@ import Agent.Types
     , Timestamp(..)
     , ModelName(..)
     , SessionEndReason
+    , ToolCall
     , ToolName
     , SessionId(..)
     , ToolCallId(..)
@@ -112,20 +113,23 @@ encodeLogEventJson (EvtSystemPrompt r) =
         , Tuple "content" (J.fromString r.content)
         ]
 encodeLogEventJson (EvtUserMessage r) =
-    let base =
-            [ Tuple "type" (J.fromString "user_message")
-            , Tuple "timestamp" (J.fromString (renderTimestamp r.timestamp))
-            , Tuple "content" (J.fromString r.content)
-            ]
-        withSource = case r.source of
-            Nothing  -> base
-            Just src -> base <> [ Tuple "source" (J.fromString src) ]
-    in mkObj withSource
+    mkObj
+        [ Tuple "type" (J.fromString "user_message")
+        , Tuple "timestamp" (J.fromString (renderTimestamp r.timestamp))
+        , Tuple "content" (J.fromString r.content)
+        , Tuple "raw_content" case r.rawContent of
+            Nothing -> J.jsonNull
+            Just raw -> J.fromString raw
+        , Tuple "source" case r.source of
+            Nothing -> J.jsonNull
+            Just src -> J.fromString src
+        ]
 encodeLogEventJson (EvtLlmResponse r) =
     mkObj
         [ Tuple "type" (J.fromString "llm_response")
         , Tuple "timestamp" (J.fromString (renderTimestamp r.timestamp))
         , Tuple "content" (J.fromString r.content)
+        , Tuple "origin" (J.fromString r.origin)
         ]
 encodeLogEventJson (EvtLlmQuery r) =
     mkObj
@@ -141,6 +145,7 @@ encodeLogEventJson (EvtToolCall r) =
         , Tuple "tool" (J.fromString (renderToolName r.toolName))
         , Tuple "tool_call_id" (J.fromString (unwrapToolCallId r.toolCallId))
         , Tuple "input" (J.fromString r.input)
+        , Tuple "origin" (J.fromString r.origin)
         ]
 encodeLogEventJson (ToolResult r) =
     mkObj
@@ -149,6 +154,7 @@ encodeLogEventJson (ToolResult r) =
         , Tuple "tool_call_id" (J.fromString (unwrapToolCallId r.toolCallId))
         , Tuple "output" (J.fromString r.output)
         , Tuple "truncated" (J.fromBoolean r.truncated)
+        , Tuple "origin" (J.fromString r.origin)
         ]
 encodeLogEventJson (TokenUsage r) =
     mkObj
@@ -283,14 +289,24 @@ decodeLogEventObj obj = do
         "user_message" -> do
             ts <- getStr obj "timestamp"
             content <- getStr obj "content"
+            rawContent <- getOptionalNullableString obj "raw_content"
             let src = case FO.lookup "source" obj of
-                    Just v -> J.toString v
+                    Just v | not (J.isNull v) -> J.toString v
                     Nothing -> Nothing
-            Right $ EvtUserMessage { timestamp: Timestamp ts, content, source: src }
+                    _ -> Nothing
+            Right $ EvtUserMessage
+                { timestamp: Timestamp ts
+                , content
+                , rawContent
+                , source: src
+                }
         "llm_response" -> do
             ts <- getStr obj "timestamp"
             content <- getStr obj "content"
-            Right $ EvtLlmResponse { timestamp: Timestamp ts, content }
+            let origin = fromMaybe "model" do
+                    value <- FO.lookup "origin" obj
+                    J.toString value
+            Right $ EvtLlmResponse { timestamp: Timestamp ts, content, origin }
         "llm_query" -> do
             ts <- getStr obj "timestamp"
             purpose <- getStr obj "purpose"
@@ -310,6 +326,9 @@ decodeLogEventObj obj = do
                 , toolName: toolNameFromString tool
                 , toolCallId: ToolCallId tcId
                 , input: inp
+                , origin: fromMaybe "model" do
+                    value <- FO.lookup "origin" obj
+                    J.toString value
                 }
         "tool_result" -> do
             ts <- getStr obj "timestamp"
@@ -321,6 +340,9 @@ decodeLogEventObj obj = do
                 , toolCallId: ToolCallId tcId
                 , output: out
                 , truncated: trunc
+                , origin: fromMaybe "model" do
+                    value <- FO.lookup "origin" obj
+                    J.toString value
                 }
         "token_usage" -> do
             ts <- getStr obj "timestamp"
@@ -447,6 +469,18 @@ getNullableString obj key = case FO.lookup key obj of
             Nothing -> Left (JsonDecodeError ("Field " <> key <> " is not a string or null"))
             Just text -> Right (Just text)
 
+getOptionalNullableString
+    :: FO.Object J.Json
+    -> String
+    -> Either AppError (Maybe String)
+getOptionalNullableString obj key = case FO.lookup key obj of
+    Nothing -> Right Nothing
+    Just value
+        | J.isNull value -> Right Nothing
+        | otherwise -> case J.toString value of
+            Nothing -> Left (JsonDecodeError ("Field " <> key <> " is not a string or null"))
+            Just text -> Right (Just text)
+
 getNullableBool
     :: FO.Object J.Json
     -> String
@@ -520,51 +554,136 @@ reconstructHistory events =
 buildMessages :: Array LogEvent -> Array { message :: Message, tokens :: TokenCount }
 buildMessages events =
     let
-        result = foldl processEvent { msgs: [], compactionState: NoCompaction } events
+        result = foldl processEvent
+            { msgs: []
+            , pendingAssistant: Nothing
+            , orphanToolResults: []
+            , seenToolCallIds: []
+            , sawSystemPrompt: false
+            }
+            events
     in
-        result.msgs
-
-data CompactionState
-    = NoCompaction
-    | CompactionApplied
-        { initialCount :: Int
-        , compactedCount :: Int
-        , finalCount :: Int
-        , summary :: String
-        }
+        (flushPendingAssistant result).msgs
 
 type AccState =
     { msgs :: Array { message :: Message, tokens :: TokenCount }
-    , compactionState :: CompactionState
+    , pendingAssistant :: Maybe { content :: String, toolCalls :: Array ToolCall }
+    , orphanToolResults :: Array ToolResultRecord
+    , seenToolCallIds :: Array ToolCallId
+    , sawSystemPrompt :: Boolean
+    }
+
+type ToolResultRecord =
+    { toolCallId :: ToolCallId
+    , output :: String
     }
 
 processEvent :: AccState -> LogEvent -> AccState
+processEvent acc (EvtSystemPrompt _) =
+    acc { sawSystemPrompt = true }
 processEvent acc (EvtUserMessage r) =
-    acc { msgs = acc.msgs <> [mkMsg (UserMessage { content: r.content })] }
+    appendMessage (flushPendingAssistant acc) (UserMessage { content: r.content })
 processEvent acc (EvtLlmResponse r) =
-    acc { msgs = acc.msgs <> [mkMsg (AssistantMessage { content: r.content, toolCalls: [] })] }
+    (flushPendingAssistant acc)
+        { pendingAssistant = Just { content: r.content, toolCalls: [] } }
 processEvent acc (EvtLlmQuery _) = acc
 processEvent acc (EvtToolCall r) =
-    acc { msgs = acc.msgs <> [mkMsg (AssistantMessage
-        { content: ""
-        , toolCalls: [{ name: r.toolName, input: r.input, id: r.toolCallId }]
-        })] }
+    let toolCall = { name: r.toolName, input: r.input, id: r.toolCallId }
+    in case acc.pendingAssistant of
+        Just pending ->
+            acc
+                { pendingAssistant = Just
+                    pending { toolCalls = pending.toolCalls <> [toolCall] }
+                , seenToolCallIds = addSeenToolCallId r.toolCallId acc.seenToolCallIds
+                }
+        Nothing ->
+            acc
+                { pendingAssistant = Just
+                    { content: ""
+                    , toolCalls: [toolCall]
+                    }
+                , seenToolCallIds = addSeenToolCallId r.toolCallId acc.seenToolCallIds
+                }
 processEvent acc (ToolResult r) =
-    acc { msgs = acc.msgs <> [mkMsg (ToolResultMessage
-        { toolCallId: r.toolCallId, output: r.output })] }
+    let result = { toolCallId: r.toolCallId, output: r.output }
+    in if pendingAssistantHasToolCall r.toolCallId acc.pendingAssistant then
+        appendToolResultMessage (flushPendingAssistant acc) result
+    else if Array.elem r.toolCallId acc.seenToolCallIds then
+        appendToolResultMessage acc result
+    else
+        acc { orphanToolResults = acc.orphanToolResults <> [result] }
 processEvent acc (Compaction r) =
     let
-        totalMsgs = Array.length acc.msgs
-        initialCount = r.initialMessageCount
-        compactedCount = r.compactedMessageCount
+        flushed = flushPendingAssistant acc
+        totalMsgs = Array.length flushed.msgs
+        initialCount =
+            if acc.sawSystemPrompt then
+                max 0 (r.initialMessageCount - 1)
+            else
+                r.initialMessageCount
         finalCount = r.finalMessageCount
         -- Keep initial block, replace compacted block with summary, keep final block
-        initialBlock = Array.take initialCount acc.msgs
-        finalBlock = Array.drop (totalMsgs - finalCount) acc.msgs
+        initialBlock = Array.take initialCount flushed.msgs
+        finalBlock = Array.drop (totalMsgs - finalCount) flushed.msgs
         summaryMsg = mkMsg (UserMessage { content: r.summary })
     in
-        acc { msgs = initialBlock <> [summaryMsg] <> finalBlock }
+        flushed { msgs = initialBlock <> [summaryMsg] <> finalBlock }
 processEvent acc _ = acc
 
 mkMsg :: Message -> { message :: Message, tokens :: TokenCount }
 mkMsg msg = { message: msg, tokens: TokenCount 0 }
+
+appendMessage :: AccState -> Message -> AccState
+appendMessage acc msg =
+    acc { msgs = acc.msgs <> [mkMsg msg] }
+
+appendToolResultMessage :: AccState -> ToolResultRecord -> AccState
+appendToolResultMessage acc r =
+    appendMessage acc (ToolResultMessage { toolCallId: r.toolCallId, output: r.output })
+
+flushPendingAssistant :: AccState -> AccState
+flushPendingAssistant acc = case acc.pendingAssistant of
+    Nothing ->
+        acc
+    Just pending ->
+        let
+            toolCallIds = map _.id pending.toolCalls
+            matchedResults = Array.filter
+                (\r -> Array.elem r.toolCallId toolCallIds)
+                acc.orphanToolResults
+            remainingResults = Array.filter
+                (\r -> not (Array.elem r.toolCallId toolCallIds))
+                acc.orphanToolResults
+            resultMessages = map
+                (\r -> mkMsg
+                    (ToolResultMessage { toolCallId: r.toolCallId, output: r.output }))
+                matchedResults
+        in
+            acc
+            { msgs =
+                acc.msgs
+                    <> [mkMsg
+                        (AssistantMessage
+                            { content: pending.content
+                            , toolCalls: pending.toolCalls
+                            })
+                       ]
+                    <> resultMessages
+            , pendingAssistant = Nothing
+            , orphanToolResults = remainingResults
+            }
+
+pendingAssistantHasToolCall :: ToolCallId -> Maybe { content :: String, toolCalls :: Array ToolCall } -> Boolean
+pendingAssistantHasToolCall toolCallId pendingAssistant =
+    case pendingAssistant of
+        Nothing ->
+            false
+        Just pending ->
+            Array.any (\toolCall -> toolCall.id == toolCallId) pending.toolCalls
+
+addSeenToolCallId :: ToolCallId -> Array ToolCallId -> Array ToolCallId
+addSeenToolCallId toolCallId seen =
+    if Array.elem toolCallId seen then
+        seen
+    else
+        seen <> [toolCallId]

@@ -225,6 +225,5 @@ current change while preserving every unselected change exactly.
 
 ## Codebase overview
 
-```
-{{initial_repl_output}}
-```
+Use the seeded assistant/tool messages in the conversation history as the
+initial snapshot of the loaded code tree.

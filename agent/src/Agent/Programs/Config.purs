@@ -121,7 +121,8 @@ placeDefaultConfigs (WorkspacePath wp) = do
         else do
             FS.mkdir' stateDir { recursive: true, mode: permsAll }
             pure (Just "Created .7aigent/state")
-    let fileNames = [ "config.toml", "system_prompt.md", "compaction_prompt.md"
+    let fileNames = [ "config.toml", "system_prompt.md", "user_message.md"
+                    , "initial_message.md", "compaction_prompt.md"
                     , "summary_message.md", "startup.jl", "steering_message.md"
                     , "reflection_prompt.md", "timeout_prompt.md"
                     , "stdin_prompt.md" ]

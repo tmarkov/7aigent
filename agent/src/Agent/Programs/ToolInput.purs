@@ -19,6 +19,17 @@ import Foreign.Object as FO
 
 import Agent.Types (ToolName(..))
 
+foreign import decodeJsonStringLiteral :: String -> String
+foreign import parseJuliaReplInputImpl
+    :: String
+    -> { parsed :: Boolean
+       , isObject :: Boolean
+       , hasCodeString :: Boolean
+       , code :: String
+       , hasTimeoutNumber :: Boolean
+       , timeoutSeconds :: Number
+       }
+
 type JuliaReplInput =
     { code :: String
     , timeoutSeconds :: Int
@@ -55,18 +66,22 @@ summarizeToolInput _ input = input
 
 parseJuliaReplInput :: Int -> String -> Either String JuliaReplInput
 parseJuliaReplInput maxTimeoutSeconds input = do
-    obj <- case parseJsonObject input of
-        Nothing -> Left "Invalid julia_repl input: expected a JSON object"
-        Just parsed -> Right parsed
-    code <- case FO.lookup "code" obj >>= J.toString of
-        Nothing -> Left "Invalid julia_repl input: field code must be a string"
-        Just value -> Right value
-    timeoutSeconds <- case FO.lookup "timeout_seconds" obj >>= J.toNumber of
-        Nothing ->
+    let parsed = parseJuliaReplInputImpl input
+    if not parsed.parsed || not parsed.isObject then
+        Left "Invalid julia_repl input: expected a JSON object"
+    else
+        Right unit
+    if not parsed.hasCodeString then
+        Left "Invalid julia_repl input: field code must be a string"
+    else
+        Right unit
+    let code = parsed.code
+    timeoutSeconds <- case parsed.hasTimeoutNumber of
+        false ->
             Left "Invalid julia_repl input: field timeout_seconds must be a number"
-        Just value ->
-            let rounded = Int.round value
-            in if Int.toNumber rounded /= value
+        true ->
+            let rounded = Int.round parsed.timeoutSeconds
+            in if Int.toNumber rounded /= parsed.timeoutSeconds
                 then Left "Invalid julia_repl input: timeout_seconds must be an integer"
                 else Right rounded
     if timeoutSeconds <= 0 then
@@ -81,10 +96,13 @@ parseJuliaReplInput maxTimeoutSeconds input = do
 
 parseJuliaCodeInput :: String -> String
 parseJuliaCodeInput input =
-    fromMaybe input do
-        obj <- parseJsonObject input
-        val <- FO.lookup "code" obj
-        J.toString val
+    let parsed = parseJuliaReplInputImpl input
+    in if parsed.parsed && parsed.isObject && parsed.hasCodeString
+        then parsed.code
+        else fromMaybe input do
+            obj <- parseJsonObject input
+            val <- FO.lookup "code" obj
+            J.toString val $> decodeJsonStringLiteral (J.stringify val)
 
 parseGitStageInput :: String -> Maybe GitStageInput
 parseGitStageInput input = do

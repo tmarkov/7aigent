@@ -119,7 +119,7 @@ sessionLogSpec = do
         let lineCount = Array.length (String.split (String.Pattern "\n") (String.trim content))
         lineCount `shouldEqual` 2
 
-    it "A26: round-trip — write event, read back, parsed event matches" do
+    it "A26 + A27: round-trip — user_message keeps rendered content, raw_content, and source" do
       let event = userMessageEvent "2026-01-15T14:32:01Z" "test message"
       let encoded = encodeLogEvent event
       case decodeLogEvent encoded of
@@ -127,6 +127,8 @@ sessionLogSpec = do
           case decoded of
             EvtUserMessage r -> do
               r.content `shouldEqual` "test message"
+              r.rawContent `shouldEqual` Just "test message"
+              r.source `shouldEqual` Just "user"
               r.timestamp `shouldEqual` Timestamp "2026-01-15T14:32:01Z"
             _ -> fail "Expected UserMessage event"
         Left err -> fail ("Decode failed: " <> show err)
@@ -162,6 +164,7 @@ sessionLogSpec = do
           r.toolName `shouldEqual` JuliaRepl
           r.toolCallId `shouldEqual` ToolCallId "tc1"
           r.input `shouldEqual` "1+1"
+          r.origin `shouldEqual` "model"
         Right _ -> fail "Expected ToolCall event"
         Left err -> fail ("Decode failed: " <> show err)
 
@@ -191,6 +194,7 @@ sessionLogSpec = do
           r.toolCallId `shouldEqual` ToolCallId "tc1"
           r.output `shouldEqual` "2"
           r.truncated `shouldEqual` false
+          r.origin `shouldEqual` "model"
         Right _ -> fail "Expected ToolResult event"
         Left err -> fail ("Decode failed: " <> show err)
 
@@ -365,22 +369,25 @@ sessionLogSpec = do
 
   describe "A26 + A50: user_message source field" do
 
-    it "A50: user_message from human omits source field in encoded JSON" do
+    it "A26 + A27: user_message from human includes source=user and raw_content" do
       let event = userMessageEvent "t1" "hello from user"
       let json = encodeLogEvent event
-      String.contains (String.Pattern "\"source\"") json `shouldEqual` false
+      String.contains (String.Pattern "\"source\":\"user\"") json `shouldEqual` true
+      String.contains (String.Pattern "\"raw_content\":\"hello from user\"") json `shouldEqual` true
 
     it "A50: user_message with source=reflection includes source field in JSON" do
       let event = reflectionUserMessageEvent "t1" "feedback text"
       let json = encodeLogEvent event
       String.contains (String.Pattern "\"source\"") json `shouldEqual` true
       String.contains (String.Pattern "\"reflection\"") json `shouldEqual` true
+      String.contains (String.Pattern "\"raw_content\":null") json `shouldEqual` true
 
     it "A50: user_message with source round-trips correctly" do
       let event = reflectionUserMessageEvent "t1" "feedback text"
       case decodeLogEvent (encodeLogEvent event) of
         Right (EvtUserMessage r) -> do
           r.content `shouldEqual` "feedback text"
+          r.rawContent `shouldEqual` Nothing
           r.source `shouldEqual` Just "reflection"
         Right _ -> fail "Expected EvtUserMessage event"
         Left err -> fail ("Decode failed: " <> show err)
@@ -390,9 +397,28 @@ sessionLogSpec = do
       case decodeLogEvent oldJson of
         Right (EvtUserMessage r) -> do
           r.content `shouldEqual` "legacy"
+          r.rawContent `shouldEqual` Nothing
           r.source `shouldEqual` Nothing
         Right _ -> fail "Expected EvtUserMessage event"
         Left err -> fail ("Decode failed: " <> show err)
+
+    it "A26: decoding old llm/tool JSON without origin defaults origin to model" do
+      let llmJson = "{\"type\":\"llm_response\",\"timestamp\":\"t1\",\"content\":\"seedless\"}"
+      let toolJson = "{\"type\":\"tool_call\",\"timestamp\":\"t1\",\"tool\":\"julia_repl\",\"tool_call_id\":\"tc1\",\"input\":\"1+1\"}"
+      let resultJson = "{\"type\":\"tool_result\",\"timestamp\":\"t1\",\"tool_call_id\":\"tc1\",\"output\":\"2\",\"truncated\":false}"
+      case
+        { llm: decodeLogEvent llmJson
+        , tc: decodeLogEvent toolJson
+        , tr: decodeLogEvent resultJson
+        } of
+        { llm: Right (EvtLlmResponse llm)
+        , tc: Right (EvtToolCall tc)
+        , tr: Right (ToolResult tr)
+        } -> do
+          llm.origin `shouldEqual` "model"
+          tc.origin `shouldEqual` "model"
+          tr.origin `shouldEqual` "model"
+        _ -> fail "Expected legacy origin defaults to decode"
 
   where
   containsPattern :: String -> Maybe String -> Boolean

@@ -15,6 +15,7 @@ import Test.ControllerSpec (controllerSpec)
 import Test.GitCommitSpec (gitCommitSpec)
 import Test.GitStageSpec (gitStageSpec)
 import Test.InterruptionSpec (interruptionSpec)
+import Test.InitialMessageSpec (initialMessageSpec)
 import Test.JuliaDefsSpec (juliaDefsSpec)
 import Test.JupyterSpec (jupyterSpec)
 import Test.McpSpec (mcpSpec)
@@ -51,6 +52,7 @@ main = launchAff_ $ runSpec' (defaultConfig { timeout = Just (Milliseconds 10000
   gitCommitSpec
   gitStageSpec
   interruptionSpec
+  initialMessageSpec
   juliaDefsSpec
   jupyterSpec
   mcpSpec

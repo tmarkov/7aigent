@@ -86,18 +86,20 @@ wireFormatSpec = do
 
   describe "A26: user_message wire-format field names" do
 
-    it "A26: user_message has fields: type, timestamp, content" do
+    it "A26 + A27: user_message has fields: type, timestamp, content, raw_content, source" do
       let event = userMessageEvent "t1" "hello"
       let obj = parseToObj (encodeLogEvent event)
       assertHasField obj "type"
       assertHasField obj "timestamp"
       assertHasField obj "content"
+      assertHasField obj "raw_content"
+      assertHasField obj "source"
       assertFieldEquals obj "type" "user_message"
 
-    it "A26: user_message source field omitted for human input" do
+    it "A26 + A27: user_message source=user is present for human input" do
       let event = userMessageEvent "t1" "hello"
       let obj = parseToObj (encodeLogEvent event)
-      assertLacksField obj "source"
+      assertFieldEquals obj "source" "user"
 
     it "A26: user_message source field present for reflection input" do
       let event = reflectionUserMessageEvent "t1" "feedback"
@@ -110,12 +112,13 @@ wireFormatSpec = do
 
   describe "A26: llm_response wire-format field names" do
 
-    it "A26: llm_response has fields: type, timestamp, content" do
+    it "A26: llm_response has fields: type, timestamp, content, origin" do
       let event = llmResponseEvent "t1" "Hi!"
       let obj = parseToObj (encodeLogEvent event)
       assertHasField obj "type"
       assertHasField obj "timestamp"
       assertHasField obj "content"
+      assertHasField obj "origin"
       assertFieldEquals obj "type" "llm_response"
 
   describe "A26 + A56: stdin_request wire-format field names" do
@@ -165,7 +168,7 @@ wireFormatSpec = do
 
   describe "A26: tool_call wire-format field names" do
 
-    it "A26: tool_call has fields: type, timestamp, tool, tool_call_id, input" do
+    it "A26: tool_call has fields: type, timestamp, tool, tool_call_id, input, origin" do
       let event = toolCallEvent "t1" "julia_repl" (ToolCallId "tc1") "1+1"
       let obj = parseToObj (encodeLogEvent event)
       assertHasField obj "type"
@@ -173,6 +176,7 @@ wireFormatSpec = do
       assertHasField obj "tool"
       assertHasField obj "tool_call_id"
       assertHasField obj "input"
+      assertHasField obj "origin"
       assertFieldEquals obj "type" "tool_call"
       -- Specifically NOT "toolName" or "toolCallId" — snake_case per spec
       assertLacksField obj "toolName"
@@ -185,7 +189,7 @@ wireFormatSpec = do
 
   describe "A26: tool_result wire-format field names" do
 
-    it "A26: tool_result has fields: type, timestamp, tool_call_id, output, truncated" do
+    it "A26: tool_result has fields: type, timestamp, tool_call_id, output, truncated, origin" do
       let event = toolResultEvent "t1" (ToolCallId "tc1") "42" false
       let obj = parseToObj (encodeLogEvent event)
       assertHasField obj "type"
@@ -193,6 +197,7 @@ wireFormatSpec = do
       assertHasField obj "tool_call_id"
       assertHasField obj "output"
       assertHasField obj "truncated"
+      assertHasField obj "origin"
       assertFieldEquals obj "type" "tool_result"
       -- Must NOT use camelCase
       assertLacksField obj "toolCallId"

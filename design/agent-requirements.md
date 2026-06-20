@@ -608,7 +608,9 @@ becomes the `julia_repl.code` value. `timeout` becomes the
 ordinary `julia_repl` input (A4). The marker is removed from the assistant
 message text and converted into a synthetic `julia_repl` tool call. All text
 before and after the marker, including surrounding whitespace, remains the
-assistant message `content`.
+assistant message `content`. The marker parser treats the first `>>` after the
+marker opener as the closing delimiter, so the `code` JSON string literal must
+not contain the literal character sequence `>>`.
 
 The runner performs one pre-round seed before the first round begins by:
 

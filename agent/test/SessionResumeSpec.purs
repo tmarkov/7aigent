@@ -4,17 +4,16 @@ module Test.SessionResumeSpec where
 import Prelude
 
 import Data.Array as Array
-import Data.Array.Partial as Array
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
 import Data.String as String
-import Partial.Unsafe (unsafePartial)
 import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (shouldEqual, shouldSatisfy, fail)
 
 import Test.Helpers.Workspace (withWorkspace, writeWorkspaceFile, writeSessionLog, workspaceFileExists)
 import Test.Helpers.LogEvent
   ( sessionStartEvent
+  , systemPromptEvent
   , userMessageEvent
   , llmResponseEvent
   , toolCallEvent
@@ -29,6 +28,7 @@ import Agent.Types
   ( SessionId(..)
   , ModelName(..)
   , ToolCallId(..)
+  , ToolName(..)
   , ConversationHistory(..)
   , Message(..)
   , LogEvent(..)
@@ -72,10 +72,61 @@ sessionResumeSpec = do
             , sessionEndEvent "t6" "eof"
             ]
       case reconstructHistory events of
-        Right history -> do
-          let msgs = historyMessages history
-          -- The tool call and result should be paired in the history
-          Array.length msgs `shouldSatisfy` (_ >= 5)
+        Right history -> case historyMessages history of
+          [ UserMessage user
+          , AssistantMessage assistantWithTool
+          , ToolResultMessage result
+          , AssistantMessage finalAssistant
+          ] -> do
+            user.content `shouldEqual` "Run something"
+            assistantWithTool.content `shouldEqual` ""
+            Array.length assistantWithTool.toolCalls `shouldEqual` 1
+            case Array.head assistantWithTool.toolCalls of
+              Just toolCall -> do
+                toolCall.id `shouldEqual` tcId
+                toolCall.name `shouldEqual` JuliaRepl
+                toolCall.input `shouldEqual` "1 + 1"
+              Nothing ->
+                fail "Expected paired assistant tool call"
+            result.toolCallId `shouldEqual` tcId
+            result.output `shouldEqual` "2"
+            finalAssistant.content `shouldEqual` "The result is 2."
+            finalAssistant.toolCalls `shouldEqual` []
+          msgs ->
+            fail ("Expected exact paired resume history, got: " <> show msgs)
+        Left err -> fail ("Reconstruction failed: " <> show err)
+
+    it "A31: tool_call_id pairs an early tool_result with its later tool_call" do
+      let tcId = ToolCallId "tc-early"
+      let events =
+            [ sessionStartEvent { id: SessionId 1, timestamp: "t0", workspace: "/w", model: ModelName "m", resumedFrom: Nothing }
+            , userMessageEvent "t1" "Run early result case"
+            , llmResponseEvent "t2" ""
+            , toolResultEvent "t3" tcId "early output" false
+            , toolCallEvent "t4" "julia_repl" tcId "early_call()"
+            , llmResponseEvent "t5" "Done."
+            , sessionEndEvent "t6" "eof"
+            ]
+      case reconstructHistory events of
+        Right history -> case historyMessages history of
+          [ UserMessage user
+          , AssistantMessage assistantWithTool
+          , ToolResultMessage result
+          , AssistantMessage finalAssistant
+          ] -> do
+            user.content `shouldEqual` "Run early result case"
+            Array.length assistantWithTool.toolCalls `shouldEqual` 1
+            case Array.head assistantWithTool.toolCalls of
+              Just toolCall -> do
+                toolCall.id `shouldEqual` tcId
+                toolCall.input `shouldEqual` "early_call()"
+              Nothing ->
+                fail "Expected paired assistant tool call"
+            result.toolCallId `shouldEqual` tcId
+            result.output `shouldEqual` "early output"
+            finalAssistant.content `shouldEqual` "Done."
+          msgs ->
+            fail ("Expected ID-paired resume history, got: " <> show msgs)
         Left err -> fail ("Reconstruction failed: " <> show err)
 
     it "A31: compaction events are reflected in reconstructed history" do
@@ -107,24 +158,40 @@ sessionResumeSpec = do
           hasSummary `shouldEqual` true
         Left err -> fail ("Reconstruction failed: " <> show err)
 
-    it "A31: {{datetime}} in system prompt is re-substituted at resume time" do
-      -- The system prompt should use the current time, not the original.
-      -- We verify by loading a session whose system prompt had a known
-      -- datetime, and checking the reconstructed prompt differs.
-      withWorkspace \ws -> do
-        let logContent = renderEvents
-              [ sessionStartEvent { id: SessionId 1, timestamp: "2025-01-01T00:00:00Z", workspace: "/w", model: ModelName "m", resumedFrom: Nothing }
-              , userMessageEvent "t1" "hello"
-              , sessionEndEvent "t2" "eof"
-              ]
-        writeSessionLog ws (SessionId 1) logContent
-        result <- loadSessionForResume ws (SessionId 1)
-        case result of
-          ResumeReady r -> do
-            -- The system prompt should NOT contain the old timestamp
-            let sysPrompt = messageContent (unsafePartial $ Array.unsafeIndex (historyMessages r.history) 0)
-            contains "2025-01-01T00:00:00Z" sysPrompt `shouldEqual` false
-          _ -> fail "Expected ResumeReady"
+    it "A31: compaction counts from system-inclusive logs apply to non-system resume history" do
+      let events =
+            [ sessionStartEvent { id: SessionId 1, timestamp: "t0", workspace: "/w", model: ModelName "m", resumedFrom: Nothing }
+            , systemPromptEvent "t0" "system prompt"
+            , userMessageEvent "t1" "first user"
+            , llmResponseEvent "t2" "old answer"
+            , userMessageEvent "t3" "middle user"
+            , llmResponseEvent "t4" "middle answer"
+            , userMessageEvent "t5" "recent user"
+            , llmResponseEvent "t6" "recent answer"
+            , compactionEvent
+                { timestamp: "t7"
+                , summary: "summary text"
+                , initialMessageCount: 2
+                , compactedMessageCount: 3
+                , finalMessageCount: 2
+                , totalTokensBefore: 100000
+                }
+            , sessionEndEvent "t8" "eof"
+            ]
+      case reconstructHistory events of
+        Right history -> case historyMessages history of
+          [ UserMessage first
+          , UserMessage summary
+          , UserMessage recentUser
+          , AssistantMessage recentAnswer
+          ] -> do
+            first.content `shouldEqual` "first user"
+            summary.content `shouldEqual` "summary text"
+            recentUser.content `shouldEqual` "recent user"
+            recentAnswer.content `shouldEqual` "recent answer"
+          msgs ->
+            fail ("Expected system-adjusted compaction replay, got: " <> show msgs)
+        Left err -> fail ("Reconstruction failed: " <> show err)
 
   ---------------------------------------------------------------------------
   -- A31: file handling (effectful)
