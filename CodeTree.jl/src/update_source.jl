@@ -100,8 +100,12 @@ function _update_source!(
     abs_path = joinpath(db.root, file_rel)
 
     # --- R30a: detect external modification ---
-    disk_src  = try read(abs_path, String)
-                catch e; throw(ErrorException("Cannot read '$file_rel': $e")) end
+    disk_src  = try
+        read(abs_path, String)
+    catch e
+        _is_file_read_failure(e) || rethrow()
+        throw(ErrorException("Cannot read '$file_rel': $e"))
+    end
     disk_hash = bytes2hex(SHA.sha256(disk_src))
     if get(db._hashes, file_rel, disk_hash) != disk_hash
         _replace_file_in_db!(db, file_rel_typed, disk_src)

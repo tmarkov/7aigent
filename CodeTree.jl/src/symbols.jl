@@ -163,7 +163,12 @@ function _run_queries(
     isnothing(grammar) && return results
     lang_obj = Language(grammar)
     for pat in patterns
-        q = try Query(lang_obj, pat) catch; continue end
+        q = try
+            Query(lang_obj, pat)
+        catch e
+            _is_query_compile_failure(e) || rethrow()
+            continue
+        end
         cursor = TreeSitter.QueryCursor()
         TreeSitter.exec(cursor, q, root_node)
         # TreeSitter 0.1.0 does not define iterate(::QueryCursor); use next_match.

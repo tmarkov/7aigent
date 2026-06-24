@@ -31,7 +31,8 @@ function discover_files(root::AbstractString)::Vector{String}
             stderr=devnull,
         ))
         isempty(out) ? String[] : split(out, '\n')
-    catch
+    catch e
+        _is_git_command_failure(e) || rethrow()
         nothing
     end
 

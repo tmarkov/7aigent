@@ -26,168 +26,176 @@ function load(
     # Open (or create) the SQLite cache.
     cache_db = _open_or_create_cache(root_path)
 
-    # Discover files (relative paths from root_path)
-    rel_files = discover_files(root_path)
+    try
+        # Discover files (relative paths from root_path)
+        rel_files = discover_files(root_path)
 
-    # Read all file sources into the buffer and compute hashes.
-    buffer = Dict{String,String}()
-    hashes = Dict{String,String}()
-    for rel in rel_files
-        src = try read(joinpath(root_path, rel), String) catch; "" end
-        buffer[rel] = src
-        hashes[rel]  = bytes2hex(SHA.sha256(src))
-    end
-
-    # --- Remove cache entries for files that no longer exist on disk (R28) ---
-    current_set = Set(rel_files)
-    for cached_path in _get_all_cached_paths(cache_db)
-        cached_path ∉ current_set && _delete_file_from_cache!(cache_db, cached_path)
-    end
-
-    # Build all rows
-    all_rows = CodeRow[]
-
-    # --- Codebase root node (R6) ---
-    codebase_id = NodeId(codebase_name)
-    codebase_qname = QName(codebase_name)
-    push!(all_rows, _struct_row(codebase_id, missing, 0, 0, NodeKind("codebase"), codebase_name, codebase_qname))
-
-    # Group files by their parent directory.
-    dir_to_files = Dict{String,Vector{String}}()
-    for f in rel_files
-        d = dirname(f)
-        push!(get!(dir_to_files, d, String[]), f)
-    end
-
-    # --- Module nodes and root-level file nodes as children of codebase ---
-    # All immediate children of the codebase root are numbered in a single
-    # sorted sequence so sibling_order values are unique (R16).
-    subdirs    = sort(unique(filter(!isempty, dirname.(rel_files))))
-    root_files = sort(get(dir_to_files, "", String[]))
-
-    root_children = vcat(subdirs, root_files)
-    sort!(root_children, by = x -> basename(x))
-
-    for (ci, child) in enumerate(root_children)
-        if child in subdirs
-            mod_qname = child_qname(codebase_qname, basename(child))
-            push!(all_rows, _struct_row(NodeId(child), codebase_id, 1, ci - 1,
-                                        NodeKind("module"), basename(child), mod_qname))
-        end
-    end
-
-    # Track which file rows came from fresh parsing (need cache save).
-    fresh_file_rows = Dict{String, Vector{CodeRow}}()
-
-    # --- File nodes + their descendants (R6, R8, R10–R16) ---
-    for d in sort(collect(keys(dir_to_files)))
-        parent_id = isempty(d) ? codebase_id : NodeId(d)
-        parent_qn = isempty(d) ? codebase_qname : child_qname(codebase_qname, basename(d))
-        dir_files = sort(dir_to_files[d])
-        depth     = isempty(d) ? 1 : 2
-
-        for rel in dir_files
-            # Determine sibling_order
-            fi = if isempty(d)
-                findfirst(==(rel), root_children)
-            else
-                findfirst(==(rel), dir_files)
+        # Read all file sources into the buffer and compute hashes.
+        buffer = Dict{String,String}()
+        hashes = Dict{String,String}()
+        for rel in rel_files
+            src = try
+                read(joinpath(root_path, rel), String)
+            catch e
+                _is_file_read_failure(e) || rethrow()
+                ""
             end
+            buffer[rel] = src
+            hashes[rel]  = bytes2hex(SHA.sha256(src))
+        end
 
-            current_hash  = hashes[rel]
-            cached_hash   = _get_cached_hash(cache_db, rel)
+        # --- Remove cache entries for files that no longer exist on disk (R28) ---
+        current_set = Set(rel_files)
+        for cached_path in _get_all_cached_paths(cache_db)
+            cached_path ∉ current_set && _delete_file_from_cache!(cache_db, cached_path)
+        end
 
-            if !isnothing(cached_hash) && cached_hash == current_hash
-                # Cache hit (R26): load code rows without re-parsing.
-                cached = _load_file_rows_from_cache(cache_db, rel)
-                if !isnothing(cached)
-                    code_rows, _ = cached
-                    code_rows[1].sibling_order = fi - 1  # update ordering
-                    append!(all_rows, code_rows)
-                    continue
+        # Build all rows
+        all_rows = CodeRow[]
+
+        # --- Codebase root node (R6) ---
+        codebase_id = NodeId(codebase_name)
+        codebase_qname = QName(codebase_name)
+        push!(all_rows, _struct_row(codebase_id, missing, 0, 0, NodeKind("codebase"), codebase_name, codebase_qname))
+
+        # Group files by their parent directory.
+        dir_to_files = Dict{String,Vector{String}}()
+        for f in rel_files
+            d = dirname(f)
+            push!(get!(dir_to_files, d, String[]), f)
+        end
+
+        # --- Module nodes and root-level file nodes as children of codebase ---
+        # All immediate children of the codebase root are numbered in a single
+        # sorted sequence so sibling_order values are unique (R16).
+        subdirs    = sort(unique(filter(!isempty, dirname.(rel_files))))
+        root_files = sort(get(dir_to_files, "", String[]))
+
+        root_children = vcat(subdirs, root_files)
+        sort!(root_children, by = x -> basename(x))
+
+        for (ci, child) in enumerate(root_children)
+            if child in subdirs
+                mod_qname = child_qname(codebase_qname, basename(child))
+                push!(all_rows, _struct_row(NodeId(child), codebase_id, 1, ci - 1,
+                                            NodeKind("module"), basename(child), mod_qname))
+            end
+        end
+
+        # Track which file rows came from fresh parsing (need cache save).
+        fresh_file_rows = Dict{String, Vector{CodeRow}}()
+
+        # --- File nodes + their descendants (R6, R8, R10–R16) ---
+        for d in sort(collect(keys(dir_to_files)))
+            parent_id = isempty(d) ? codebase_id : NodeId(d)
+            parent_qn = isempty(d) ? codebase_qname : child_qname(codebase_qname, basename(d))
+            dir_files = sort(dir_to_files[d])
+            depth     = isempty(d) ? 1 : 2
+
+            for rel in dir_files
+                # Determine sibling_order
+                fi = if isempty(d)
+                    findfirst(==(rel), root_children)
+                else
+                    findfirst(==(rel), dir_files)
                 end
+
+                current_hash  = hashes[rel]
+                cached_hash   = _get_cached_hash(cache_db, rel)
+
+                if !isnothing(cached_hash) && cached_hash == current_hash
+                    # Cache hit (R26): load code rows without re-parsing.
+                    cached = _load_file_rows_from_cache(cache_db, rel)
+                    if !isnothing(cached)
+                        code_rows, _ = cached
+                        code_rows[1].sibling_order = fi - 1  # update ordering
+                        append!(all_rows, code_rows)
+                        continue
+                    end
+                end
+
+                # Cache miss or stale: re-parse (R27).
+                src       = buffer[rel]
+                lang      = language_for_file(config, rel)
+                file_rows = build_file_rows(
+                    src, lang, config, detail_threshold,
+                    NodeId(rel), FilePath(rel), parent_id, depth, parent_qn,
+                )
+                file_rows[1].sibling_order = fi - 1
+                append!(all_rows, file_rows)
+                fresh_file_rows[rel] = file_rows
             end
-
-            # Cache miss or stale: re-parse (R27).
-            src       = buffer[rel]
-            lang      = language_for_file(config, rel)
-            file_rows = build_file_rows(
-                src, lang, config, detail_threshold,
-                NodeId(rel), FilePath(rel), parent_id, depth, parent_qn,
-            )
-            file_rows[1].sibling_order = fi - 1
-            append!(all_rows, file_rows)
-            fresh_file_rows[rel] = file_rows
         end
-    end
 
-    # Post-process: fill n_children for codebase and module rows
-    id_to_children = Dict{String,Int}()
-    for row in all_rows
-        p = row.parent
-        ismissing(p) && continue
-        id_to_children[p] = get(id_to_children, p, 0) + 1
-    end
-    for row in all_rows
-        if row.kind ∈ ("codebase", "module")
-            row.n_children = get(id_to_children, row.id, 0)
+        # Post-process: fill n_children for codebase and module rows
+        id_to_children = Dict{String,Int}()
+        for row in all_rows
+            p = row.parent
+            ismissing(p) && continue
+            id_to_children[p] = get(id_to_children, p, 0) + 1
         end
-    end
-
-    # --- Assemble DataFrames ---
-    code_df = _rows_to_dataframe(all_rows)
-    _assign_readme_summaries!(code_df, root_path, buffer)
-
-    syms_df = DataFrame(node_id=String[], symbol=String[], kind=String[])
-
-    db = CodeTreeDB(
-        CodeTree(code_df),
-        CodeSymbols(syms_df),
-        root_path,
-        config,
-        detail_threshold,
-        buffer,
-        hashes,
-    )
-    extract_symbols!(db)
-    _refresh_git_overlay!(db)
-
-    # --- Persist cache (R24, R25) ---
-    # Build a node_id → file lookup from the code DataFrame.
-    code_df_raw = getfield(db.code, :_df)
-    id_to_file  = Dict{String,String}(
-        row.id => row.file
-        for row in eachrow(code_df_raw)
-        if !ismissing(row.file)
-    )
-
-    # Group symbol rows by file for freshly parsed files only. Unchanged files
-    # keep their existing cached symbol rows.
-    fresh_files = Set(keys(fresh_file_rows))
-    sym_rows_by_file = Dict{String, Vector{SymbolRow}}()
-    for sym_row in eachrow(getfield(db.symbols, :_df))
-        f = get(id_to_file, sym_row.node_id, nothing)
-        isnothing(f) && continue
-        f ∈ fresh_files || continue
-        push!(get!(sym_rows_by_file, f, SymbolRow[]),
-              (node_id=sym_row.node_id, symbol=sym_row.symbol, kind=sym_row.kind))
-    end
-
-    # Save freshly parsed files to cache; unchanged files keep their cached code
-    # and symbol rows and only refresh the file metadata.
-    for rel in rel_files
-        if haskey(fresh_file_rows, rel)
-            sym_rows = get(sym_rows_by_file, rel, SymbolRow[])
-            _save_file_rows!(cache_db, rel, hashes[rel], commit_hash,
-                             fresh_file_rows[rel], sym_rows)
-        else
-            # Unchanged file: just refresh commit_hash metadata.
-            _upsert_file!(cache_db, rel, hashes[rel], commit_hash)
+        for row in all_rows
+            if row.kind ∈ ("codebase", "module")
+                row.n_children = get(id_to_children, row.id, 0)
+            end
         end
-    end
 
-    close(cache_db)
-    return db
+        # --- Assemble DataFrames ---
+        code_df = _rows_to_dataframe(all_rows)
+        _assign_readme_summaries!(code_df, root_path, buffer)
+
+        syms_df = DataFrame(node_id=String[], symbol=String[], kind=String[])
+
+        db = CodeTreeDB(
+            CodeTree(code_df),
+            CodeSymbols(syms_df),
+            root_path,
+            config,
+            detail_threshold,
+            buffer,
+            hashes,
+        )
+        extract_symbols!(db)
+        _refresh_git_overlay!(db)
+
+        # --- Persist cache (R24, R25) ---
+        # Build a node_id → file lookup from the code DataFrame.
+        code_df_raw = getfield(db.code, :_df)
+        id_to_file  = Dict{String,String}(
+            row.id => row.file
+            for row in eachrow(code_df_raw)
+            if !ismissing(row.file)
+        )
+
+        # Group symbol rows by file for freshly parsed files only. Unchanged files
+        # keep their existing cached symbol rows.
+        fresh_files = Set(keys(fresh_file_rows))
+        sym_rows_by_file = Dict{String, Vector{SymbolRow}}()
+        for sym_row in eachrow(getfield(db.symbols, :_df))
+            f = get(id_to_file, sym_row.node_id, nothing)
+            isnothing(f) && continue
+            f ∈ fresh_files || continue
+            push!(get!(sym_rows_by_file, f, SymbolRow[]),
+                  (node_id=sym_row.node_id, symbol=sym_row.symbol, kind=sym_row.kind))
+        end
+
+        # Save freshly parsed files to cache; unchanged files keep their cached code
+        # and symbol rows and only refresh the file metadata.
+        for rel in rel_files
+            if haskey(fresh_file_rows, rel)
+                sym_rows = get(sym_rows_by_file, rel, SymbolRow[])
+                _save_file_rows!(cache_db, rel, hashes[rel], commit_hash,
+                                 fresh_file_rows[rel], sym_rows)
+            else
+                # Unchanged file: just refresh commit_hash metadata.
+                _upsert_file!(cache_db, rel, hashes[rel], commit_hash)
+            end
+        end
+
+        return db
+    finally
+        close(cache_db)
+    end
 end
 
 """

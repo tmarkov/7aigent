@@ -195,7 +195,8 @@ function _summary_write_target(df::DataFrame, inds...)::Bool
     isempty(inds) && return false
     try
         return Symbol.(names(df, last(inds))) == [:summary]
-    catch
+    catch e
+        _is_dataframe_selector_failure(e) || rethrow()
         return false
     end
 end

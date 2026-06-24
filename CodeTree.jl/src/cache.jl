@@ -363,7 +363,8 @@ function _current_commit_hash(root_path::String)::Union{String,Missing}
     try
         result = readchomp(pipeline(Cmd(`git rev-parse HEAD`; dir=root_path); stderr=devnull))
         return result
-    catch
+    catch e
+        _is_git_command_failure(e) || rethrow()
         return missing
     end
 end

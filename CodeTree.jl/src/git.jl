@@ -277,7 +277,7 @@ function _phase_changed_node_ids(
         target_node_src = if phase == :staged
             _row_source(target_rows, String(target_src), id)
         else
-            get_source(db, id)
+            _db_row_source(db, db_file, id)
         end
 
         if ismissing(base_node_src) || ismissing(target_node_src)
@@ -732,7 +732,36 @@ function _row_source(
     if ismissing(row.line_start) || ismissing(row.line_end)
         return missing
     end
-    return _slice_lines(src, Int(row.line_start), Int(row.line_end))
+    return _slice_lines_or_missing(src, Int(row.line_start), Int(row.line_end))
+end
+
+function _db_row_source(
+    db::CodeTreeDB,
+    db_file::String,
+    node_id::String,
+)::Union{String,Missing}
+    code_df = getfield(db.code, :_df)
+    idx = findfirst(==(node_id), code_df.id)
+    isnothing(idx) && return missing
+    row = code_df[idx, :]
+    !ismissing(row.source) && return String(row.source)
+    if ismissing(row.line_start) || ismissing(row.line_end)
+        return missing
+    end
+    src = get(db._buffer, db_file, missing)
+    ismissing(src) && return missing
+    return _slice_lines_or_missing(String(src), Int(row.line_start), Int(row.line_end))
+end
+
+function _slice_lines_or_missing(src::String, line_start::Int, line_end::Int)::Union{String,Missing}
+    lines = split(src, '\n')
+    if !isempty(lines) && isempty(lines[end])
+        pop!(lines)
+    end
+    if line_start < 1 || line_end < line_start || line_end > length(lines)
+        return missing
+    end
+    return join(lines[line_start:line_end], '\n')
 end
 
 function _render_unified_patch(
@@ -786,7 +815,8 @@ function _git_show_file(
     cmd = Cmd(Cmd(["git", "show", spec]); dir=scope.repo_root)
     try
         return read(pipeline(cmd; stderr=devnull), String)
-    catch
+    catch e
+        _is_git_command_failure(e) || rethrow()
         return missing
     end
 end
@@ -804,7 +834,8 @@ function _worktree_file_text(
     isfile(abs_path) || return missing
     try
         return read(abs_path, String)
-    catch
+    catch e
+        _is_file_read_failure(e) || rethrow()
         return missing
     end
 end
@@ -998,7 +1029,8 @@ end
 function _git_repo_scope(db::CodeTreeDB)::Union{GitRepoScope,Missing}
     output = try
         readchomp(pipeline(`git -C $(db.root) rev-parse --show-toplevel`; stderr=devnull))
-    catch
+    catch e
+        _is_git_command_failure(e) || rethrow()
         return missing
     end
 
@@ -1019,7 +1051,8 @@ function _git_output(
     cmd = Cmd(Cmd(["git"; args]); dir=scope.repo_root)
     try
         return read(pipeline(cmd; stderr=devnull), String)
-    catch
+    catch e
+        _is_git_command_failure(e) || rethrow()
         if allow_failure
             return ""
         end
@@ -1032,7 +1065,8 @@ function _git_head_exists(scope::GitRepoScope)::Bool
     try
         read(pipeline(cmd; stderr=devnull), String)
         return true
-    catch
+    catch e
+        _is_git_command_failure(e) || rethrow()
         return false
     end
 end

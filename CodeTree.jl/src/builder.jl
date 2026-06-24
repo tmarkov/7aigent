@@ -42,7 +42,12 @@ function _query_name(
     best_col  = typemax(Int)
 
     for pat in entry.name_patterns
-        q = try Query(lang_obj, pat) catch; continue end
+        q = try
+            Query(lang_obj, pat)
+        catch e
+            _is_query_compile_failure(e) || rethrow()
+            continue
+        end
         cursor = TreeSitter.QueryCursor()
         TreeSitter.exec(cursor, q, node)
         while true
