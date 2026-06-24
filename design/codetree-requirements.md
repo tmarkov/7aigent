@@ -291,8 +291,8 @@ symbols. The following span types are recognised:
   (four-space or tab-indented per CommonMark), and **inline backtick spans**
   (`` `…` ``): the content is tokenized into identifier-like tokens
   (`[A-Za-z_][A-Za-z0-9_!?.]*`) and intersected with the set of `name`
-  values in `db.code` that belong to non-Markdown nodes. Only tokens that
-  match a known name are recorded. A matching token is recorded as
+  values from declaration-like non-Markdown nodes defined by R21c. Only tokens
+  that match a known name are recorded. A matching token is recorded as
   `kind = "call"` if immediately followed by `(` in the span, otherwise as
   `kind = "var_ref"`. This avoids false positives from prose words without
   requiring a grammar.
@@ -304,9 +304,11 @@ Markdown file's symbols are extracted. The same ordering applies during
 `reload`.
 
 **R21c** — The name-intersection set used in R21a is built from `name`
-values of nodes whose `language` is not `"markdown"`. Markdown node names
-(heading text, link text, etc.) are excluded from the intersection to
-prevent circular false matches.
+values of declaration-like non-Markdown nodes. A node is declaration-like for
+this purpose when its `language` is not `"markdown"` and its `kind` is one of
+`function`, `class`, `type`, `variable`, or `import`. Markdown node names
+(heading text, link text, etc.) and non-declaration structural names are
+excluded from the intersection to prevent circular or generic false matches.
 
 **R22** — Symbol extraction operates on the leaf's `source` text using the
 config's AST patterns. No attempt is made to resolve symbols to specific

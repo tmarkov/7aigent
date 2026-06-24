@@ -2,11 +2,26 @@
 #
 # Two-pass algorithm (R21b):
 #   Pass 1 — non-Markdown leaf nodes: extract call and var_ref symbols using
-#             tree-sitter queries.  Collect all symbol names into `known_names`.
+#             tree-sitter queries. Declaration-like code node names form
+#             `known_names` for Markdown intersection.
 #   Pass 2 — Markdown leaf nodes: extract symbols from fenced code blocks and
 #             inline backtick spans, intersecting untagged content with known_names.
 
 const _IDENT_RE = r"\b([A-Za-z_][A-Za-z0-9_]*)\b"
+const _DECLARATION_LIKE_KINDS = Set{String}([
+    "function", "class", "type", "variable", "import",
+])
+
+function _is_declaration_like_non_markdown(row)::Bool
+    return !ismissing(row.language) &&
+           row.language != "markdown" &&
+           row.kind ∈ _DECLARATION_LIKE_KINDS
+end
+
+function _declaration_like_known_names(code_df::AbstractDataFrame)::Set{String}
+    decl_rows = filter(_is_declaration_like_non_markdown, code_df)
+    return Set{String}(skipmissing(decl_rows.name))
+end
 
 """
     extract_symbols!(db::CodeTreeDB)
@@ -20,9 +35,8 @@ function extract_symbols!(db::CodeTreeDB)::Nothing
     buffer   = db._buffer
     config   = db.config
 
-    # R21c: known_names = name values from non-Markdown code nodes.
-    non_md_names = filter(r -> !ismissing(r.language) && r.language != "markdown", code_df)
-    known_names = Set{String}(skipmissing(non_md_names.name))
+    # R21c: known_names = declaration-like non-Markdown code node names.
+    known_names = _declaration_like_known_names(code_df)
     new_rows = SymbolRow[]
 
     # R21b: process non-Markdown files first, then Markdown, so known_names

@@ -798,13 +798,15 @@ end
     end
 end
 
-@testset "R21a: Markdown untagged block — compute_stats and DataStats in api.md; MyUnknownType absent" begin
+@testset "R21a + R21c: Markdown untagged block intersects declaration-like names only" begin
     code = _db().code
     syms = _db().symbols
     api_leaves = filter(r -> isequal(r.file, "docs/api.md") && r.n_children == 0, code)
     api_syms = filter(r -> r.node_id in api_leaves.id, syms)
     @test "compute_stats"  in api_syms.symbol
     @test "DataStats"      in api_syms.symbol
+    @test "DataProcessor" ∉ api_syms.symbol
+    @test "loop"          ∉ api_syms.symbol
     @test "MyUnknownType" ∉ api_syms.symbol
 end
 

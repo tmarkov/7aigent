@@ -576,7 +576,7 @@ end
 
 # Extract symbol rows for a single file given fresh code rows.
 # Delegates to _extract_file_symbols (symbols.jl) for the per-file logic.
-# known_names is built from the existing db.code (R21c).
+# known_names is built from declaration-like rows in the existing db.code (R21c).
 function _extract_symbols_for_file(
     db::CodeTreeDB,
     file_rel::FilePath,
@@ -593,10 +593,9 @@ function _extract_symbols_for_file(
     file_leaves = filter(r -> r.n_children == 0, new_code_df)
     isempty(file_leaves) && return SymbolRow[]
 
-    # R21c: known_names from non-Markdown code node names in the current db.
+    # R21c: known_names from declaration-like non-Markdown code node names.
     code_df = getfield(db.code, :_df)
-    non_md = filter(r -> !ismissing(r.language) && r.language != "markdown", code_df)
-    known_names = Set{String}(skipmissing(non_md.name))
+    known_names = _declaration_like_known_names(code_df)
 
     raw = _extract_file_symbols(new_src, lang_val, lang_entry, file_leaves,
                                   new_code_df, known_names, db.config)

@@ -248,9 +248,11 @@ For each leaf node in a Markdown file, scan its source for code spans:
 - **Fenced code blocks without a language tag**, **indented code blocks**,
   and **inline backtick spans**: tokenize the content into identifier-like
   tokens (`[A-Za-z_][A-Za-z0-9_!?.]*`) and intersect with the set of
-  `name` values from non-Markdown nodes already in `db.code`. For each
-  matching token, create a `symbols` row with `kind = "call"` if the token
-  is immediately followed by `(` in the span, otherwise `kind = "var_ref"`.
+  `name` values from declaration-like non-Markdown nodes already in
+  `db.code`. A node is declaration-like for this purpose when its `kind` is
+  `function`, `class`, `type`, `variable`, or `import`. For each matching
+  token, create a `symbols` row with `kind = "call"` if the token is
+  immediately followed by `(` in the span, otherwise `kind = "var_ref"`.
 
 No resolution of symbol names to `db.code` node ids is performed in either
 pass. The `symbols` table records names only.

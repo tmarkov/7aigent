@@ -88,13 +88,16 @@ clamped = clamp_value(limit, low, high)
 
 ## Untagged example (R21a intersection test)
 
-The block below has no language tag. Tokens are intersected with known names.
-`DataStats` and `compute_stats` must appear in db.symbols; `MyUnknownType` must not.
+The block below has no language tag. Tokens are intersected with known
+declaration-like names. `DataStats` and `compute_stats` must appear in
+db.symbols; `DataProcessor`, `loop`, and `MyUnknownType` must not.
 
 ```
 result = compute_stats(data)
 s = DataStats(n, min_val, max_val, median)
 bucket_sort(raw)
+owner = DataProcessor
+state = loop
 x = MyUnknownType()
 ```
 
