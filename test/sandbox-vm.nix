@@ -139,27 +139,53 @@ pkgs.testers.nixosTest {
   };
 
   testScript = ''
+    import shlex
+    import time
+
     machine.wait_for_unit("multi-user.target")
 
     # Set up a writable copy of the test codebase as the workspace
     machine.execute("${common.prepareWorkspaceCommand { inherit testCodebase; destination = "/tmp/test-codebase"; }}")
 
-    # Start the sandbox under runsc with systrap platform.
-    # systrap uses ptrace-based syscall interception — no KVM required — so it
-    # works inside the QEMU VM used by NixOS tests.
+    # Start the sandbox under runsc with systrap platform. systrap uses
+    # ptrace-based syscall interception, so it works inside the QEMU VM used
+    # by NixOS tests without nested KVM.
     machine.execute(
         "SANDBOX_PLATFORM=systrap ${sandbox}/bin/7aigent-sandbox /tmp/test-codebase"
         " >/tmp/sandbox.log 2>&1 </dev/null &"
     )
 
-    # Wait for the kernel IPC sockets to appear (means Julia started successfully)
+    # Wait for the launcher connection file, then for the heartbeat IPC socket
+    # created by IJulia. kernel.json is written before Julia starts accepting
+    # requests, so it is not a readiness signal by itself.
     machine.wait_for_file("/tmp/7aigent-*/sockets/kernel.json", timeout=120)
     _, kf = machine.execute("ls /tmp/7aigent-*/sockets/kernel.json | head -1")
     kf = kf.strip()
     print(f"Kernel connection file: {kf}")
-
-    # Allow IJulia kernel event loop to settle before connecting
-    machine.sleep(5)
+    _, hb_socket = machine.execute(
+        "python3 - <<'PY'\n"
+        "import json\n"
+        f"kf = {kf!r}\n"
+        "with open(kf) as f:\n"
+        "    conn = json.load(f)\n"
+        "print(kf.replace('kernel.json', f\"kernel-{conn['hb_port']}\"))\n"
+        "PY"
+    )
+    hb_socket = hb_socket.strip()
+    for _ in range(180):
+        rc, _ = machine.execute(f"test -e {shlex.quote(hb_socket)}")
+        if rc == 0:
+            break
+        time.sleep(1)
+    else:
+        _, tree = machine.execute("find /tmp/7aigent-* -maxdepth 3 -ls 2>&1 || true")
+        print("=== runtime tree ===\n" + tree)
+        _, ps = machine.execute("ps -ef")
+        print("=== ps ===\n" + ps)
+        _, log = machine.execute("cat /tmp/sandbox.log 2>&1 || true")
+        print("=== sandbox.log ===\n" + log)
+        raise Exception(f"heartbeat socket did not appear: {hb_socket}")
+    machine.sleep(1)
 
     # Run all e2e tests via the Jupyter client (inside the VM).
     # Print sandbox.log on failure for diagnosis.

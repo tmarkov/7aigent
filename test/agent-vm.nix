@@ -17,6 +17,7 @@ let
       preserve_initial = 50
       preserve_final = 50
       max_turns_per_round = 5
+      max_repl_timeout_seconds = 300
       ${timeoutChecks}
       ${progressInterval}
     '';
@@ -28,11 +29,20 @@ let
     You are a deterministic VM-test assistant.
     Current datetime: {{datetime}}
     Current model: {{model}}
-    Initial REPL output:
-    {{initial_repl_output}}
   '';
 
   startupJl = pkgs.writeText "startup.jl" "";
+  initialMessage = pkgs.writeText "initial_message.md" "";
+  timeoutPrompt = pkgs.writeText "timeout_prompt.md" ''
+    VM_TIMEOUT_PROMPT
+    SOURCE:
+    {{julia_source}}
+    ELAPSED={{elapsed_time}}
+    OUTPUT:
+    {{output_so_far}}
+    SCHEMA:
+    {{json_schema}}
+  '';
 
   mockLlmServer = pkgs.writeText "mock-llm-server.py" ''
     import http.server
@@ -70,7 +80,7 @@ let
 
     def tool_call_response(code, input_tokens=100):
         call_id = f"call_{int(time.time() * 1000)}"
-        args_json = json.dumps({"code": code})
+        args_json = json.dumps({"code": code, "timeout_seconds": 3})
         return "".join([
             sse_line({
                 "choices": [{
@@ -159,7 +169,7 @@ let
                 kind = "tool-continuation"
             elif "__TOOL_CALL__" in last_user:
                 kind = "tool-call"
-            elif "Decide whether to continue waiting or interrupt execution." in last_user:
+            elif "VM_TIMEOUT_PROMPT" in last_user:
                 kind = "timeout-check"
             elif payload.get("response_format", {}).get("type") == "json_object":
                 kind = "json"
@@ -210,8 +220,14 @@ let
                 normalized_tool = last_tool.strip()
                 body = text_response(f"FINAL_TOOL_OUTPUT: {normalized_tool}")
             elif kind == "timeout-check":
-                action = "interrupt" if "__INTERRUPT_YES__" in last_user else "continue"
-                body = text_response(json.dumps({"action": action}))
+                if "__INTERRUPT_YES__" in last_user:
+                    decision = {"action": "interrupt"}
+                else:
+                    elapsed_match = re.search(r"(?:Elapsed time: |ELAPSED=)(\d+)", last_user)
+                    elapsed = int(elapsed_match.group(1)) if elapsed_match else 0
+                    next_timeout = 4 if elapsed <= 3 else 7
+                    decision = {"action": "wait", "timeout_seconds": next_timeout}
+                body = text_response(json.dumps(decision))
             elif kind == "tool-call":
                 code = last_user.split("__TOOL_CALL__", 1)[1].strip()
                 body = tool_call_response(code)
@@ -329,6 +345,8 @@ pkgs.testers.nixosTest {
     DEFAULT_CONFIG = "${defaultConfig}"
     SINGLE_RETRY_CONFIG = "${singleRetryConfig}"
     SYSTEM_PROMPT = "${systemPrompt}"
+    INITIAL_MESSAGE = "${initialMessage}"
+    TIMEOUT_PROMPT = "${timeoutPrompt}"
     STARTUP_JL = "${startupJl}"
     MCP_CLIENT = "${mcpClient}"
     SDK_BASE = "${agent}/lib/7aigent/node_modules/@modelcontextprotocol/sdk/dist/cjs"
@@ -375,6 +393,14 @@ pkgs.testers.nixosTest {
         succeed(
             f"cp {shlex.quote(SYSTEM_PROMPT)} {shlex.quote(WORKSPACE + '/.7aigent/system_prompt.md')}",
             "Failed to install system_prompt.md",
+        )
+        succeed(
+            f"cp {shlex.quote(INITIAL_MESSAGE)} {shlex.quote(WORKSPACE + '/.7aigent/initial_message.md')}",
+            "Failed to install initial_message.md",
+        )
+        succeed(
+            f"cp {shlex.quote(TIMEOUT_PROMPT)} {shlex.quote(WORKSPACE + '/.7aigent/timeout_prompt.md')}",
+            "Failed to install timeout_prompt.md",
         )
         succeed(
             f"cp {shlex.quote(STARTUP_JL)} {shlex.quote(WORKSPACE + '/.7aigent/startup.jl')}",
@@ -511,11 +537,12 @@ pkgs.testers.nixosTest {
     assert any("41" in output for output in tool_results), tool_results
 
     # A14 + A15 + A17: periodic timeout checks with preserved conversation history.
-    # Config uses timeout_check_seconds = [3, 7, 14], so sleep(12) triggers all 3.
+    # Tool input starts at 3s; mock timeout decisions wait 4s, then 7s.
     reset_workspace(DEFAULT_CONFIG)
     timeout_prompt = (
         "__TOOL_CALL__begin; "
-        "println(\"started\"); flush(stdout); sleep(12); println(\"done\"); "
+        "println(\"TIMEOUT_OUTPUT_SENTINEL\"); flush(stdout); "
+        "sleep(16); println(\"done\"); "
         "end"
     )
     rc, out = run_agent(
@@ -537,22 +564,31 @@ pkgs.testers.nixosTest {
     assert 4 <= check_gaps[1] <= 16, check_gaps
     for entry in timeout_checks:
         text = entry["last_user"]
-        assert "sleep(12)" in text, text
-        assert "started" in text, text
-        assert "Decide whether to continue waiting or interrupt execution." in text, text
-        assert '"continue"' in text and '"interrupt"' in text, text
+        schema = json.loads(text.split("SCHEMA:\n", 1)[1])
+        actions = sorted(
+            variant["properties"]["action"]["const"]
+            for variant in schema["oneOf"]
+        )
+        assert actions == ["interrupt", "send_input", "wait"], schema
+        assert "VM_TIMEOUT_PROMPT" in text, text
+        assert "sleep(16)" in text, text
         assert entry["model"] == "mock-model", entry
+    output_sections = [
+        entry["last_user"].split("OUTPUT:\n", 1)[1].split("\nSCHEMA:", 1)[0]
+        for entry in timeout_checks
+    ]
+    assert any("TIMEOUT_OUTPUT_SENTINEL" in section for section in output_sections), output_sections
     continuation = request_entries(kind="tool-continuation")[-1]
     continuation_payload = json.dumps(continuation["payload"])
-    assert "Decide whether to continue waiting or interrupt execution." not in continuation_payload, continuation_payload
+    assert "VM_TIMEOUT_PROMPT" not in continuation_payload, continuation_payload
     session_log = latest_session_log()
     timeout_check_events = [event for event in session_log if event.get("type") == "timeout_check"]
     timeout_response_events = [event for event in session_log if event.get("type") == "timeout_response"]
     assert len(timeout_check_events) >= 3, timeout_check_events
     assert len(timeout_response_events) == len(timeout_check_events), timeout_response_events
     assert [event["elapsed_seconds"] for event in timeout_check_events[:3]] == [3, 7, 14], timeout_check_events
-    assert all(event["interrupt"] is False for event in timeout_response_events), timeout_response_events
-    assert "Decide whether to continue waiting or interrupt execution." in out, out
+    assert all(event["action"] == "wait" for event in timeout_response_events), timeout_response_events
+    assert "VM_TIMEOUT_PROMPT" in out, out
     assert "FINAL_TOOL_OUTPUT:" in out and "done" in out, out
 
     # A16: structured interrupt response stops execution and returns partial output.
@@ -572,7 +608,7 @@ pkgs.testers.nixosTest {
     session_log = latest_session_log()
     timeout_response_events = [event for event in session_log if event.get("type") == "timeout_response"]
     assert len(timeout_response_events) >= 1, timeout_response_events
-    assert any(event["interrupt"] is True for event in timeout_response_events), timeout_response_events
+    assert any(event["action"] == "interrupt" for event in timeout_response_events), timeout_response_events
     tool_results = [event for event in session_log if event.get("type") == "tool_result"]
     interrupted_outputs = [event["output"] for event in tool_results if "[interrupted]" in event["output"]]
     assert interrupted_outputs, tool_results
