@@ -5,7 +5,7 @@
 `load_codebase(path)` parses a directory of source files and populates two tables:
 
 - **`code`**: A hierarchical tree of all code and documentation nodes
-- **`symbols`**: External identifier references (calls and variable reads) per leaf node
+- **`symbols`**: External identifier references (calls and variable reads) per eligible leaf node
 
 The result is a queryable, navigable representation of the codebase. The process is incremental: unchanged files are loaded from cache; only new or changed files are re-parsed.
 
@@ -15,10 +15,15 @@ The result is a queryable, navigable representation of the codebase. The process
 
 Every node in the tree must be **fully spanned** by its children. If a node has any children, those children must collectively cover every line of the parent's source — no gaps.
 
-This is achieved by two kinds of child nodes:
+This is achieved by structural child nodes and residual chunks:
 
-- **Compound nodes**: structurally significant nodes that get their own row — functions, classes, loops, conditionals, try/catch, etc. These are configured per language.
-- **Chunk nodes**: catch-all rows that fill gaps between compound nodes. A chunk is a run of consecutive lines in the parent that don't belong to any compound child.
+- **Structural nodes**: significant nodes that get their own row — functions,
+  classes, loops, conditionals, try/catch, non-semantic blocks, etc. Semantic
+  structural kinds are configured per language; `block` is used when structure
+  is known but language semantics are not.
+- **Chunk nodes**: catch-all leaf rows that fill gaps between structural
+  children. A chunk is a run of consecutive lines in the parent that does not
+  belong to any structural child.
 
 Example:
 
@@ -32,13 +37,16 @@ def myFunc():        # line 1 ─┐ chunk: "line 1" (declaration line)
 
 The function's children are: `[chunk(1-2), for(3-4), chunk(5-5)]`. These fully span lines 1-5. The `for`'s children are: `[chunk(3-4)]` (the `for` declaration plus its body line).
 
-If no compound nodes are found inside a parent, that parent is a **leaf**: it has no children and its full source is stored directly.
+After structural extraction and chunk filling, any parent with no child rows is
+a **leaf**: it has no children and its full source is stored directly.
 
 ---
 
 ## Compound Node Configuration
 
-Each language has a small configuration mapping tree-sitter node types to `kind` values. Only mapped types become compound nodes. Everything else becomes part of a chunk.
+Each language has a small configuration mapping parser node types to `kind`
+values. Only mapped types become compound nodes. Everything else becomes part
+of a chunk.
 
 Example (Python):
 
@@ -61,7 +69,9 @@ python:
 
 Nodes not in this list (identifiers, operators, argument lists, literals) are never compound — they become part of their parent's `source` text and do not appear as separate rows.
 
-The configuration is deliberately small (~15–20 entries per language). Languages without configuration fall back to treating every file as a single leaf node.
+The configuration is deliberately small (~15–20 entries per language).
+Languages without configuration use the non-semantic fallback parser described
+below.
 
 ---
 
@@ -124,42 +134,44 @@ Only process new/changed directories (those containing new or changed files, or 
 
 For each new or changed file:
 
-**4a. Run tree-sitter.**
+**4a. Parse the file.**
 
-Parse the file using the appropriate language grammar. This produces a concrete syntax tree (CST).
+Use the configured parser when it produces a usable tree; otherwise use the
+fallback parser from R8.
 
 **4b. Create the file node.**
 
 Create a `kind=file` row:
 - `name` = filename
 - `qname` = relative path from codebase root
-- `source` = NULL (file nodes are non-leaf nodes once children are added; source is stored only on leaf nodes, while `get_source(db, id)` reconstructs any node's span on demand)
+- `source` = NULL once children are added; if the file remains a leaf, `source` stores the full file text. `get_source(db, id)` reconstructs any node's span on demand.
 - `line_start = 1`, `line_end` = total line count
-- `summary` = module-level docstring or header comment if present (see Step 5); else NULL
+- `summary` = module-level docstring or header comment if present on the parser-derived path (see Step 5); else NULL
 
-**4c. Walk the CST and extract compound nodes.**
+**4c. Extract structural nodes.**
 
-Recursively walk the CST. At each level, find the children that are compound nodes (per the language config). These become rows.
+For a configured parser tree, recursively extract compound nodes per the
+language config. For the fallback parser, emit `kind=block` nodes per R8.
 
-For each compound child:
+For each structural child:
 - `id` = derived from path + qualified name (e.g., `engine/search.py:Searcher._minimax`)
-- `parent` = the enclosing compound node's id
-- `kind` = mapped kind from config
-- `name` = the identifier (for functions/classes) or first line (for loops/conditionals/comments)
+- `parent` = the enclosing structural node's id
+- `kind` = mapped kind from config, or `block` from the fallback parser
+- `name` = identifier/first line for semantic nodes, or generic fallback name per R8f
 - `qname` = dot-joined chain of names from root to this node
 - `signature` = the declaration line, for functions and classes; else NULL
-- `source` = full text of this node's span in the file
-- `line_start`, `line_end` = from tree-sitter's position info
+- `source` = NULL for non-leaves; stored only when the row is a leaf
+- `line_start`, `line_end` = from the parser's position info
 - `n_lines` = line_end - line_start + 1
 - `language` = inherited from the file node
 
 **4d. Fill gaps with chunks.**
 
-After collecting the compound children of any node, check for gaps: line ranges in the parent's span not covered by any compound child.
+After collecting the structural children of any node, check for gaps: line ranges in the parent's span not covered by any structural child.
 
-For each gap (contiguous line range between compound children, or before the first / after the last):
+For each gap (contiguous line range between structural children, or before the first / after the last):
 - Create a `kind=chunk` row
-- `name` = `"lines {start}-{end}"` or `"line {n}"` if single line
+- `name` = generic fallback name per R8f, otherwise `"lines {start}-{end}"` or `"line {n}"` if single line
 - `source` = the text of those lines
 - `summary` = NULL
 - `signature` = NULL
@@ -168,7 +180,8 @@ Chunks are always leaves (no children of their own).
 
 **4e. Set sibling ordering.**
 
-Among all children of a node, set `sibling_order` = 0, 1, 2, ... in ascending `line_start` order. This preserves source order in navigation views.
+Among all children of a node, set `sibling_order = 0, 1, 2, ...` in ascending
+`line_start` order. This preserves source order in navigation views.
 
 **4f. Compute n_children.**
 
@@ -190,6 +203,8 @@ For each node produced in Step 4, attempt to extract a summary from documentatio
 - Look for a module-level docstring (first statement in the file, if a string literal).
 - Or the first block comment before any non-comment, non-import code.
 - Otherwise: NULL.
+- File rows loaded by the fallback parser do not use language-specific
+  docstring or header-comment extraction and have NULL summary.
 
 **Modules (directories):**
 - First paragraph of `README.md` if present, else NULL.
@@ -198,8 +213,9 @@ For each node produced in Step 4, attempt to extract a summary from documentatio
 - Look for a comment on the line immediately above the statement (within the parent's source). If it appears to describe the block (single line, ends with no punctuation or ends with `:`) extract it.
 - Otherwise: NULL.
 
-**Chunks:**
-- Always NULL. Chunks are residuals; they have no meaningful summary.
+**Blocks and chunks:**
+- Always NULL. Blocks are non-semantic structural nodes, and chunks are
+  residuals; neither has parser-derived documentation.
 
 **Comments:**
 - The comment text itself is the summary (it's both `source` and `summary`).
@@ -215,8 +231,10 @@ constraint.
 
 **Pass 1 — non-Markdown files:**
 
-For each leaf node (`n_children = 0`) in a non-Markdown file, populate
-`db.symbols` using the language config's call and definition patterns.
+For each leaf node (`n_children = 0`) in a non-Markdown file loaded with a
+language parser that has symbol extraction patterns, populate `db.symbols`
+using the language config's call and definition patterns. Files loaded by the
+fallback parser do not emit symbols.
 
 **Call symbols:** apply the config's call patterns to the leaf's source AST.
 For each matched call site, create a `symbols` row:
@@ -239,11 +257,14 @@ locally-defined set, create a `symbols` row:
 
 **Pass 2 — Markdown files:**
 
-For each leaf node in a Markdown file, scan its source for code spans:
+For each leaf node in a Markdown file loaded by the Markdown parser, scan its
+source for code spans. Markdown files loaded by the fallback parser do not emit
+symbols:
 
-- **Fenced code blocks with a language tag**: parse the block content with
-  that language's tree-sitter grammar and apply its config patterns as in
-  Pass 1.
+- **Tagged fenced code blocks**: use the tagged language's config when it has a
+  usable tree-sitter grammar. Unknown tags, missing grammars, parse failures,
+  and unusable trees emit no symbols; syntax-error nodes inside an otherwise
+  usable tree do not suppress extraction.
 
 - **Fenced code blocks without a language tag**, **indented code blocks**,
   and **inline backtick spans**: tokenize the content into identifier-like
@@ -278,12 +299,11 @@ Return a handle to the populated database. The `code` and `symbols` tables are r
 
 When the user modifies source code through the tool:
 
-1. **Write the modified file to disk.** The file is reconstructed by
-   concatenating all leaf nodes' `source` values in `sibling_order`. Since
-   the spanning invariant holds, this is lossless and unambiguous.
+1. **Write the modified file to disk.** Apply R31's span replacement to the
+   in-memory file buffer, then write the modified buffer.
 
-2. **Re-index the changed file** (Steps 4–6 for that file only). This takes
-   milliseconds with tree-sitter.
+2. **Re-index the changed file** (Steps 4–6 for that file only). This is a
+   file-local parser or fallback rebuild.
 
 3. **Replace symbols for the changed file.** Remove all `symbols` rows whose
    `node_id` belonged to the old leaf nodes of this file, and insert fresh
@@ -306,10 +326,13 @@ For any node `n` in the `code` table:
 - If `n` has no children (`n_children = 0`): `n` is a leaf. Its `source` is stored directly.
 - If `n` has children: the children's `(line_start, line_end)` ranges must be non-overlapping, cover every line from `n.line_start` to `n.line_end` inclusive, and be sorted in ascending order.
 
-The declaration line(s) of a compound node (e.g. the `def foo():` line of a Python function) are always covered by the first chunk child of that node, not excluded from spanning. There is no `header_lines` concept — children span the full range including the declaration.
+The declaration line(s) of a parser-derived compound node (e.g. the `def
+foo():` line of a Python function) are always covered by the first chunk child
+of that node, not excluded from spanning. There is no `header_lines` concept —
+children span the full range including the declaration.
 
 This invariant ensures:
-- The file can always be reconstructed by concatenating leaf nodes' `source` values in `sibling_order`
+- The file can always be reconstructed by concatenating leaf nodes' `source` values in source span order
 - There is no "lost" source text
 - Searching `source` across all rows finds every occurrence in the codebase, since leaves collectively cover every line exactly once
 
@@ -336,7 +359,8 @@ files, modules) carry structural metadata but no source text.
 
 ## Language Configuration Reference
 
-Each language config is a small YAML/TOML file mapping tree-sitter node types to `kind` values. Example for Python:
+Each tree-sitter-backed language config is a small YAML/TOML file mapping
+tree-sitter node types to `kind` values. Example for Python:
 
 ```yaml
 language: python
@@ -374,15 +398,6 @@ definition_patterns:
   - (import_from_statement name: (dotted_name (identifier) @symbol))
 ```
 
-For an unsupported language (no config file or no available tree-sitter
-grammar), the file is still represented structurally: the file row remains the
-parent, and each non-blank block becomes a `kind=chunk` child leaf. Runs of one
-or more blank lines act as separators, but those blank lines are absorbed into
-an adjacent chunk so no blank-only chunk is emitted and the full-span invariant
-is preserved. No symbol extraction is performed.
-
----
-
 ## Summary of Design Decisions
 
 | Decision | Choice | Rationale |
@@ -396,4 +411,4 @@ is preserved. No symbol extraction is performed.
 | Symbol extraction | Call always + var_ref if not locally defined | Calls need always-record to handle overloads; var_refs filter locals to reduce noise |
 | No to_id resolution | Names only in symbols table | Name-to-node resolution is ambiguous under overloading; callers query db.code directly |
 | Cache | SHA256 per file | Language-agnostic, works without git, resilient to force-push |
-| Edit strategy | Write to disk → re-index | Always correct; tree-sitter re-parse is fast enough |
+| Edit strategy | Write to disk → re-index | Always correct; file-level parse/fallback rebuild is fast enough |

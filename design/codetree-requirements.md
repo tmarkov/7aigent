@@ -85,7 +85,7 @@ These architectural decisions are requirements, not implementation details.
 
 Node kinds: `codebase`, `module`, `file`, `class`, `function`, `loop`,
 `conditional`, `try`, `with`, `import`, `variable`, `type`, `comment`,
-`chunk`.
+`block`, `chunk`.
 
 **R2** — `db.symbols` has the following columns:
 
@@ -126,13 +126,49 @@ files gets a `kind=module` node; there is exactly one `kind=codebase` root.
 
 **R7** — Language is detected from file extension.
 
-**R8** — Files with no entry in the language config, or with no available
-tree-sitter grammar, are loaded without compound parsing. The file still gets
-its `kind=file` row, but if it contains any non-blank lines those lines are
-split into `kind=chunk` child leaves using runs of blank lines as separators.
-Separator blank lines are absorbed into the neighbouring chunk so no
-`kind=chunk` row consists only of blank lines. If the file is entirely blank,
-the file node remains a leaf.
+**R8** — Files with no language config, missing parser support, or a parser
+failure are loaded with the fallback parser. Missing support includes a
+missing tree-sitter grammar for tree-sitter-backed languages; Markdown uses
+the Julia Markdown parser from R13. Syntax-error nodes inside an otherwise
+usable tree do not by themselves trigger fallback. Blank files remain leaf
+`kind=file` rows; other files are represented by ordinary `kind=block` rows
+when useful candidates exist, plus `kind=chunk` rows for remaining text.
+
+**R8a** — `kind=block` represents structure with unknown language semantics.
+It must not be used for language-specific kinds such as `function`, `class`,
+`loop`, `conditional`, or `comment`.
+
+**R8b** — The fallback parser detects useful indentation blocks. Tabs expand
+to 4-column stops; blank lines are ignored for indentation comparison but
+remain in emitted spans. A nonblank line starts a block candidate when the
+next nonblank line is more indented; the candidate ends before the first later
+nonblank line indented less than or equal to the start line. Useful candidates
+span at least two nonblank lines and contain either an indented body line or a
+child `kind=block`. A child `kind=block` must not have the same final span as
+its `kind=block` parent.
+
+**R8c** — A closing line has first non-whitespace text starting with `}`, `)`,
+`]`, or `</`. A connector line is a closing line that starts its own accepted
+`kind=block`. A closing line that is not a connector line is included in the
+previous block when it directly follows that block body. A blank line before
+such a non-connector closing line prevents attachment and prevents the previous
+candidate from being useful unless it encloses another `kind=block`.
+Consecutive accepted sibling blocks form a connector group when every block
+after the first starts with a connector line. Each connector group gets a
+shared parent `kind=block`.
+
+**R8d** — The fallback parser does not balance delimiters. Ambiguous or
+non-useful candidates remain covered by chunks or enclosing blocks. After
+blocks are accepted, the spanning and blank-line rules from R14 and the chunk
+rule from R15 apply.
+
+**R8e** — Rows for files loaded by the fallback parser have
+`summary = missing` and `signature = missing`, and emit no `db.symbols` rows.
+
+**R8f** — Fallback row identity is deterministic: `kind=block` and
+`kind=chunk` rows use generic names (`block`, `chunk`) and the duplicate-name
+suffix rule from R1; unchanged fallback source produces unchanged ids, spans,
+and sibling order.
 
 ---
 
@@ -178,8 +214,8 @@ hardcoded in the package.
 **R14** — For any non-leaf node, its children's `(line_start, line_end)`
 ranges are non-overlapping and collectively cover **every line from the
 parent's `line_start` to `line_end` inclusive** (the spanning invariant).
-The declaration line(s) of a compound node are always covered by the first
-chunk child of that node.
+The declaration line(s) of a parser-derived compound node are always covered
+by the first chunk child of that node.
 
 **R14a** — When two sibling compound nodes share a line (the tree-sitter byte
 range of one ends on the same line that the byte range of the next begins),
@@ -204,13 +240,15 @@ belongs to the function's span.
 **R14c** — **Trailing blank-line absorption.** After leading comments have
 been absorbed per R14b, any remaining blank-only lines that fall between
 consecutive siblings are assigned to the **preceding** sibling: that
-sibling's `line_end` extends to cover them. No `kind=chunk` node may consist
-entirely of blank lines.
+sibling's `line_end` extends to cover them. Leading blank-only lines before
+the first child are assigned to the first child; trailing blank-only lines
+after the last child are assigned to the last child. No `kind=chunk` node may
+consist entirely of blank lines.
 
-**R15** — Gaps between compound children — lines not covered by any landmark
-or detail child, and not blank-only (those are handled by R14c) — are filled
-with `kind=chunk` nodes. Chunks are always leaves. This includes the
-declaration line(s) of a compound node (which, together with any absorbed
+**R15** — Lines not covered by any non-`chunk` child, and not blank-only
+(those are handled by R14c), are filled with `kind=chunk` nodes. Chunks are
+always leaves. For parser-derived compound nodes, this includes the
+declaration line(s) of the compound node (which, together with any absorbed
 leading comment, form the first chunk child of that node) and any trailing
 non-blank lines after the last compound child.
 
@@ -262,9 +300,11 @@ API. The Julia-side API for such generated summaries is specified separately in
 
 ### Symbols
 
-**R21** — `db.symbols` is populated for every leaf node (`n_children = 0`)
+**R21** — `db.symbols` is populated for every leaf node (`n_children = 0`) in
+source files loaded with a language parser that has symbol extraction patterns,
 using the language config's call and definition patterns for the leaf's
-language:
+language. Files loaded by the fallback parser produce no `db.symbols` rows per
+R8e:
 
 - **Call symbols**: every function or method call in the leaf's source
   produces a row with `kind = "call"`. Call symbols are always recorded,
@@ -278,14 +318,17 @@ language:
   that are locally defined (assigned, declared, or bound as loop/with
   variables within the same leaf) are excluded.
 
-**R21a** — For Markdown leaf nodes, symbol extraction is applied only to
-code spans within the leaf's source. Prose text is never scanned for
-symbols. The following span types are recognised:
+**R21a** — For Markdown leaf nodes loaded by the Markdown parser, symbol
+extraction is applied only to code spans within the leaf's source. Markdown
+files loaded by the fallback parser produce no `db.symbols` rows per R8e.
+Prose text is never scanned for symbols. The following span types are
+recognised:
 
-- **Fenced code blocks with a language tag** (e.g. ` ```python `): the
-  block's content is parsed with the tree-sitter grammar for that language
-  and symbols are extracted using that language's config patterns, identical
-  to how source files of that language are processed.
+- **Tagged fenced code blocks**: if the tag names a configured language with a
+  usable tree-sitter grammar, extract symbols with that language's patterns;
+  syntax-error nodes in an otherwise usable snippet tree do not suppress
+  extraction. Unknown tags, missing grammars, parse failures, and unusable
+  trees emit no symbols and are not passed to fallback or untagged tokenization.
 
 - **Fenced code blocks without a language tag**, **indented code blocks**
   (four-space or tab-indented per CommonMark), and **inline backtick spans**

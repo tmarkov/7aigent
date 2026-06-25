@@ -14,7 +14,7 @@ The key insight is that code is fundamentally a tree with two types of cross-cut
 1. **Hierarchical navigation** (parent pointers, depth, ordering)
 2. **External symbol dependencies** (what identifiers does each piece of code use from outside itself?)
 
-These two needs map naturally to two tables: `code` (the tree) and `symbols` (external identifier references per leaf node).
+These two needs map naturally to two tables: `code` (the tree) and `symbols` (external identifier references extracted from eligible leaf nodes).
 
 ---
 
@@ -45,7 +45,7 @@ The tradeoff: this schema can't answer questions that require semantic understan
 Stores the hierarchical structure. Every query for "find functions," "navigate modules," "show summaries" hits this table.
 
 **Table 2: `symbols` (external identifiers)**
-Stores, for each leaf node, the identifiers it uses that are not locally defined — function calls (always) and variable reads from outside the leaf. This enables cross-cutting dependency queries without requiring a full type checker or symbol resolver.
+Stores identifiers used by eligible leaf nodes that are not locally defined — function calls (always) and variable reads from outside the leaf. This enables cross-cutting dependency queries without requiring a full type checker or symbol resolver.
 
 Why separate?
 - Most code queries are hierarchical (navigate → filter → read)
@@ -152,7 +152,8 @@ Code structure is classified into these kinds, which map across languages:
 | `variable` | Module/class-level constant or field | `PST` (piece-square table) |
 | `type` | Type def, typedef, alias | `type Piece = ...` |
 | `comment` | Docstrings, doc comments | Module docstring, class docstring |
-| `chunk` | Gap-filling leaf; lines not covered by any compound child, or blank-line-delimited fallback content in unsupported files | Declaration lines, trailing code, unsupported-language blocks |
+| `block` | Non-semantic structural group | Indentation-derived section or brace-like region |
+| `chunk` | Gap-filling leaf; lines not covered by any structural child | Declaration lines, trailing code, residual text fragments |
 
 ### Tree Structure
 
@@ -238,7 +239,7 @@ codebase:chess
 
 ## Schema: `symbols` Table
 
-External identifier references, extracted from leaf nodes.
+External identifier references, extracted from eligible leaf nodes with usable symbol extraction rules.
 
 ```sql
 CREATE TABLE symbols (

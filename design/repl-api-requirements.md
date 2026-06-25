@@ -191,19 +191,19 @@ descending importance:
 2. children that already have a summary;
 3. structural children before residual children (`module`, `file`, `class`,
    `function`, `type`, `variable`, `import`, `loop`, `conditional`, `try`,
-   `with`, `comment`, then `chunk`);
+   `with`, `comment`, `block`, then `chunk`);
 4. keyword matches in the child's primary source witness;
 5. larger `n_lines`;
 6. earlier `sibling_order`.
 
 ### Keywords
 
-**RA20** — `keywords` are an evidence-selection hint only. They affect child and
-chunk ranking but are **not** inserted into the LLM prompt as hidden guidance
-about what the summary should say.
+**RA20** — `keywords` are an evidence-selection hint only. They affect child
+ranking but are **not** inserted into the LLM prompt as hidden guidance about
+what the summary should say.
 
-**RA21** — Keyword matching is deterministic and case-insensitive. A child or
-chunk that matches more distinct keywords outranks one that matches fewer;
+**RA21** — Keyword matching is deterministic and case-insensitive. A child
+that matches more distinct keywords outranks one that matches fewer;
 additional match count may be used as a tie-breaker.
 
 ### Jupyter Summary RPC
