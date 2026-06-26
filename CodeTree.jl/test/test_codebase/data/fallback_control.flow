@@ -1,0 +1,9 @@
+int main() {
+    if (1 == 2) {
+        cout << "buggy compiler" << endl;
+    } else {
+        cout << "all good" << endl;
+    }
+
+    return 0;
+}

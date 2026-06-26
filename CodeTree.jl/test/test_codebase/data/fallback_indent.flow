@@ -1,0 +1,9 @@
+pipeline:
+    fetch:
+        retries: 3
+        timeout: 10
+    build:
+        command: make all
+
+notifications:
+    email: team@example.com

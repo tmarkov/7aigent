@@ -420,7 +420,307 @@ function _blank_line_chunk_spans(
     return spans
 end
 
-function _build_blank_line_chunk_rows(
+mutable struct _FallbackSpan
+    kind::String
+    name::String
+    ls::Int
+    le::Int
+    starts_with_closer::Bool
+    children::Vector{_FallbackSpan}
+end
+
+function _indent_width(line::AbstractString)::Int
+    col = 0
+    for ch in line
+        if ch == ' '
+            col += 1
+        elseif ch == '\t'
+            col += 4 - (col % 4)
+        else
+            break
+        end
+    end
+    return col
+end
+
+_is_blank_line(line::AbstractString)::Bool = isempty(strip(line))
+
+function _first_text(line::AbstractString)::String
+    return strip(String(line))
+end
+
+function _is_closing_line(line::AbstractString)::Bool
+    text = _first_text(line)
+    return startswith(text, "}") || startswith(text, ")") ||
+           startswith(text, "]") || startswith(text, "</")
+end
+
+function _next_nonblank(src_lines::Vector{<:AbstractString}, from::Int, to::Int)::Union{Int,Nothing}
+    i = from
+    while i <= to
+        !_is_blank_line(src_lines[i]) && return i
+        i += 1
+    end
+    return nothing
+end
+
+function _prev_nonblank(src_lines::Vector{<:AbstractString}, from::Int, to::Int)::Union{Int,Nothing}
+    i = from
+    while i >= to
+        !_is_blank_line(src_lines[i]) && return i
+        i -= 1
+    end
+    return nothing
+end
+
+function _nonblank_count(src_lines::Vector{<:AbstractString}, from::Int, to::Int)::Int
+    from > to && return 0
+    return count(i -> !_is_blank_line(src_lines[i]), from:to)
+end
+
+function _starts_indent_candidate(
+    src_lines::Vector{<:AbstractString},
+    line::Int,
+    parent_le::Int,
+)::Bool
+    _is_blank_line(src_lines[line]) && return false
+    nxt = _next_nonblank(src_lines, line + 1, parent_le)
+    isnothing(nxt) && return false
+    return _indent_width(src_lines[nxt]) > _indent_width(src_lines[line])
+end
+
+function _candidate_base_end(
+    src_lines::Vector{<:AbstractString},
+    line::Int,
+    parent_le::Int,
+)::Int
+    start_indent = _indent_width(src_lines[line])
+    j = _next_nonblank(src_lines, line + 1, parent_le)
+    while !isnothing(j)
+        j_int = j::Int
+        if _indent_width(src_lines[j_int]) <= start_indent
+            return j_int - 1
+        end
+        j = _next_nonblank(src_lines, j_int + 1, parent_le)
+    end
+    return parent_le
+end
+
+function _is_connector_start(
+    src_lines::Vector{<:AbstractString},
+    line::Int,
+    parent_le::Int,
+)::Bool
+    return _is_closing_line(src_lines[line]) &&
+           _starts_indent_candidate(src_lines, line, parent_le)
+end
+
+function _fallback_candidate_span(
+    src_lines::Vector{<:AbstractString},
+    line::Int,
+    parent_le::Int,
+)::Union{Tuple{Int,Int},Nothing}
+    _starts_indent_candidate(src_lines, line, parent_le) || return nothing
+
+    base_le = _candidate_base_end(src_lines, line, parent_le)
+    final_le = base_le
+    next = _next_nonblank(src_lines, base_le + 1, parent_le)
+
+    if !isnothing(next)
+        next_line = next::Int
+        if _is_closing_line(src_lines[next_line]) &&
+           !_is_connector_start(src_lines, next_line, parent_le)
+            body_end = _prev_nonblank(src_lines, base_le, line)
+            if !isnothing(body_end) && next_line == (body_end::Int) + 1
+                final_le = next_line
+            else
+                return nothing
+            end
+        end
+    end
+
+    _nonblank_count(src_lines, line, final_le) >= 2 || return nothing
+    return (line, final_le)
+end
+
+function _accepted_fallback_blocks(
+    src_lines::Vector{<:AbstractString},
+    parent_ls::Int,
+    parent_le::Int,
+)::Vector{_FallbackSpan}
+    candidates = _FallbackSpan[]
+    for line in parent_ls:parent_le
+        span = _fallback_candidate_span(src_lines, line, parent_le)
+        isnothing(span) && continue
+        ls, le = span
+        push!(candidates, _FallbackSpan(
+            "block", "block", ls, le, _is_closing_line(src_lines[ls]), _FallbackSpan[],
+        ))
+    end
+    return candidates
+end
+
+function _direct_fallback_blocks(
+    src_lines::Vector{<:AbstractString},
+    parent_ls::Int,
+    parent_le::Int,
+    parent_is_block::Bool,
+)::Vector{_FallbackSpan}
+    candidates = filter(_accepted_fallback_blocks(src_lines, parent_ls, parent_le)) do sp
+        !(parent_is_block && sp.ls == parent_ls && sp.le == parent_le)
+    end
+
+    direct = _FallbackSpan[]
+    for sp in candidates
+        contained = any(other -> other !== sp &&
+                                other.ls <= sp.ls &&
+                                sp.le <= other.le &&
+                                (other.ls < sp.ls || sp.le < other.le),
+                        candidates)
+        contained || push!(direct, sp)
+    end
+    sort!(direct, by = sp -> (sp.ls, sp.le))
+    return direct
+end
+
+function _group_connector_blocks(blocks::Vector{_FallbackSpan})::Vector{_FallbackSpan}
+    grouped = _FallbackSpan[]
+    i = 1
+    while i <= length(blocks)
+        run_start = i
+        run_end = i
+        while run_end < length(blocks) &&
+              blocks[run_end + 1].starts_with_closer &&
+              blocks[run_end].le + 1 == blocks[run_end + 1].ls
+            run_end += 1
+        end
+
+        if run_end > run_start
+            children = blocks[run_start:run_end]
+            push!(grouped, _FallbackSpan(
+                "block", "block", children[1].ls, children[end].le, false, children,
+            ))
+        else
+            push!(grouped, blocks[i])
+        end
+        i = run_end + 1
+    end
+    return grouped
+end
+
+function _fallback_chunk_spans_for_gap(
+    src_lines::Vector{<:AbstractString},
+    gap_ls::Int,
+    gap_le::Int,
+)::Vector{_FallbackSpan}
+    gap_ls > gap_le && return _FallbackSpan[]
+    gap = src_lines[gap_ls:gap_le]
+    spans = _blank_line_chunk_spans(gap)
+    return [
+        _FallbackSpan("chunk", "chunk", gap_ls + ls - 1, gap_ls + le - 1, false, _FallbackSpan[])
+        for (ls, le) in spans
+    ]
+end
+
+function _fallback_children(
+    src_lines::Vector{<:AbstractString},
+    parent_ls::Int,
+    parent_le::Int,
+    parent_is_block::Bool,
+)::Vector{_FallbackSpan}
+    blocks = _group_connector_blocks(
+        _direct_fallback_blocks(src_lines, parent_ls, parent_le, parent_is_block))
+    result = _FallbackSpan[]
+    prev_le = parent_ls - 1
+
+    for block in blocks
+        gap_ls = prev_le + 1
+        gap_le = block.ls - 1
+        if gap_ls <= gap_le
+            if _all_blank(src_lines, gap_ls, gap_le)
+                if isempty(result)
+                    block.ls = gap_ls
+                else
+                    result[end].le = gap_le
+                end
+            else
+                append!(result, _fallback_chunk_spans_for_gap(src_lines, gap_ls, gap_le))
+            end
+        end
+        push!(result, block)
+        prev_le = block.le
+    end
+
+    if prev_le < parent_le
+        gap_ls = prev_le + 1
+        gap_le = parent_le
+        if _all_blank(src_lines, gap_ls, gap_le)
+            isempty(result) || (result[end].le = gap_le)
+        else
+            append!(result, _fallback_chunk_spans_for_gap(src_lines, gap_ls, gap_le))
+        end
+    end
+
+    if isempty(result) && !_all_blank(src_lines, parent_ls, parent_le)
+        append!(result, _fallback_chunk_spans_for_gap(src_lines, parent_ls, parent_le))
+    end
+
+    return filter(sp -> !(parent_is_block && sp.kind == "block" &&
+                          sp.ls == parent_ls && sp.le == parent_le), result)
+end
+
+function _build_fallback_child_rows(
+    src_lines::Vector{<:AbstractString},
+    spans::Vector{_FallbackSpan},
+    language::Union{String,Missing},
+    file_path::FilePath,
+    parent_id::NodeId,
+    depth::Int,
+    parent_qname::QName,
+)::Vector{CodeRow}
+    isempty(spans) && return CodeRow[]
+
+    span_names = [sp.name for sp in spans]
+    span_starts = [sp.ls for sp in spans]
+    id_suffixes = assign_ordinal_ids(span_names, span_starts)
+    qname_suffixes = assign_ordinal_ids(span_names, span_starts)
+
+    rows = CodeRow[]
+    for (i, sp) in enumerate(spans)
+        node_id = child_node_id(parent_id, id_suffixes[i])
+        node_qname = child_qname(parent_qname, qname_suffixes[i])
+        child_spans = sp.kind == "block" && isempty(sp.children) ?
+            _fallback_children(src_lines, sp.ls, sp.le, true) :
+            sp.children
+        child_rows = _build_fallback_child_rows(
+            src_lines, child_spans, language, file_path, node_id, depth + 1, node_qname)
+        n_direct = count(r -> r.parent == node_id.val, child_rows)
+        span_src = join(src_lines[max(1, sp.ls):min(length(src_lines), sp.le)], '\n')
+        row = CodeRow(
+            node_id.val,
+            parent_id.val,
+            depth,
+            i - 1,
+            sp.kind,
+            sp.name,
+            node_qname.val,
+            language,
+            missing,
+            n_direct == 0 ? span_src : missing,
+            missing,
+            file_path.val,
+            sp.ls,
+            sp.le,
+            sp.le - sp.ls + 1,
+            n_direct,
+        )
+        push!(rows, row)
+        append!(rows, child_rows)
+    end
+    return rows
+end
+
+function _build_fallback_rows(
     src::String,
     src_lines::Vector{<:AbstractString},
     language::Union{String,Missing},
@@ -430,42 +730,15 @@ function _build_blank_line_chunk_rows(
     depth::Int,
     file_qname::QName,
 )::Vector{CodeRow}
-    spans = _blank_line_chunk_spans(src_lines)
-    if isempty(spans)
+    if _all_blank(src_lines, 1, length(src_lines))
         file_row.source = src
         return [file_row]
     end
 
-    span_names = fill("chunk", length(spans))
-    span_starts = first.(spans)
-    id_suffixes = assign_ordinal_ids(span_names, span_starts)
-    qname_suffixes = assign_ordinal_ids(span_names, span_starts)
-
-    child_rows = CodeRow[]
-    for (i, (chunk_ls, chunk_le)) in enumerate(spans)
-        node_qname = child_qname(file_qname, qname_suffixes[i])
-        span_src = join(src_lines[max(1, chunk_ls):min(length(src_lines), chunk_le)], '\n')
-        push!(child_rows, CodeRow(
-            child_node_id(file_id, id_suffixes[i]).val,
-            file_id.val,
-            depth + 1,
-            i - 1,
-            "chunk",
-            "chunk",
-            node_qname.val,
-            language,
-            missing,
-            span_src,
-            missing,
-            file_path.val,
-            chunk_ls,
-            chunk_le,
-            chunk_le - chunk_ls + 1,
-            0,
-        ))
-    end
-
-    file_row.n_children = length(child_rows)
+    spans = _fallback_children(src_lines, 1, length(src_lines), false)
+    child_rows = _build_fallback_child_rows(
+        src_lines, spans, language, file_path, file_id, depth + 1, file_qname)
+    file_row.n_children = count(r -> r.parent == file_id.val, child_rows)
     return vcat([file_row], child_rows)
 end
 
@@ -650,16 +923,21 @@ function build_file_rows(
         )
     end
 
-    # R8: unknown language or no tree-sitter grammar → blank-line chunk fallback
+    # R8: unknown language, missing grammar, or parser failure → fallback parser.
     if isnothing(entry) || isnothing(entry.grammar_symbol)
-        return _build_blank_line_chunk_rows(
+        return _build_fallback_rows(
             src, src_lines, language, file_row, file_id, file_path, depth, file_qname,
         )
     end
 
-    tree = parse_source(src, entry.grammar_symbol)
+    tree = try
+        parse_source(src, entry.grammar_symbol)
+    catch e
+        _is_query_compile_failure(e) && rethrow()
+        nothing
+    end
     if isnothing(tree)
-        return _build_blank_line_chunk_rows(
+        return _build_fallback_rows(
             src, src_lines, language, file_row, file_id, file_path, depth, file_qname,
         )
     end

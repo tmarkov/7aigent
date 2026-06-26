@@ -246,6 +246,12 @@ const EXPECTED_FILES = Set([
     ".gitignore",
     "README.md",
     "data/config.toml",
+    "data/fallback_blank_close.flow",
+    "data/fallback_control.flow",
+    "data/fallback_html.layout",
+    "data/fallback_indent.flow",
+    "data/fallback_tabs.flow",
+    "data/missing_parser.fake",
     "docs/api.md",
     "docs/overview.md",
     "julia/core.jl",
@@ -353,6 +359,17 @@ end
 # Accessor used in all subsequent tests
 _db() = _DB[]::CodeTree.CodeTreeDB
 
+function _file_row(db::CodeTree.CodeTreeDB, file::AbstractString)
+    return only(filter(r -> isequal(r.file, file) && r.kind == "file", db.code))
+end
+
+function _children(db::CodeTree.CodeTreeDB, parent_id::AbstractString)
+    return sort(
+        collect(eachrow(filter(r -> isequal(r.parent, parent_id), db.code))),
+        by = r -> r.line_start,
+    )
+end
+
 @testset "R6: exactly one codebase root node" begin
     roots = filter(r -> r.kind == "codebase", _db().code)
     @test nrow(roots) == 1
@@ -389,16 +406,13 @@ end
     @test ismissing(toml_row.language)
 end
 
-@testset "R8: unknown-language file splits into blank-line-delimited chunk leaves" begin
+@testset "R8 + R15: unknown-language file with no accepted blocks gets chunk leaves" begin
     code = _db().code
-    toml_node = only(filter(r -> isequal(r.file, "data/config.toml") && r.kind == "file", code))
+    toml_node = _file_row(_db(), "data/config.toml")
     @test toml_node.n_children == 4
     @test ismissing(toml_node.source)
 
-    chunks = sort(
-        collect(eachrow(filter(r -> isequal(r.parent, toml_node.id), code))),
-        by = r -> r.line_start,
-    )
+    chunks = _children(_db(), toml_node.id)
     @test [chunk.kind for chunk in chunks] == ["chunk", "chunk", "chunk", "chunk"]
     @test [(chunk.line_start, chunk.line_end) for chunk in chunks] == [
         (1, 4),
@@ -412,6 +426,116 @@ end
         any(!isempty(strip(line)) for line in split(chunk.source, '\n'))
         for chunk in chunks
     )
+end
+
+@testset "R8a + R8b + R14 + R15: fallback indentation blocks are ordinary block rows" begin
+    db = _db()
+    file = _file_row(db, "data/fallback_indent.flow")
+    top = _children(db, file.id)
+
+    @test [r.kind for r in top] == ["block", "block"]
+    @test [(r.name, r.line_start, r.line_end) for r in top] == [
+        ("block", 1, 7),
+        ("block", 8, 9),
+    ]
+    @test endswith(top[2].id, ":block\$2")
+    @test all(ismissing(r.summary) && ismissing(r.signature) for r in top)
+
+    pipeline_children = _children(db, top[1].id)
+    @test [r.kind for r in pipeline_children] == ["chunk", "block", "block"]
+    @test [(r.name, r.line_start, r.line_end) for r in pipeline_children] == [
+        ("chunk", 1, 1),
+        ("block", 2, 4),
+        ("block", 5, 7),
+    ]
+    @test endswith(pipeline_children[3].id, ":block:block\$2")
+    @test all(r -> r.kind != "comment" && r.kind != "function", eachrow(filter(
+        r -> isequal(r.file, "data/fallback_indent.flow"), db.code)))
+end
+
+@testset "R8c: connector groups share a parent block" begin
+    db = _db()
+    file = _file_row(db, "data/fallback_control.flow")
+    top = _children(db, file.id)
+
+    @test [r.kind for r in top] == ["block"]
+    outer = top[1]
+    @test (outer.line_start, outer.line_end) == (1, 9)
+
+    outer_children = _children(db, outer.id)
+    @test [r.kind for r in outer_children] == ["chunk", "block", "chunk"]
+    @test [(r.line_start, r.line_end) for r in outer_children] == [(1, 1), (2, 6), (7, 9)]
+
+    connector_group = outer_children[2]
+    group_children = _children(db, connector_group.id)
+    @test [r.kind for r in group_children] == ["block", "block"]
+    @test [(r.line_start, r.line_end) for r in group_children] == [(2, 3), (4, 6)]
+
+    else_children = _children(db, group_children[2].id)
+    @test length(else_children) == 1
+    @test else_children[1].kind == "chunk"
+    @test (else_children[1].line_start, else_children[1].line_end) == (4, 6)
+end
+
+@testset "R8c + R8d + R15: blank before detached closer prevents fallback block" begin
+    db = _db()
+    file = _file_row(db, "data/fallback_blank_close.flow")
+    children = _children(db, file.id)
+
+    @test [r.kind for r in children] == ["chunk", "chunk"]
+    @test [(r.line_start, r.line_end) for r in children] == [(1, 3), (4, 4)]
+end
+
+@testset "R8c: local HTML/XML closing line stays with adjacent fallback block" begin
+    db = _db()
+    file = _file_row(db, "data/fallback_html.layout")
+    top = _children(db, file.id)
+
+    @test length(top) == 1
+    @test top[1].kind == "block"
+    @test (top[1].line_start, top[1].line_end) == (1, 6)
+
+    children = _children(db, top[1].id)
+    @test [r.kind for r in children] == ["chunk", "block", "chunk"]
+    @test [(r.line_start, r.line_end) for r in children] == [(1, 2), (3, 5), (6, 6)]
+end
+
+@testset "R8b: fallback indentation expands tabs to 4-column stops" begin
+    db = _db()
+    file = _file_row(db, "data/fallback_tabs.flow")
+    children = _children(db, file.id)
+
+    @test [r.kind for r in children] == ["block", "chunk"]
+    @test [(r.line_start, r.line_end) for r in children] == [(1, 2), (3, 3)]
+end
+
+@testset "R8 + R8e + R21: configured language with missing parser support uses fallback and emits no symbols" begin
+    fake_entry = CodeTree.LanguageEntry(
+        node_types = Dict{String, CodeTree.NodeMapping}(),
+        call_patterns = [""],
+        definition_patterns = [""],
+        extensions = [".fake"],
+        grammar_symbol = nothing,
+    )
+    config = CodeTree.merge_config(TEST_CONFIG, Dict("fake" => fake_entry))
+    tmp = _fresh_tmp_codebase()
+    try
+        db = CodeTree.load(tmp, config)
+
+        file = _file_row(db, "data/missing_parser.fake")
+        @test file.language == "fake"
+        @test ismissing(file.summary)
+        @test ismissing(file.signature)
+        @test ismissing(file.source)
+
+        children = _children(db, file.id)
+        @test [r.kind for r in children] == ["block"]
+        @test all(ismissing(r.summary) && ismissing(r.signature) for r in children)
+        @test nrow(filter(r -> isequal(r.node_id, file.id) ||
+                              startswith(r.node_id, file.id * ":"), db.symbols)) == 0
+    finally
+        rm(tmp; recursive=true, force=true)
+    end
 end
 
 @testset "R10: landmark nodes always appear in db.code" begin
@@ -793,6 +917,31 @@ end
         end
         @test "stats" ∉ tagged_syms.symbol
         @test "clamped" ∉ tagged_syms.symbol
+    finally
+        rm(tmp; recursive=true)
+    end
+end
+
+@testset "R21a: unknown tagged Markdown fenced blocks emit no symbols" begin
+    tmp = _fresh_tmp_codebase()
+    try
+        unknown_md = joinpath(tmp, "docs", "unknown-tag.md")
+        write(unknown_md, join([
+            "# Unknown Tag",
+            "",
+            "```mystery",
+            "result = compute_stats(data)",
+            "```",
+            "",
+        ], '\n'))
+
+        db = load(tmp, TEST_CONFIG)
+        leaves = filter(r -> isequal(r.file, "docs/unknown-tag.md") && r.n_children == 0, db.code)
+        target = only(filter(
+            r -> occursin("result = compute_stats(data)", something(r.source, "")),
+            leaves,
+        ))
+        @test nrow(filter(r -> r.node_id == target.id, db.symbols)) == 0
     finally
         rm(tmp; recursive=true)
     end

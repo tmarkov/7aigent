@@ -276,10 +276,12 @@ function _extract_markdown_symbols(
                     continue
                 end
             end
-            # Unknown tag → fall through to intersection
+            # Unknown or unsupported tag: tagged blocks do not fall back to
+            # untagged tokenization (R21a).
+            continue
         end
 
-        # Untagged (or unknown-tagged) block: intersect with known_names (R21a).
+        # Untagged block: intersect with known_names (R21a).
         # R21a: if followed by `(` → "call", otherwise "var_ref".
         _classify_block_tokens!(result, block, known_names)
     end
